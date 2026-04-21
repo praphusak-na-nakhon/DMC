@@ -18,6 +18,7 @@ TARGET_URL_TEMPLATE = (
     "?schoolCode=81012017&studentNo=&cifNo=&cifType=&educationYear=2568"
     "&levelDtlCode={level_code}&classroom=&firstNameTh=&lastNameTh=&action=search"
 )
+LOGIN_URL = "https://portal.bopp-obec.info/obec68/auth/login"
 
 DATA_GLOB = "*-obec-study-form.xlsx"
 STANDARD_FINAL_FILE = "m6-obec-study-form.xlsx"
@@ -250,17 +251,40 @@ def load_source_data(final_file: Path) -> tuple[list[SourceStudent], str]:
     return students, detected_level
 
 
-def wait_for_user_ready() -> None:
+def wait_for_user_ready(level_label: str) -> None:
     print("")
     print("Browser opened.")
-    print("1. Login if needed.")
-    print("2. Open the DMC page that lists students for 'สอบได้ จบการศึกษา'.")
+    print("1. Login at the DMC login page.")
+    print(f"2. After login, return here and press Enter. The script will open the {level_label} target page for you.")
     print("3. By default the script will jump to page 1 before processing.")
-    input("Press Enter when the page is ready: ")
+    input("Press Enter after login is complete: ")
 
 
 def wait_for_student_table(page) -> None:
     page.wait_for_selector("tr[id^='tr-']", timeout=60000)
+
+
+def open_target_page_after_login(page, target_url: str) -> None:
+    last_error: Error | None = None
+
+    for _ in range(4):
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=10000)
+        except TimeoutError:
+            pass
+
+        page.wait_for_timeout(1500)
+
+        try:
+            page.goto(target_url, wait_until="domcontentloaded", timeout=90000)
+            return
+        except Error as exc:
+            last_error = exc
+            if "interrupted by another navigation" not in str(exc):
+                raise
+
+    if last_error is not None:
+        raise last_error
 
 
 def get_current_page_number(page) -> int:
@@ -780,8 +804,9 @@ def main() -> int:
         )
         try:
             page = context.pages[0] if context.pages else context.new_page()
-            page.goto(base_url, wait_until="domcontentloaded", timeout=90000)
-            wait_for_user_ready()
+            page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=90000)
+            wait_for_user_ready(level_label)
+            open_target_page_after_login(page, base_url)
             page.wait_for_timeout(1200)
             results, stopped_item = run(
                 page,
@@ -814,6 +839,7 @@ def main() -> int:
             return 1
         except Error as exc:
             print(f"playwright error: {exc}")
+            input("Press Enter to close the browser...")
             return 1
         finally:
             context.close()
