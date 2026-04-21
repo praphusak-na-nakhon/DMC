@@ -6,7 +6,6 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import pandas as pd
@@ -14,53 +13,88 @@ from playwright.sync_api import Error, TimeoutError, sync_playwright
 from rapidfuzz import fuzz
 
 
-TARGET_URL = (
+TARGET_URL_TEMPLATE = (
     "https://portal.bopp-obec.info/obec68/studentpendingupl/add"
     "?schoolCode=81012017&studentNo=&cifNo=&cifType=&educationYear=2568"
-    "&levelDtlCode=15&classroom=&firstNameTh=&lastNameTh=&action=search"
+    "&levelDtlCode={level_code}&classroom=&firstNameTh=&lastNameTh=&action=search"
 )
 
-DATA_GLOB = "*-final.xlsx"
-STANDARD_FINAL_FILE = "obec-study-form.xlsx"
+DATA_GLOB = "*-obec-study-form.xlsx"
+STANDARD_FINAL_FILE = "m6-obec-study-form.xlsx"
 PROFILE_DIR = Path(".playwright-obec-profile")
 REPORT_JSON = Path("obec-fill-report.json")
 REPORT_CSV = Path("obec-fill-report.csv")
 REVIEW_CSV = Path("obec-fill-review.csv")
 
+LEVEL_RULES = {
+    "ม.3": {
+        "level_code": "12",
+        "default_missing_code": "207",
+        "ambiguity_floor": 45,
+        "require_exact_student_no": True,
+    },
+    "ม.6": {
+        "level_code": "15",
+        "default_missing_code": None,
+        "ambiguity_floor": None,
+        "require_exact_student_no": False,
+    },
+}
+
 STATUS_CODE_MAP = {
-    "ศึกษาต่อมหาวิทยาลัยของรัฐ": "301",
-    "ศึกษาต่อมหาวิทยาลัยเปิดของรัฐ": "302",
-    "ศึกษาต่อมหาวิทยาลัยของเอกชน": "303",
-    "ศึกษาต่อสถาบันอาชีวศึกษาของรัฐบาล": "304",
-    "ศึกษาต่อสถาบันอาชีวศึกษาของเอกชน": "305",
-    "ศึกษาต่อสถาบันพยาบาล": "306",
-    "ศึกษาต่อสถาบันทหาร": "307",
-    "ศึกษาต่อสถาบันตำรวจ": "308",
-    "ศึกษาต่อสถาบันอื่น ๆ": "309",
-    "ไม่ศึกษาต่อ รับราชการ": "310",
-    "ไม่ศึกษาต่อ ทำงานรัฐวิสาหกิจ": "311",
-    "ไม่ศึกษาต่อ ทำนาบุรีสุราสินค้า": "311",
-    "ไม่ศึกษาต่อ ภาคอุตสาหกรรม": "312",
-    "ไม่ศึกษาต่อ ภาคการเกษตร": "313",
-    "ไม่ศึกษาต่อ การประมง": "314",
-    "ไม่ศึกษาต่อ ค้าขาย ธุรกิจ": "315",
-    "ไม่ศึกษาต่อ งานบริการ": "316",
-    "ไม่ศึกษาต่อ รับจ้างทั่วไป": "317",
-    "ไม่ศึกษาต่อ บวชในศาสนา": "318",
-    "ไม่มีประกอบอาชีพและไม่ศึกษาต่อ": "309",
+    "(ม.3) ศึกษาต่อ ม.4 โรงเรียนเดิม": "201",
+    "(ม.3) ศึกษาต่อ ม.4 โรงเรียนอื่น ในจังหวัดเดิม": "202",
+    "(ม.3) ศึกษาต่อ ม.4 โรงเรียนอื่น ในต่างจังหวัด": "203",
+    "(ม.3) ศึกษาต่อ ม.4 โรงเรียนอื่น ใน กทม.": "204",
+    "(ม.3) สถาบันอาชีวศึกษาของรัฐบาล": "205",
+    "(ม.3) สถาบันอาชีวศึกษาของเอกชน": "206",
+    "(ม.3) ศึกษาต่อสถาบันอื่น ๆ": "207",
+    "(ม.3) ไม่ศึกษาต่อ ทำงานภาคอุตสาหกรรม": "208",
+    "(ม.3) ไม่ศึกษาต่อ ทำงานภาคการเกษตร": "209",
+    "(ม.3) ไม่ศึกษาต่อ ทำงานการประมง": "210",
+    "(ม.3) ไม่ศึกษาต่อ ทำงานค้าขาย ธุรกิจ": "211",
+    "(ม.3) ไม่ศึกษาต่อ ทำงานบริการ": "212",
+    "(ม.3) ไม่ศึกษาต่อ ทำงานรับจ้างทั่วไป": "213",
+    "(ม.3) ไม่ศึกษาต่อ ทำงานอื่น ๆ": "214",
+    "(ม.3) บวชในศาสนา": "215",
+    "(ม.3) ไม่ประกอบอาชีพและไม่ศึกษาต่อ": "216",
+    "(ม.3) ศึกษาต่อต่างประเทศ": "217",
+    "(ม.6) ศึกษาต่อมหาวิทยาลัยของรัฐ": "301",
+    "(ม.6) ศึกษาต่อมหาวิทยาลัยเปิดของรัฐ": "302",
+    "(ม.6) ศึกษาต่อมหาวิทยาลัยของเอกชน": "303",
+    "(ม.6) ศึกษาต่อสถาบันอาชีวศึกษาของรัฐบาล": "304",
+    "(ม.6) ศึกษาต่อสถาบันอาชีวศึกษาของเอกชน": "305",
+    "(ม.6) ศึกษาต่อสถาบันพยาบาล": "306",
+    "(ม.6) ศึกษาต่อสถาบันทหาร": "307",
+    "(ม.6) ศึกษาต่อสถาบันตำรวจ": "308",
+    "(ม.6) ศึกษาต่อสถาบันอื่น ๆ": "309",
+    "(ม.6) ไม่ศึกษาต่อ รับราชการ": "310",
+    "(ม.6) ไม่ศึกษาต่อ ทำงานรัฐวิสาหกิจ": "311",
+    "(ม.6) ไม่ศึกษาต่อ ภาคอุตสาหกรรม": "312",
+    "(ม.6) ไม่ศึกษาต่อ ภาคการเกษตร": "313",
+    "(ม.6) ไม่ศึกษาต่อ การประมง": "314",
+    "(ม.6) ไม่ศึกษาต่อ ค้าขาย ธุรกิจ": "315",
+    "(ม.6) ไม่ศึกษาต่อ งานบริการ": "316",
+    "(ม.6) ไม่ศึกษาต่อ รับจ้างทั่วไป": "317",
+    "(ม.6) ไม่ศึกษาต่อ บวชในศาสนา": "318",
+    "(ม.6) ไม่ประกอบอาชีพและไม่ศึกษาต่อ": "309",
+    "(ม.6) ศึกษาต่อต่างประเทศ": "320",
     "ไม่ประกอบอาชีพและไม่ศึกษาต่อ": "309",
-    "ศึกษาต่อต่างประเทศ": "320",
+    "ไม่มีประกอบอาชีพและไม่ศึกษาต่อ": "309",
 }
 
 
 @dataclass
 class SourceStudent:
     order: int
-    room: int
+    level_label: str
+    room: int | None
+    student_no: str
     first_name: str
     last_name: str
     status_text: str
     status_code: str
+
     @property
     def full_name(self) -> str:
         return f"{self.first_name} {self.last_name}".strip()
@@ -80,8 +114,12 @@ class SourceStudent:
 
 def normalize_text(text: str) -> str:
     text = (text or "").strip()
-    text = re.sub(r"\s+", "", text)
-    return text
+    text = text.replace("\xa0", " ")
+    return re.sub(r"\s+", "", text)
+
+
+def normalize_digits(text: str) -> str:
+    return re.sub(r"\D+", "", text or "")
 
 
 def normalize_name(text: str) -> str:
@@ -103,8 +141,6 @@ def normalize_name(text: str) -> str:
                 "\u0E49": "",
                 "\u0E4A": "",
                 "\u0E4B": "",
-                "\u0E11": "\u0E17",
-                "\u0E24": "\u0E23",
             }
         )
     )
@@ -115,10 +151,31 @@ def similarity(a: str, b: str) -> int:
     if not a or not b:
         return 0
     return max(
-        fuzz.ratio(a, b),
-        fuzz.partial_ratio(a, b),
-        fuzz.token_sort_ratio(a, b),
+        int(fuzz.ratio(a, b)),
+        int(fuzz.partial_ratio(a, b)),
+        int(fuzz.token_sort_ratio(a, b)),
     )
+
+
+def build_target_url(level_code: str) -> str:
+    return TARGET_URL_TEMPLATE.format(level_code=level_code)
+
+
+def resolve_status_code(level_label: str, status_text: str) -> str:
+    status_text = (status_text or "").strip()
+    if not status_text:
+        return ""
+
+    direct = STATUS_CODE_MAP.get(status_text)
+    if direct:
+        return direct
+
+    if not status_text.startswith("("):
+        prefixed = STATUS_CODE_MAP.get(f"({level_label}) {status_text}")
+        if prefixed:
+            return prefixed
+
+    return ""
 
 
 def resolve_single_input_file(
@@ -146,46 +203,60 @@ def resolve_single_input_file(
     return data_files[0].resolve()
 
 
-def load_source_data(final_file: Path) -> list[SourceStudent]:
+def load_source_data(final_file: Path) -> tuple[list[SourceStudent], str]:
     df = pd.read_excel(final_file, dtype=str).fillna("")
     if len(df.columns) < 7:
-        raise ValueError("final input file does not have the expected 7 columns")
+        raise ValueError("form file does not have the expected 7 columns")
 
     students: list[SourceStudent] = []
+    detected_level = ""
+
     for row in df.itertuples(index=False):
         order_text = str(row[0]).strip()
+        level_label = str(row[1]).strip()
         room_text = str(row[2]).strip()
+        student_no = normalize_digits(str(row[3]))
         first_name = str(row[4]).strip()
         last_name = str(row[5]).strip()
         status_text = str(row[6]).strip()
 
-        if not room_text:
+        if not level_label or level_label not in LEVEL_RULES:
             continue
 
-        order = int(order_text or "0")
-        status_code = STATUS_CODE_MAP.get(status_text, "")
+        if not detected_level:
+            detected_level = level_label
+
+        if not first_name:
+            continue
+
         students.append(
             SourceStudent(
-                order=order,
-                room=int(float(room_text)),
+                order=int(order_text or "0"),
+                level_label=level_label,
+                room=int(float(room_text)) if room_text else None,
+                student_no=student_no,
                 first_name=first_name,
                 last_name=last_name,
                 status_text=status_text,
-                status_code=status_code,
+                status_code=resolve_status_code(level_label, status_text),
             )
         )
 
-    return students
+    if not detected_level:
+        raise ValueError("could not detect level from the form file")
+    if detected_level not in LEVEL_RULES:
+        raise ValueError(f"unsupported level in form file: {detected_level}")
+
+    return students, detected_level
 
 
-def wait_for_user_ready(page) -> None:
+def wait_for_user_ready() -> None:
     print("")
     print("Browser opened.")
     print("1. Login if needed.")
     print("2. Open the DMC page that lists students for 'สอบได้ จบการศึกษา'.")
     print("3. By default the script will jump to page 1 before processing.")
     input("Press Enter when the page is ready: ")
-    page.wait_for_timeout(1200)
 
 
 def wait_for_student_table(page) -> None:
@@ -225,8 +296,8 @@ def set_query_param(url: str, key: str, value: str) -> str:
     return urlunparse(parsed._replace(query=new_query))
 
 
-def get_page_url(page_number: int) -> str:
-    return set_query_param(TARGET_URL, "page.page", str(page_number))
+def get_page_url(base_url: str, page_number: int) -> str:
+    return set_query_param(base_url, "page.page", str(page_number))
 
 
 def find_row_select(row):
@@ -244,17 +315,17 @@ def extract_row_info(row) -> dict | None:
         return None
 
     cell_texts = [cells.nth(idx).inner_text().strip() for idx in range(cells.count())]
-    room_digits = re.findall(r"\d+", cell_texts[3])
     index_digits = re.findall(r"\d+", row_id)
-    if not room_digits or not index_digits:
+    if not index_digits:
         return None
 
+    room_digits = re.findall(r"\d+", cell_texts[3])
     return {
         "row_id": row_id,
         "row_index": int(index_digits[0]),
         "seq_no": cell_texts[1],
-        "room": int(room_digits[0]),
-        "student_no": cell_texts[4],
+        "room": int(room_digits[0]) if room_digits else None,
+        "student_no": normalize_digits(cell_texts[4]),
         "title": cell_texts[5],
         "first_name": cell_texts[6],
         "last_name": cell_texts[7],
@@ -268,32 +339,64 @@ def extract_row_info(row) -> dict | None:
 
 
 def score_match(row_info: dict, student: SourceStudent) -> int:
-    room_bonus = 8 if student.room == row_info["room"] else 0
-    first_score = similarity(row_info["normalized_first_name"], student.normalized_first_name)
-    last_score = similarity(row_info["normalized_last_name"], student.normalized_last_name)
-    full_score = similarity(row_info["normalized_full_name"], student.normalized_full_name)
-    joined_source_score = similarity(
+    room_bonus = 0
+    if (
+        student.room is not None
+        and row_info["room"] is not None
+        and student.room == row_info["room"]
+    ):
+        room_bonus = 8
+
+    first_score = similarity(
+        row_info["normalized_first_name"], student.normalized_first_name
+    )
+    last_score = similarity(
+        row_info["normalized_last_name"], student.normalized_last_name
+    )
+    full_score = similarity(
+        row_info["normalized_full_name"], student.normalized_full_name
+    )
+    joined_score = similarity(
         row_info["normalized_joined_name"], student.normalized_full_name
     )
 
-    best_name_score = max(full_score, joined_source_score)
+    best_name_score = max(full_score, joined_score)
     if student.normalized_last_name:
         split_score = int(last_score * 0.45 + first_score * 0.35 + best_name_score * 0.20)
         return min(100, split_score + room_bonus)
 
-    return min(100, int(best_name_score + room_bonus))
+    return min(100, best_name_score + room_bonus)
 
 
 def choose_best_match(
     row_info: dict,
-    students: Iterable[SourceStudent],
+    students: list[SourceStudent],
     used_orders: set[int],
 ) -> tuple[SourceStudent | None, int]:
     remaining = [student for student in students if student.order not in used_orders]
-    room_candidates = [student for student in remaining if student.room == row_info["room"]]
-    candidates = room_candidates or remaining
-    if not candidates:
+    if not remaining:
         return None, 0
+
+    if row_info["student_no"]:
+        exact = [
+            student for student in remaining if student.student_no == row_info["student_no"]
+        ]
+        if len(exact) == 1:
+            return exact[0], 100
+        if len(exact) > 1:
+            scored_exact = [(score_match(row_info, student), student) for student in exact]
+            scored_exact.sort(key=lambda item: item[0], reverse=True)
+            return scored_exact[0][1], 100
+
+    candidates = remaining
+    if row_info["room"] is not None:
+        same_room = [
+            student
+            for student in remaining
+            if student.room is not None and student.room == row_info["room"]
+        ]
+        if same_room:
+            candidates = same_room
 
     scored = [(score_match(row_info, student), student) for student in candidates]
     scored.sort(key=lambda item: item[0], reverse=True)
@@ -319,11 +422,13 @@ def fill_current_page(
     min_score: int,
     dry_run: bool,
     stop_on_review: bool,
+    level_label: str,
 ) -> tuple[list[dict], dict | None]:
     rows = page.locator("tr[id^='tr-']")
     page_number = get_current_page_number(page)
     results: list[dict] = []
     stop_item: dict | None = None
+    rules = LEVEL_RULES[level_label]
 
     for idx in range(rows.count()):
         row = rows.nth(idx)
@@ -331,9 +436,47 @@ def fill_current_page(
         if not row_info:
             continue
 
+        if rules["require_exact_student_no"] and row_info["student_no"]:
+            exact_student = next(
+                (
+                    item
+                    for item in students
+                    if item.order not in used_orders
+                    and item.student_no == row_info["student_no"]
+                ),
+                None,
+            )
+            if exact_student is None:
+                result = {
+                    "page": page_number,
+                    "level": level_label,
+                    "portal_row_index": row_info["row_index"],
+                    "portal_seq_no": row_info["seq_no"],
+                    "portal_student_no": row_info["student_no"],
+                    "portal_room": row_info["room"],
+                    "portal_name": row_info["full_name"],
+                    "matched_order": None,
+                    "matched_room": None,
+                    "matched_student_no": None,
+                    "matched_name": None,
+                    "matched_status_text": None,
+                    "matched_status_code": rules["default_missing_code"],
+                    "score": 0,
+                    "applied": False,
+                    "note": "",
+                }
+                if not dry_run:
+                    row_info["select"].select_option(value=rules["default_missing_code"])
+                    page.wait_for_timeout(80)
+                result["applied"] = not dry_run
+                result["note"] = "default_missing_dry_run" if dry_run else "default_missing_filled"
+                results.append(result)
+                continue
+
         student, score = choose_best_match(row_info, students, used_orders)
         result = {
             "page": page_number,
+            "level": level_label,
             "portal_row_index": row_info["row_index"],
             "portal_seq_no": row_info["seq_no"],
             "portal_student_no": row_info["student_no"],
@@ -341,6 +484,7 @@ def fill_current_page(
             "portal_name": row_info["full_name"],
             "matched_order": student.order if student else None,
             "matched_room": student.room if student else None,
+            "matched_student_no": student.student_no if student else None,
             "matched_name": student.full_name if student else None,
             "matched_status_text": student.status_text if student else None,
             "matched_status_code": student.status_code if student else None,
@@ -350,6 +494,16 @@ def fill_current_page(
         }
 
         if not student:
+            if rules["default_missing_code"]:
+                if not dry_run:
+                    row_info["select"].select_option(value=rules["default_missing_code"])
+                    page.wait_for_timeout(80)
+                result["matched_status_code"] = rules["default_missing_code"]
+                result["applied"] = not dry_run
+                result["note"] = "default_missing_dry_run" if dry_run else "default_missing_filled"
+                results.append(result)
+                continue
+
             result["note"] = "no_match"
             results.append(result)
             if stop_on_review:
@@ -358,6 +512,21 @@ def fill_current_page(
             continue
 
         if score < min_score:
+            ambiguity_floor = rules["ambiguity_floor"]
+            if (
+                rules["default_missing_code"]
+                and ambiguity_floor is not None
+                and score < ambiguity_floor
+            ):
+                if not dry_run:
+                    row_info["select"].select_option(value=rules["default_missing_code"])
+                    page.wait_for_timeout(80)
+                result["matched_status_code"] = rules["default_missing_code"]
+                result["applied"] = not dry_run
+                result["note"] = "default_missing_dry_run" if dry_run else "default_missing_filled"
+                results.append(result)
+                continue
+
             result["note"] = f"low_confidence_below_{min_score}"
             results.append(result)
             if stop_on_review:
@@ -409,9 +578,8 @@ def save_current_page(page) -> None:
     page.wait_for_timeout(1200)
 
 
-def goto_page_number(page, page_number: int) -> None:
-    target = get_page_url(page_number)
-    page.goto(target, wait_until="domcontentloaded", timeout=90000)
+def goto_page_number(page, page_number: int, base_url: str) -> None:
+    page.goto(get_page_url(base_url, page_number), wait_until="domcontentloaded", timeout=90000)
     wait_for_student_table(page)
     page.wait_for_timeout(500)
 
@@ -420,6 +588,11 @@ def print_summary(results: list[dict], min_score: int) -> None:
     total_rows = len(results)
     filled = sum(1 for item in results if item["note"] == "filled")
     dry_run_rows = sum(1 for item in results if item["note"] == "dry_run")
+    default_missing = sum(
+        1
+        for item in results
+        if item["note"] in {"default_missing_dry_run", "default_missing_filled"}
+    )
     low_conf = [item for item in results if item["note"].startswith("low_confidence")]
     no_match = [item for item in results if item["note"] == "no_match"]
     unmapped = [item for item in results if item["note"] == "status_code_not_mapped"]
@@ -429,6 +602,7 @@ def print_summary(results: list[dict], min_score: int) -> None:
     print(f"rows seen: {total_rows}")
     print(f"filled: {filled}")
     print(f"dry-run matched: {dry_run_rows}")
+    print(f"default missing applied: {default_missing}")
     print(f"low confidence (< {min_score}): {len(low_conf)}")
     print(f"no match: {len(no_match)}")
     print(f"status code not mapped: {len(unmapped)}")
@@ -440,12 +614,13 @@ def print_summary(results: list[dict], min_score: int) -> None:
         print("items to review:")
         for item in review_items:
             print(
-                f"- page {item['page']} row {item['portal_seq_no']} "
-                f"| room {item['portal_room']} "
-                f"| portal={item['portal_name']} "
-                f"| matched={item['matched_name']} "
-                f"| note={item['note']} "
-                f"| score={item['score']}"
+                f"- page {item['page']} row {item['portal_seq_no']}"
+                f" | room {item['portal_room']}"
+                f" | student_no {item['portal_student_no']}"
+                f" | portal={item['portal_name']}"
+                f" | matched={item['matched_name']}"
+                f" | note={item['note']}"
+                f" | score={item['score']}"
             )
 
 
@@ -470,11 +645,13 @@ def run(
     dry_run: bool,
     resume_current: bool,
     stop_on_review: bool,
+    level_label: str,
+    base_url: str,
 ) -> tuple[list[dict], dict | None]:
     wait_for_student_table(page)
     if not resume_current:
         print("navigating to page 1 ...")
-        goto_page_number(page, 1)
+        goto_page_number(page, 1, base_url)
 
     start_page = get_current_page_number(page)
     total_pages = get_total_pages(page)
@@ -496,25 +673,38 @@ def run(
             min_score,
             dry_run,
             stop_on_review,
+            level_label,
         )
         all_results.extend(page_results)
 
-        page_filled = sum(1 for item in page_results if item["note"] in {"filled", "dry_run"})
+        page_filled = sum(
+            1
+            for item in page_results
+            if item["note"] in {
+                "filled",
+                "dry_run",
+                "default_missing_dry_run",
+                "default_missing_filled",
+            }
+        )
         page_low = sum(
             1 for item in page_results if str(item["note"]).startswith("low_confidence")
         )
-        page_missing = sum(1 for item in page_results if needs_review(item["note"]))
+        page_review = sum(1 for item in page_results if needs_review(item["note"]))
         print(
-            f"page {current_page}: matched={page_filled} "
-            f"low_conf={page_low} missing={page_missing}"
+            f"page {current_page}: matched={page_filled}"
+            f" low_conf={page_low}"
+            f" missing={page_review}"
         )
 
         if stop_item is not None:
             stopped_item = stop_item
             print(
-                f"stopping on review item at page {stop_item['page']} "
-                f"row {stop_item['portal_seq_no']} | portal={stop_item['portal_name']} "
-                f"| note={stop_item['note']} | score={stop_item['score']}"
+                f"stopping on review item at page {stop_item['page']}"
+                f" row {stop_item['portal_seq_no']}"
+                f" | portal={stop_item['portal_name']}"
+                f" | note={stop_item['note']}"
+                f" | score={stop_item['score']}"
             )
             break
 
@@ -527,7 +717,7 @@ def run(
 
         current_page += 1
         print(f"moving to page {current_page} ...")
-        goto_page_number(page, current_page)
+        goto_page_number(page, current_page, base_url)
 
     return all_results, stopped_item
 
@@ -535,8 +725,8 @@ def run(
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Fill 'ศึกษาต่อหรือไม่' for every page in DMC, save each page, "
-            "and move to the next page automatically."
+            "Fill 'ศึกษาต่อหรือไม่' for every page in DMC, save each page,"
+            " and move to the next page automatically."
         )
     )
     parser.add_argument(
@@ -577,8 +767,9 @@ def main() -> int:
         )
 
     print(f"final file: {final_file}")
-
-    students = load_source_data(final_file)
+    students, level_label = load_source_data(final_file)
+    level_rules = LEVEL_RULES[level_label]
+    base_url = build_target_url(level_rules["level_code"])
     PROFILE_DIR.mkdir(exist_ok=True)
 
     with sync_playwright() as playwright:
@@ -589,8 +780,9 @@ def main() -> int:
         )
         try:
             page = context.pages[0] if context.pages else context.new_page()
-            page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=90000)
-            wait_for_user_ready(page)
+            page.goto(base_url, wait_until="domcontentloaded", timeout=90000)
+            wait_for_user_ready()
+            page.wait_for_timeout(1200)
             results, stopped_item = run(
                 page,
                 students,
@@ -598,6 +790,8 @@ def main() -> int:
                 args.dry_run,
                 args.resume_current,
                 args.stop_on_review,
+                level_label,
+                base_url,
             )
             json_path, csv_path, review_csv_path = save_reports(results)
             print_summary(results, args.min_score)
@@ -607,8 +801,8 @@ def main() -> int:
             print(f"review csv saved: {review_csv_path}")
             if stopped_item is not None:
                 print(
-                    "stopped on review item. current page was not saved. "
-                    "check the review csv before continuing."
+                    "stopped on review item. current page was not saved."
+                    " check the review csv before continuing."
                 )
             elif args.dry_run:
                 print("dry-run completed. nothing was submitted.")
