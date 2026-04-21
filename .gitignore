@@ -1,0 +1,6 @@
+.playwright-obec-profile/
+__pycache__/
+*.pyc
+obec-fill-report.csv
+obec-fill-report.json
+obec-fill-review.csv
