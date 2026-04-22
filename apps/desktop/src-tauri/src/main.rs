@@ -5,17 +5,18 @@ use std::{
     collections::HashMap,
     env,
     io::{BufRead, BufReader, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{Arc, Mutex as StdMutex},
     time::Duration,
 };
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::oneshot;
 use url::Url;
 
 type PendingMap = Arc<StdMutex<HashMap<String, oneshot::Sender<Result<Value, String>>>>>;
+const SIDECAR_RPC_TIMEOUT_SECS: u64 = 600;
 
 #[derive(Clone)]
 struct RunningSidecar {
@@ -55,6 +56,14 @@ struct UpdateMetadata {
     body: Option<String>,
 }
 
+struct SidecarLaunchSpec {
+    program: PathBuf,
+    args: Vec<String>,
+    current_dir: Option<PathBuf>,
+    envs: Vec<(String, String)>,
+    mode: &'static str,
+}
+
 fn updater_endpoint() -> Option<String> {
     if let Ok(value) = env::var("DMC_UPDATER_ENDPOINT") {
         let trimmed = value.trim();
@@ -89,17 +98,26 @@ fn updater_pubkey() -> Option<String> {
 
 fn repo_root() -> Result<PathBuf, String> {
     if let Ok(value) = env::var("DMC_REPO_ROOT") {
-        return Ok(PathBuf::from(value));
+        let path = PathBuf::from(value);
+        if path.exists() {
+            return Ok(path);
+        }
     }
 
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(3)
         .map(PathBuf::from)
-        .ok_or_else(|| "Could not determine repo root.".to_string())
+        .ok_or_else(|| "Could not determine repo root.".to_string())?;
+
+    if candidate.exists() {
+        return Ok(candidate);
+    }
+
+    Err("Repo root is not available in packaged mode.".to_string())
 }
 
-fn combined_python_path(repo_root: &PathBuf) -> Result<String, String> {
+fn combined_python_path(repo_root: &Path) -> Result<String, String> {
     let sidecar_path = repo_root.join("apps").join("sidecar");
     let mut entries = vec![sidecar_path];
     if let Some(existing) = env::var_os("PYTHONPATH") {
@@ -109,6 +127,115 @@ fn combined_python_path(repo_root: &PathBuf) -> Result<String, String> {
         .map_err(|error| error.to_string())?
         .into_string()
         .map_err(|_| "PYTHONPATH contains unsupported characters.".to_string())
+}
+
+fn app_data_sidecar_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|path| path.join("sidecar"))
+        .map_err(|error| error.to_string())
+}
+
+fn bundled_sidecar_root(app: &AppHandle) -> Option<PathBuf> {
+    if let Ok(value) = env::var("DMC_SIDECAR_BUNDLE_DIR") {
+        let path = PathBuf::from(value);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+
+    let resource_dir = app.path().resource_dir().ok()?;
+    let candidate = resource_dir.join("bundled-sidecar");
+    if candidate.exists() {
+        return Some(candidate);
+    }
+    None
+}
+
+fn bundled_sidecar_launch_spec(app: &AppHandle) -> Result<Option<SidecarLaunchSpec>, String> {
+    let sidecar_root = match bundled_sidecar_root(app) {
+        Some(path) => path,
+        None => return Ok(None),
+    };
+
+    let explicit_exe = env::var("DMC_SIDECAR_EXE")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| path.exists());
+    let program = explicit_exe.unwrap_or_else(|| sidecar_root.join("dmc-sidecar.exe"));
+    if !program.exists() {
+        return Ok(None);
+    }
+
+    let data_dir = app_data_sidecar_dir(app)?;
+    let browser_dir = data_dir.join("ms-playwright");
+    let resources_dir = sidecar_root.join("sidecar-resources");
+    let mut envs = vec![
+        ("DMC_DATA_DIR".to_string(), data_dir.to_string_lossy().to_string()),
+        (
+            "PLAYWRIGHT_BROWSERS_PATH".to_string(),
+            browser_dir.to_string_lossy().to_string(),
+        ),
+    ];
+    if resources_dir.exists() {
+        envs.push((
+            "DMC_BUNDLED_RESOURCES_DIR".to_string(),
+            resources_dir.to_string_lossy().to_string(),
+        ));
+    }
+
+    Ok(Some(SidecarLaunchSpec {
+        program,
+        args: Vec::new(),
+        current_dir: Some(sidecar_root),
+        envs,
+        mode: "bundled",
+    }))
+}
+
+fn python_sidecar_launch_specs(app: &AppHandle) -> Result<Vec<SidecarLaunchSpec>, String> {
+    let repo_root = repo_root()?;
+    let python_path = combined_python_path(&repo_root)?;
+    let data_dir = app_data_sidecar_dir(app)?;
+    let browser_dir = data_dir.join("ms-playwright");
+    let shared_envs = vec![
+        ("PYTHONPATH".to_string(), python_path),
+        ("DMC_REPO_ROOT".to_string(), repo_root.to_string_lossy().to_string()),
+        ("DMC_DATA_DIR".to_string(), data_dir.to_string_lossy().to_string()),
+        (
+            "PLAYWRIGHT_BROWSERS_PATH".to_string(),
+            browser_dir.to_string_lossy().to_string(),
+        ),
+    ];
+
+    let program_candidates: Vec<(String, Vec<String>)> = match env::var("DMC_PYTHON") {
+        Ok(custom) => vec![
+            (custom, vec!["-m".to_string(), "dmc_sidecar".to_string()]),
+            ("python".to_string(), vec!["-m".to_string(), "dmc_sidecar".to_string()]),
+            (
+                "py".to_string(),
+                vec!["-3".to_string(), "-m".to_string(), "dmc_sidecar".to_string()],
+            ),
+        ],
+        Err(_) => vec![
+            ("python".to_string(), vec!["-m".to_string(), "dmc_sidecar".to_string()]),
+            (
+                "py".to_string(),
+                vec!["-3".to_string(), "-m".to_string(), "dmc_sidecar".to_string()],
+            ),
+        ],
+    };
+
+    Ok(program_candidates
+        .into_iter()
+        .map(|(program, args)| SidecarLaunchSpec {
+            program: PathBuf::from(program),
+            args,
+            current_dir: Some(repo_root.clone()),
+            envs: shared_envs.clone(),
+            mode: "python",
+        })
+        .collect())
 }
 
 fn finish_pending_with_error(pending: &PendingMap, message: &str) {
@@ -122,36 +249,34 @@ fn finish_pending_with_error(pending: &PendingMap, message: &str) {
 }
 
 fn spawn_sidecar_process(app: &AppHandle) -> Result<RunningSidecar, String> {
-    let repo_root = repo_root()?;
-    let python_path = combined_python_path(&repo_root)?;
-    let program_candidates: Vec<(String, Vec<&str>)> = match env::var("DMC_PYTHON") {
-        Ok(custom) => vec![
-            (custom, vec!["-m", "dmc_sidecar"]),
-            ("python".to_string(), vec!["-m", "dmc_sidecar"]),
-            ("py".to_string(), vec!["-3", "-m", "dmc_sidecar"]),
-        ],
-        Err(_) => vec![
-            ("python".to_string(), vec!["-m", "dmc_sidecar"]),
-            ("py".to_string(), vec!["-3", "-m", "dmc_sidecar"]),
-        ],
-    };
+    let mut launch_specs = Vec::new();
+    if let Some(spec) = bundled_sidecar_launch_spec(app)? {
+        launch_specs.push(spec);
+    }
+    if let Ok(specs) = python_sidecar_launch_specs(app) {
+        launch_specs.extend(specs);
+    }
 
-    let mut last_error = String::from("No Python runtime candidate succeeded.");
+    let mut last_error = String::from("No sidecar runtime candidate succeeded.");
 
-    for (program, args) in program_candidates {
-        let mut command = Command::new(&program);
+    for spec in launch_specs {
+        let mut command = Command::new(&spec.program);
         command
-            .args(args)
-            .current_dir(&repo_root)
-            .env("PYTHONPATH", &python_path)
+            .args(&spec.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(current_dir) = &spec.current_dir {
+            command.current_dir(current_dir);
+        }
+        for (key, value) in &spec.envs {
+            command.env(key, value);
+        }
 
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(error) => {
-                last_error = format!("{program}: {error}");
+                last_error = format!("{} [{}]: {error}", spec.program.display(), spec.mode);
                 continue;
             }
         };
@@ -277,13 +402,17 @@ fn spawn_sidecar_process(app: &AppHandle) -> Result<RunningSidecar, String> {
             serde_json::json!({
                 "type": "sidecar_started",
                 "pid": pid,
+                "mode": spec.mode,
+                "program": spec.program,
             }),
         );
 
         return Ok(running);
     }
 
-    Err(format!("Could not start sidecar. {last_error}"))
+    Err(format!(
+        "Could not start sidecar. {last_error}. For packaged builds, run `pnpm run sidecar:bundle` before `pnpm run desktop:package`."
+    ))
 }
 
 async fn ensure_sidecar_running(
@@ -365,7 +494,7 @@ async fn perform_rpc_request(
         }
     }
 
-    let response = tokio::time::timeout(Duration::from_secs(180), receiver)
+    let response = tokio::time::timeout(Duration::from_secs(SIDECAR_RPC_TIMEOUT_SECS), receiver)
         .await
         .map_err(|_| "Timed out waiting for sidecar response.".to_string())?
         .map_err(|_| "Sidecar response channel closed unexpectedly.".to_string())??;

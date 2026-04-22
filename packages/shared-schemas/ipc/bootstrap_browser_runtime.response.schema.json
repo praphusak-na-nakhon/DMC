@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dmc-assistant.dev/schemas/ipc/bootstrap_browser_runtime.response.schema.json",
+  "title": "BootstrapBrowserRuntimeResponse",
+  "allOf": [
+    {
+      "$ref": "https://dmc-assistant.dev/schemas/ipc/get_browser_runtime_status.response.schema.json"
+    }
+  ]
+}

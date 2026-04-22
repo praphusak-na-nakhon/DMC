@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import messages from "./i18n/th.json";
 import {
   activateLicense,
+  bootstrapBrowserRuntime,
   cancelJob,
   checkForAppUpdate,
+  getBrowserRuntimeStatus,
   getJobStatus,
   getLicenseStatus,
   getModuleConfigStatus,
@@ -23,7 +25,7 @@ import {
   validateExcel,
 } from "./lib/rpcClient";
 import { useJobStore } from "./stores/useJobStore";
-import type { AvailableUpdate, JobStatusSnapshot, LicenseStatus, UpdaterStatus } from "./types/contracts";
+import type { AvailableUpdate, BrowserRuntimeStatus, JobStatusSnapshot, LicenseStatus, UpdaterStatus } from "./types/contracts";
 
 function formatSummary(template: string, accepted: number, total: number): string {
   return template.replace("{accepted}", String(accepted)).replace("{total}", String(total));
@@ -131,11 +133,14 @@ export function App() {
   const [licenseKey, setLicenseKey] = useState("");
   const [deviceName, setDeviceName] = useState("dmc-desktop");
   const [isActivatingLicense, setIsActivatingLicense] = useState(false);
+  const [browserRuntimeStatus, setBrowserRuntimeStatus] = useState<BrowserRuntimeStatus | null>(null);
+  const [isBootstrappingBrowser, setIsBootstrappingBrowser] = useState(false);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [updateProgress, setUpdateProgress] = useState<{ downloaded: number; contentLength: number | null } | null>(
     null,
   );
   const licenseBlocksStart = licenseStatus !== null && !licenseStatus.can_start_jobs;
+  const browserRuntimeBlocksStart = browserRuntimeStatus !== null && !browserRuntimeStatus.installed;
 
   function describeLicenseStatus(status: LicenseStatus): string {
     if (!status.configured) {
@@ -200,6 +205,17 @@ export function App() {
     }
   }
 
+  async function handleLoadBrowserRuntime(): Promise<BrowserRuntimeStatus> {
+    try {
+      const status = await getBrowserRuntimeStatus();
+      setBrowserRuntimeStatus(status);
+      return status;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
   async function handleConnect() {
     setErrorMessage(null);
     setConnectionState("connecting");
@@ -210,6 +226,7 @@ export function App() {
       setModuleConfigStatus(await getModuleConfigStatus("graduation"));
       await handleLoadUpdaterStatus();
       await handleLoadJobs();
+      await handleLoadBrowserRuntime();
       await handleRefreshLicense(true);
       await handleSyncConfig();
     } catch (error) {
@@ -363,6 +380,11 @@ export function App() {
     setErrorMessage(null);
     setIsStartingJob(true);
     try {
+      const browserStatus = await handleLoadBrowserRuntime();
+      if (!browserStatus.installed) {
+        setErrorMessage(browserStatus.message ?? "Chromium browser runtime is not installed.");
+        return;
+      }
       const latestLicense = await handleRefreshLicense(true);
       if (!latestLicense.can_start_jobs) {
         setErrorMessage(latestLicense.message ?? messages.app.license.reconnectRequired);
@@ -386,6 +408,27 @@ export function App() {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setIsStartingJob(false);
+    }
+  }
+
+  async function handleBootstrapBrowserRuntime() {
+    setErrorMessage(null);
+    setIsBootstrappingBrowser(true);
+    try {
+      const status = await bootstrapBrowserRuntime();
+      setBrowserRuntimeStatus(status);
+      pushSidecarMessage(
+        status.installed
+          ? `Chromium runtime ready: ${status.install_dir}`
+          : `Chromium runtime install failed: ${status.last_error ?? "unknown error"}`,
+      );
+      if (!status.installed) {
+        setErrorMessage(status.last_error ?? status.message ?? "Chromium browser runtime is not installed.");
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsBootstrappingBrowser(false);
     }
   }
 
@@ -713,14 +756,14 @@ export function App() {
               </button>
               <button
                 style={buttonStyle}
-                disabled={isStartingJob || licenseBlocksStart}
+                disabled={isStartingJob || isBootstrappingBrowser || licenseBlocksStart || browserRuntimeBlocksStart}
                 onClick={() => void handleStart(true)}
               >
                 {messages.app.startDryRun}
               </button>
               <button
                 style={{ ...buttonStyle, backgroundColor: "rgb(22, 163, 74)" }}
-                disabled={isStartingJob || licenseBlocksStart}
+                disabled={isStartingJob || isBootstrappingBrowser || licenseBlocksStart || browserRuntimeBlocksStart}
                 onClick={() => void handleStart(false)}
               >
                 {messages.app.startLive}
@@ -835,6 +878,45 @@ export function App() {
                 {moduleConfigStatus.last_error ? (
                   <div>
                     {messages.app.configFallback}: {moduleConfigStatus.last_error}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {browserRuntimeStatus ? (
+              <div
+                style={{
+                  borderRadius: "12px",
+                  backgroundColor: browserRuntimeStatus.installed ? "rgb(240, 253, 250)" : "rgb(255, 247, 237)",
+                  border: browserRuntimeStatus.installed
+                    ? "1px solid rgb(167, 243, 208)"
+                    : "1px solid rgb(253, 186, 116)",
+                  color: browserRuntimeStatus.installed ? "rgb(6, 95, 70)" : "rgb(154, 52, 18)",
+                  padding: "12px 14px",
+                  display: "grid",
+                  gap: "8px",
+                }}
+              >
+                <div style={{ fontWeight: 700 }}>Browser Runtime</div>
+                <div>{browserRuntimeStatus.message ?? "-"}</div>
+                <div>Install dir: {browserRuntimeStatus.install_dir}</div>
+                <div>Executable: {browserRuntimeStatus.executable_path ?? "-"}</div>
+                {browserRuntimeStatus.last_error ? <div>Last error: {browserRuntimeStatus.last_error}</div> : null}
+                {!browserRuntimeStatus.installed ? (
+                  <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                    <button
+                      style={{ ...buttonStyle, backgroundColor: "rgb(37, 99, 235)" }}
+                      disabled={connectionState !== "ready" || isBootstrappingBrowser}
+                      onClick={() => void handleBootstrapBrowserRuntime()}
+                    >
+                      {isBootstrappingBrowser ? "Installing Chromium..." : "Install Chromium Runtime"}
+                    </button>
+                    <button
+                      style={{ ...buttonStyle, backgroundColor: "rgb(8, 145, 178)" }}
+                      disabled={connectionState !== "ready" || isBootstrappingBrowser}
+                      onClick={() => void handleLoadBrowserRuntime()}
+                    >
+                      Re-check Runtime
+                    </button>
                   </div>
                 ) : null}
               </div>

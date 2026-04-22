@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dmc-assistant.dev/schemas/ipc/bootstrap_browser_runtime.request.schema.json",
+  "title": "BootstrapBrowserRuntimeRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {},
+  "required": []
+}

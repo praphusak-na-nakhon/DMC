@@ -170,6 +170,86 @@ def test_activate_license_rpc_returns_snapshot(monkeypatch, tmp_path: Path) -> N
     assert recorded == {"result": "ACTIVATION_OK", "offline_mode": False}
 
 
+def test_get_browser_runtime_status_rpc(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    server = RpcServer(emit_notification=lambda payload: None)
+    monkeypatch.setattr(
+        "dmc_sidecar.rpc.get_browser_runtime_status",
+        lambda: type(
+            "Status",
+            (),
+            {
+                "model_dump": lambda self: {
+                    "installed": True,
+                    "install_dir": str(tmp_path / "ms-playwright"),
+                    "executable_path": str(tmp_path / "ms-playwright" / "chromium-1208" / "chrome-win" / "chrome.exe"),
+                    "bootstrap_supported": True,
+                    "bootstrap_performed": False,
+                    "message": "ready",
+                    "last_error": None,
+                }
+            },
+        )(),
+    )
+
+    payload = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "req-browser-status",
+            "method": "get_browser_runtime_status",
+            "params": {},
+        }
+    )
+
+    response = json.loads(server.handle_text(payload))
+
+    assert response["result"]["installed"] is True
+    assert response["result"]["bootstrap_supported"] is True
+
+
+def test_start_job_rpc_requires_browser_runtime(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    server = RpcServer(emit_notification=lambda payload: None)
+    monkeypatch.setattr(
+        "dmc_sidecar.rpc.get_browser_runtime_status",
+        lambda: type(
+            "Status",
+            (),
+            {
+                "installed": False,
+                "model_dump": lambda self: {
+                    "installed": False,
+                    "install_dir": str(tmp_path / "ms-playwright"),
+                    "executable_path": None,
+                    "bootstrap_supported": True,
+                    "bootstrap_performed": False,
+                    "message": "missing",
+                    "last_error": None,
+                }
+            },
+        )(),
+    )
+
+    payload = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "req-start-browser",
+            "method": "start_job",
+            "params": {
+                "job_id": "job-browser",
+                "module": "graduation",
+                "excel_path": "C:\\data\\m3.xlsx",
+                "options": {"dry_run": True},
+            },
+        }
+    )
+
+    response = json.loads(server.handle_text(payload))
+
+    assert response["error"]["code"] == "PLAYWRIGHT_BROWSER_MISSING"
+    assert response["error"]["details"]["installed"] is False
+
+
 def test_refresh_license_status_rpc_records_telemetry(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
     store = LicenseStore()
@@ -242,6 +322,25 @@ def test_resume_existing_job_rpc_uses_checkpoint_state_after_pause(monkeypatch, 
     server = RpcServer(emit_notification=lambda payload: None)
     before_resume = server.job_store.get_status("job-1")
     started: dict[str, object] = {}
+    monkeypatch.setattr(
+        "dmc_sidecar.rpc.get_browser_runtime_status",
+        lambda: type(
+            "Status",
+            (),
+            {
+                "installed": True,
+                "model_dump": lambda self: {
+                    "installed": True,
+                    "install_dir": str(tmp_path / "ms-playwright"),
+                    "executable_path": str(tmp_path / "ms-playwright" / "chromium-1208" / "chrome-win" / "chrome.exe"),
+                    "bootstrap_supported": True,
+                    "bootstrap_performed": False,
+                    "message": "ready",
+                    "last_error": None,
+                }
+            },
+        )(),
+    )
 
     def fake_start_job(*, job_id: str, module_name: str, excel_path: Path, options: dict[str, object]) -> None:
         started["job_id"] = job_id

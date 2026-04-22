@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 
 from ..checkpoint import JobCheckpoint
-from ..config import profile_dir_for_license, repo_root, reports_dir
+from ..config import legacy_script_path, profile_dir_for_license, reports_dir
 from ..module_config import load_effective_config, sync_module_config
 from ..runtime import JobContext, utc_now
 from ..schemas import PreviewRow, ValidateExcelResponse, ValidationWarning
@@ -20,7 +20,7 @@ class GraduationModule(AutomationModule):
     name = "graduation"
 
     def _load_legacy_module(self) -> ModuleType:
-        script_path = repo_root() / "fill_obec_portal.py"
+        script_path = legacy_script_path()
         spec = importlib.util.spec_from_file_location("legacy_fill_obec_portal", script_path)
         if spec is None or spec.loader is None:
             raise RuntimeError(f"could not load legacy script: {script_path}")

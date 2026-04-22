@@ -154,6 +154,16 @@ export type LicenseStatus = {
   last_error: string | null;
 };
 
+export type BrowserRuntimeStatus = {
+  installed: boolean;
+  install_dir: string;
+  executable_path: string | null;
+  bootstrap_supported: boolean;
+  bootstrap_performed: boolean;
+  message: string | null;
+  last_error: string | null;
+};
+
 export type ListJobsResponse = {
   items: JobStatusSnapshot[];
 };
@@ -370,6 +380,19 @@ export function parseLicenseStatus(value: unknown): LicenseStatus {
     needs_attention: readBoolean(record, "needs_attention", "license_status"),
     message: readOptionalString(record, "message", "license_status"),
     last_error: readOptionalString(record, "last_error", "license_status"),
+  };
+}
+
+export function parseBrowserRuntimeStatus(value: unknown): BrowserRuntimeStatus {
+  const record = asRecord(value, "browser_runtime_status");
+  return {
+    installed: readBoolean(record, "installed", "browser_runtime_status"),
+    install_dir: readString(record, "install_dir", "browser_runtime_status"),
+    executable_path: readOptionalString(record, "executable_path", "browser_runtime_status"),
+    bootstrap_supported: readBoolean(record, "bootstrap_supported", "browser_runtime_status"),
+    bootstrap_performed: readBoolean(record, "bootstrap_performed", "browser_runtime_status"),
+    message: readOptionalString(record, "message", "browser_runtime_status"),
+    last_error: readOptionalString(record, "last_error", "browser_runtime_status"),
   };
 }
 

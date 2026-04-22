@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dmc-assistant.dev/schemas/ipc/get_browser_runtime_status.response.schema.json",
+  "title": "BrowserRuntimeStatus",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "installed": { "type": "boolean" },
+    "install_dir": { "type": "string" },
+    "executable_path": { "type": ["string", "null"] },
+    "bootstrap_supported": { "type": "boolean" },
+    "bootstrap_performed": { "type": "boolean" },
+    "message": { "type": ["string", "null"] },
+    "last_error": { "type": ["string", "null"] }
+  },
+  "required": [
+    "installed",
+    "install_dir",
+    "executable_path",
+    "bootstrap_supported",
+    "bootstrap_performed",
+    "message",
+    "last_error"
+  ]
+}

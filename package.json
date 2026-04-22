@@ -10,8 +10,10 @@
   "scripts": {
     "desktop:dev": "corepack pnpm --dir apps/desktop dev",
     "desktop:build": "corepack pnpm --dir apps/desktop build",
+    "desktop:package": "corepack pnpm run sidecar:bundle && corepack pnpm --dir apps/desktop exec tauri build",
     "desktop:typecheck": "corepack pnpm --dir apps/desktop exec tsc --noEmit -p tsconfig.json",
     "desktop:cargo-check": "cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml",
+    "sidecar:bundle": "powershell -ExecutionPolicy Bypass -File .\\apps\\sidecar\\scripts\\build_windows_bundle.ps1",
     "sidecar:test": ".\\.venv\\Scripts\\python -m pytest apps/sidecar/tests",
     "sidecar:typecheck": ".\\.venv\\Scripts\\python -m mypy --strict apps/sidecar/dmc_sidecar",
     "cloud:dev": ".\\.venv\\Scripts\\python -m uvicorn apps.cloud.app.main:app --reload",

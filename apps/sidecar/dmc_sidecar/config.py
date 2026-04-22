@@ -11,10 +11,23 @@ SIDECAR_VERSION = "0.1.0"
 
 
 def repo_root() -> Path:
+    override = os.getenv("DMC_REPO_ROOT", "").strip()
+    if override:
+        return Path(override)
     return Path(__file__).resolve().parents[3]
 
 
+def bundled_resources_root() -> Path | None:
+    value = os.getenv("DMC_BUNDLED_RESOURCES_DIR", "").strip()
+    if not value:
+        return None
+    return Path(value)
+
+
 def default_data_dir() -> Path:
+    override = os.getenv("DMC_DATA_DIR", "").strip()
+    if override:
+        return Path(override)
     return repo_root() / ".dmc-assistant-data"
 
 
@@ -44,6 +57,13 @@ def profiles_dir() -> Path:
     path = ensure_data_dir() / "profiles"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def playwright_browsers_dir() -> Path:
+    override = os.getenv("PLAYWRIGHT_BROWSERS_PATH", "").strip()
+    if override:
+        return Path(override)
+    return ensure_data_dir() / "ms-playwright"
 
 
 def profile_dir_for_license(license_key: str | None) -> Path:
@@ -85,4 +105,21 @@ def require_cloud_api_bearer_token() -> str:
 
 
 def config_signing_keys_path() -> Path:
+    bundled_root = bundled_resources_root()
+    if bundled_root is not None:
+        return bundled_root / "shared-schemas" / "config-signing" / "keys.json"
     return repo_root() / "packages" / "shared-schemas" / "config-signing" / "keys.json"
+
+
+def module_configs_root() -> Path:
+    bundled_root = bundled_resources_root()
+    if bundled_root is not None:
+        return bundled_root / "module-configs"
+    return repo_root() / "packages" / "module-configs"
+
+
+def legacy_script_path() -> Path:
+    bundled_root = bundled_resources_root()
+    if bundled_root is not None:
+        return bundled_root / "fill_obec_portal.py"
+    return repo_root() / "fill_obec_portal.py"

@@ -17,8 +17,8 @@ from pydantic import BaseModel, ConfigDict
 from .config import (
     config_signing_keys_path,
     configs_dir,
+    module_configs_root,
     require_cloud_api_bearer_token,
-    repo_root,
     secure_cloud_base_url,
 )
 
@@ -50,7 +50,7 @@ class ModuleConfigState:
 
 
 def bundled_config_path(module: str) -> Path:
-    return repo_root() / "packages" / "module-configs" / module / "v1.json"
+    return module_configs_root() / module / "v1.json"
 
 
 def cached_config_path(module: str) -> Path:

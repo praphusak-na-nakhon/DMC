@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AvailableUpdate,
+  BrowserRuntimeStatus,
   JobStatusSnapshot,
   LicenseStatus,
   ListJobsResponse,
@@ -15,6 +16,7 @@ import type {
 import {
   parseLicenseStatus,
   parseAvailableUpdate,
+  parseBrowserRuntimeStatus,
   parseJobActionResponse,
   parseJobStatusSnapshot,
   parseListJobsResponse,
@@ -141,6 +143,16 @@ export async function activateLicense(input: {
 export async function refreshLicenseStatus(): Promise<LicenseStatus> {
   const result = await sidecarRequest<unknown>("refresh_license_status", {});
   return parseLicenseStatus(result);
+}
+
+export async function getBrowserRuntimeStatus(): Promise<BrowserRuntimeStatus> {
+  const result = await sidecarRequest<unknown>("get_browser_runtime_status", {});
+  return parseBrowserRuntimeStatus(result);
+}
+
+export async function bootstrapBrowserRuntime(): Promise<BrowserRuntimeStatus> {
+  const result = await sidecarRequest<unknown>("bootstrap_browser_runtime", {});
+  return parseBrowserRuntimeStatus(result);
 }
 
 export async function startGraduationJob(input: {

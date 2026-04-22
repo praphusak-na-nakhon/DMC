@@ -18,3 +18,6 @@ dist/
 coverage/
 target/
 apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/bundled-sidecar/*
+!apps/desktop/src-tauri/bundled-sidecar/.gitkeep
+apps/sidecar/build/

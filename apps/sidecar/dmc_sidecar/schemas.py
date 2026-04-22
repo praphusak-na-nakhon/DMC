@@ -164,3 +164,15 @@ class ModuleConfigStatus(BaseModel):
     checked_at: str
     updated: bool
     last_error: str | None
+
+
+class BrowserRuntimeStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    installed: bool
+    install_dir: str
+    executable_path: str | None
+    bootstrap_supported: bool
+    bootstrap_performed: bool
+    message: str | None
+    last_error: str | None

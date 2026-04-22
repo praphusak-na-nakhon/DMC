@@ -9,6 +9,7 @@ from typing import Any, Callable
 from pydantic import ValidationError
 
 from . import __version__
+from .browser_runtime import bootstrap_browser_runtime, get_browser_runtime_status
 from .job_store import JobStore
 from .license_client import activate_license, build_license_status_snapshot, refresh_license_status
 from .license_store import LicenseStore
@@ -90,6 +91,14 @@ class RpcServer:
                 result = build_license_status_snapshot(self.license_store.get_license()).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
+            if request.method == "get_browser_runtime_status":
+                result = get_browser_runtime_status().model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "bootstrap_browser_runtime":
+                result = bootstrap_browser_runtime().model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
             if request.method == "activate_license":
                 params = ActivateLicenseRequest.model_validate(request.params)
                 snapshot = activate_license(
@@ -137,6 +146,14 @@ class RpcServer:
 
             if request.method == "start_job":
                 params = StartJobRequest.model_validate(request.params)
+                browser_runtime = get_browser_runtime_status()
+                if not browser_runtime.installed:
+                    return self._error(
+                        request.id,
+                        code="PLAYWRIGHT_BROWSER_MISSING",
+                        message="Chromium browser runtime is not installed.",
+                        details=browser_runtime.model_dump(),
+                    )
                 self.job_store.create_pending_job(
                     job_id=params.job_id,
                     module=params.module,
@@ -256,6 +273,15 @@ class RpcServer:
                 request_id,
                 code="JOB_NOT_RESUMABLE",
                 message=f"Job status '{record['status']}' cannot be resumed.",
+            )
+
+        browser_runtime = get_browser_runtime_status()
+        if not browser_runtime.installed:
+            return self._error(
+                request_id,
+                code="PLAYWRIGHT_BROWSER_MISSING",
+                message="Chromium browser runtime is not installed.",
+                details=browser_runtime.model_dump(),
             )
 
         self.job_manager.start_job(
