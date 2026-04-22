@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type {
   JobStatusSnapshot,
+  ModuleConfigStatus,
   SidecarEvent,
   ValidateExcelResponse,
 } from "../types/contracts";
@@ -8,6 +9,7 @@ import type {
 type JobStoreState = {
   preview: ValidateExcelResponse | null;
   currentJob: JobStatusSnapshot | null;
+  moduleConfigStatus: ModuleConfigStatus | null;
   existingJobs: JobStatusSnapshot[];
   excelPath: string;
   connectionState: "idle" | "connecting" | "ready" | "error";
@@ -19,6 +21,7 @@ type JobStoreState = {
   setExcelPath: (excelPath: string) => void;
   setPreview: (preview: ValidateExcelResponse | null) => void;
   setCurrentJob: (job: JobStatusSnapshot | null) => void;
+  setModuleConfigStatus: (status: ModuleConfigStatus | null) => void;
   setExistingJobs: (jobs: JobStatusSnapshot[]) => void;
   upsertExistingJob: (job: JobStatusSnapshot) => void;
   setConnectionState: (state: JobStoreState["connectionState"]) => void;
@@ -63,6 +66,7 @@ function upsertJobList(existingJobs: JobStatusSnapshot[], nextJob: JobStatusSnap
 export const useJobStore = create<JobStoreState>((set) => ({
   preview: null,
   currentJob: null,
+  moduleConfigStatus: null,
   existingJobs: [],
   excelPath: "",
   connectionState: "idle",
@@ -74,6 +78,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
   setExcelPath: (excelPath) => set({ excelPath }),
   setPreview: (preview) => set({ preview }),
   setCurrentJob: (currentJob) => set({ currentJob }),
+  setModuleConfigStatus: (moduleConfigStatus) => set({ moduleConfigStatus }),
   setExistingJobs: (existingJobs) => set({ existingJobs }),
   upsertExistingJob: (job) =>
     set((state) => ({
@@ -207,6 +212,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
     set({
       preview: null,
       currentJob: null,
+      moduleConfigStatus: null,
       existingJobs: [],
       excelPath: "",
       connectionState: "idle",

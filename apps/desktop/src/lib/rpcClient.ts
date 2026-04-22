@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   JobStatusSnapshot,
   ListJobsResponse,
+  ModuleConfigStatus,
   SidecarEvent,
   StartJobResponse,
   ValidateExcelResponse,
@@ -11,6 +12,7 @@ import {
   parseJobActionResponse,
   parseJobStatusSnapshot,
   parseListJobsResponse,
+  parseModuleConfigStatus,
   parseResumeExistingJobResponse,
   parseSidecarEvent,
   parseStartJobResponse,
@@ -80,6 +82,20 @@ export async function validateExcel(
 ): Promise<ValidateExcelResponse> {
   const result = await sidecarRequest<unknown>("validate_excel", { path, module });
   return parseValidateExcelResponse(result);
+}
+
+export async function getModuleConfigStatus(
+  module: "graduation" = "graduation",
+): Promise<ModuleConfigStatus> {
+  const result = await sidecarRequest<unknown>("get_module_config_status", { module });
+  return parseModuleConfigStatus(result);
+}
+
+export async function syncModuleConfig(
+  module: "graduation" = "graduation",
+): Promise<ModuleConfigStatus> {
+  const result = await sidecarRequest<unknown>("sync_module_config", { module });
+  return parseModuleConfigStatus(result);
 }
 
 export async function startGraduationJob(input: {

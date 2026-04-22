@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "get_module_config_status.response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "module",
+    "version",
+    "source",
+    "signature_verified",
+    "config_path",
+    "checked_at",
+    "updated",
+    "last_error"
+  ],
+  "properties": {
+    "module": { "const": "graduation" },
+    "version": { "type": "string" },
+    "source": {
+      "type": "string",
+      "enum": ["bundled", "cached", "cloud"]
+    },
+    "signature_verified": { "type": "boolean" },
+    "config_path": { "type": "string" },
+    "checked_at": { "type": "string" },
+    "updated": { "type": "boolean" },
+    "last_error": {
+      "type": ["string", "null"]
+    }
+  }
+}

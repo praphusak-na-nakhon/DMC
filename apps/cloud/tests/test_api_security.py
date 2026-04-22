@@ -57,6 +57,16 @@ def test_config_returns_signed_payload() -> None:
     assert payload["signature"] == expected
 
 
+def test_config_returns_204_when_current_version_matches() -> None:
+    current = client.get("/v1/config/graduation", headers=auth_headers()).json()["version"]
+    response = client.get(
+        f"/v1/config/graduation?current_version={current}",
+        headers=auth_headers(),
+    )
+    assert response.status_code == 204
+    assert response.text == ""
+
+
 def test_telemetry_requires_bearer() -> None:
     response = client.post(
         "/v1/telemetry",

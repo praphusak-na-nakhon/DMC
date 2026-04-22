@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 
@@ -32,6 +33,12 @@ def reports_dir() -> Path:
     return path
 
 
+def configs_dir() -> Path:
+    path = ensure_data_dir() / "configs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def profiles_dir() -> Path:
     path = ensure_data_dir() / "profiles"
     path.mkdir(parents=True, exist_ok=True)
@@ -44,3 +51,16 @@ def profile_dir_for_license(license_key: str | None) -> Path:
     path = profiles_dir() / profile_hash
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def cloud_base_url() -> str | None:
+    value = os.getenv("DMC_CLOUD_BASE_URL", "").strip()
+    return value.rstrip("/") or None
+
+
+def cloud_api_bearer_token() -> str:
+    return os.getenv("DMC_CLOUD_API_BEARER_TOKEN", "dmc-dev-token").strip()
+
+
+def config_signing_secret() -> str:
+    return os.getenv("DMC_CLOUD_CONFIG_SIGNING_SECRET", "dmc-dev-signing-secret").strip()

@@ -5,7 +5,7 @@ import hmac
 import json
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from ..auth import require_api_bearer
 from ..config import settings
@@ -37,7 +37,7 @@ def sign_config_payload(version: str, payload: dict[str, object]) -> str:
 
 
 @router.get("/{module}", response_model=ConfigResponse)
-def get_module_config(module: str, current_version: str = Query(default="")) -> ConfigResponse:
+def get_module_config(module: str, current_version: str = Query(default="")) -> ConfigResponse | Response:
     config_path = (
         Path(__file__).resolve().parents[4]
         / "packages"
@@ -50,6 +50,8 @@ def get_module_config(module: str, current_version: str = Query(default="")) -> 
 
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     version = str(payload["version"])
+    if current_version == version:
+        return Response(status_code=204)
     return ConfigResponse(
         version=version,
         config=payload,

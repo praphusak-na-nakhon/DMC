@@ -55,6 +55,25 @@ def test_list_jobs_rpc(monkeypatch, tmp_path: Path) -> None:
     assert response["result"]["items"][0]["source_file"] == "C:\\data\\m3.xlsx"
 
 
+def test_get_module_config_status_rpc(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    server = RpcServer(emit_notification=lambda payload: None)
+    payload = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "req-config",
+            "method": "get_module_config_status",
+            "params": {"module": "graduation"},
+        }
+    )
+
+    response = json.loads(server.handle_text(payload))
+
+    assert response["result"]["module"] == "graduation"
+    assert response["result"]["source"] == "bundled"
+    assert response["result"]["version"] == "0.1.0"
+
+
 def test_resume_existing_job_rpc_uses_checkpoint_state_after_pause(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
     store = JobStore()

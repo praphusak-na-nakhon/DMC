@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "sync_module_config.request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["module"],
+  "properties": {
+    "module": {
+      "const": "graduation"
+    }
+  }
+}

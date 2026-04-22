@@ -3,6 +3,7 @@ import messages from "./i18n/th.json";
 import {
   cancelJob,
   getJobStatus,
+  getModuleConfigStatus,
   initializeSidecar,
   listJobs,
   listenSidecarEvents,
@@ -11,6 +12,7 @@ import {
   resumeExistingJob,
   resumeJob,
   startGraduationJob,
+  syncModuleConfig,
   validateExcel,
 } from "./lib/rpcClient";
 import { useJobStore } from "./stores/useJobStore";
@@ -87,6 +89,7 @@ export function App() {
   const {
     preview,
     currentJob,
+    moduleConfigStatus,
     existingJobs,
     excelPath,
     connectionState,
@@ -98,6 +101,7 @@ export function App() {
     setExcelPath,
     setPreview,
     setCurrentJob,
+    setModuleConfigStatus,
     setExistingJobs,
     upsertExistingJob,
     setConnectionState,
@@ -121,13 +125,32 @@ export function App() {
     }
   }
 
+  async function handleSyncConfig() {
+    try {
+      const status = await syncModuleConfig("graduation");
+      setModuleConfigStatus(status);
+      pushSidecarMessage(
+        status.updated
+          ? `config graduation อัปเดตเป็น ${status.version} แล้ว`
+          : `config graduation ใช้งานเวอร์ชัน ${status.version} (${status.source})`,
+      );
+      if (status.last_error) {
+        pushSidecarMessage(`config fallback: ${status.last_error}`);
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async function handleConnect() {
     setErrorMessage(null);
     setConnectionState("connecting");
     try {
       await initializeSidecar();
       setConnectionState("ready");
+      setModuleConfigStatus(await getModuleConfigStatus("graduation"));
       await handleLoadJobs();
+      await handleSyncConfig();
     } catch (error) {
       setConnectionState("error");
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -233,6 +256,7 @@ export function App() {
     setErrorMessage(null);
     setIsStartingJob(true);
     try {
+      await handleSyncConfig();
       const result = await startGraduationJob({
         jobId: buildJobId(),
         excelPath: excelPath.trim(),
@@ -386,6 +410,16 @@ export function App() {
                   ? messages.app.connecting
                   : connectionState}
             </div>
+            {moduleConfigStatus ? (
+              <div style={{ marginTop: "10px", fontSize: "13px", color: "rgb(51, 65, 85)", lineHeight: 1.5 }}>
+                <div>
+                  Config {moduleConfigStatus.version} ({moduleConfigStatus.source})
+                </div>
+                <div>
+                  Verify: {moduleConfigStatus.signature_verified ? "signed" : "bundled"}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -431,6 +465,12 @@ export function App() {
                 onClick={() => void handleLoadJobs()}
               >
                 {messages.app.refreshJobs}
+              </button>
+              <button
+                style={{ ...buttonStyle, backgroundColor: "rgb(2, 132, 199)" }}
+                onClick={() => void handleSyncConfig()}
+              >
+                {messages.app.syncConfig}
               </button>
               <button style={buttonStyle} disabled={isValidating} onClick={() => void handleValidate()}>
                 {messages.app.validate}
@@ -506,6 +546,35 @@ export function App() {
             </div>
             <p style={{ margin: 0, color: "rgb(71, 85, 105)" }}>{messages.app.dryRunHint}</p>
             <p style={{ margin: 0, color: "rgb(180, 83, 9)" }}>{messages.app.authHint}</p>
+            {moduleConfigStatus ? (
+              <div
+                style={{
+                  borderRadius: "12px",
+                  backgroundColor: moduleConfigStatus.last_error ? "rgb(255, 247, 237)" : "rgb(240, 249, 255)",
+                  border: moduleConfigStatus.last_error
+                    ? "1px solid rgb(253, 186, 116)"
+                    : "1px solid rgb(186, 230, 253)",
+                  color: moduleConfigStatus.last_error ? "rgb(154, 52, 18)" : "rgb(12, 74, 110)",
+                  padding: "12px 14px",
+                }}
+              >
+                <div>
+                  {messages.app.configStatus}: {moduleConfigStatus.version} ({moduleConfigStatus.source})
+                </div>
+                <div>
+                  {messages.app.configCheckedAt}: {formatTimestamp(moduleConfigStatus.checked_at)}
+                </div>
+                <div>
+                  {messages.app.configSignature}:{" "}
+                  {moduleConfigStatus.signature_verified ? messages.app.configVerified : messages.app.configBundled}
+                </div>
+                {moduleConfigStatus.last_error ? (
+                  <div>
+                    {messages.app.configFallback}: {moduleConfigStatus.last_error}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             {errorMessage ? (
               <div
                 style={{

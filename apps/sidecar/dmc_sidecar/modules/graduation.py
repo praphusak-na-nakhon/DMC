@@ -4,11 +4,13 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pandas as pd
 
 from ..checkpoint import JobCheckpoint
 from ..config import profile_dir_for_license, repo_root, reports_dir
+from ..module_config import load_effective_config, sync_module_config
 from ..runtime import JobContext, utc_now
 from ..schemas import PreviewRow, ValidateExcelResponse, ValidationWarning
 from .base import AutomationModule
@@ -29,6 +31,7 @@ class GraduationModule(AutomationModule):
 
     def validate_excel(self, path: Path) -> ValidateExcelResponse:
         legacy = self._load_legacy_module()
+        self._apply_module_config(legacy, load_effective_config(self.name).config)
         dataframe = pd.read_excel(path, dtype=str).fillna("")
         students, detected_level = legacy.load_source_data(path)
 
@@ -74,6 +77,15 @@ class GraduationModule(AutomationModule):
         context: JobContext,
     ) -> None:
         legacy = self._load_legacy_module()
+        module_config_state = sync_module_config(self.name)
+        self._apply_module_config(legacy, module_config_state.config)
+        if module_config_state.last_error:
+            context.emit_event(
+                {
+                    "type": "sidecar_stderr",
+                    "message": f"module config fallback: {module_config_state.last_error}",
+                }
+            )
         students, level_label = legacy.load_source_data(excel_path)
         level_rules = legacy.LEVEL_RULES[level_label]
         base_url = legacy.build_target_url(level_rules["level_code"])
@@ -301,6 +313,24 @@ class GraduationModule(AutomationModule):
                     legacy.wait_for_student_table(page)
             finally:
                 browser_context.close()
+
+    def _apply_module_config(self, legacy: ModuleType, module_config: dict[str, Any]) -> None:
+        login_url = module_config.get("login_url")
+        target_url_template = module_config.get("target_url_template")
+        level_rules = module_config.get("level_rules")
+        status_code_map = module_config.get("status_code_map")
+
+        if isinstance(login_url, str) and login_url.strip():
+            legacy.LOGIN_URL = login_url.strip()
+        if isinstance(target_url_template, str) and target_url_template.strip():
+            legacy.TARGET_URL_TEMPLATE = target_url_template.strip()
+        if isinstance(level_rules, dict):
+            legacy.LEVEL_RULES = level_rules
+        if isinstance(status_code_map, dict):
+            legacy.STATUS_CODE_MAP = {
+                str(key): str(value)
+                for key, value in status_code_map.items()
+            }
 
     def _authenticate_and_open(
         self,

@@ -52,6 +52,12 @@ class ValidateExcelRequest(BaseModel):
     module: Literal["graduation"]
 
 
+class ModuleConfigRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    module: Literal["graduation"]
+
+
 class ValidationWarning(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -113,3 +119,16 @@ class LicenseRecord(BaseModel):
     expires_at: str
     last_checked_at: str
     offline_grace_until: str
+
+
+class ModuleConfigStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    module: Literal["graduation"]
+    version: str
+    source: Literal["bundled", "cached", "cloud"]
+    signature_verified: bool
+    config_path: str
+    checked_at: str
+    updated: bool
+    last_error: str | None

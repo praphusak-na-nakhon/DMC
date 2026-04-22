@@ -10,10 +10,13 @@ from pydantic import ValidationError
 from . import __version__
 from .job_store import JobStore
 from .license_store import LicenseStore
+from .module_config import load_effective_config, sync_module_config
 from .modules import get_module
 from .runtime import JobManager, build_event_notification
 from .schemas import (
     JobIdRequest,
+    ModuleConfigRequest,
+    ModuleConfigStatus,
     PingResponse,
     RpcErrorData,
     RpcErrorResponse,
@@ -59,6 +62,36 @@ class RpcServer:
                 params = ValidateExcelRequest.model_validate(request.params)
                 module = get_module(params.module)
                 result = module.validate_excel(Path(params.path)).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "get_module_config_status":
+                params = ModuleConfigRequest.model_validate(request.params)
+                state = load_effective_config(params.module)
+                result = ModuleConfigStatus(
+                    module=params.module,
+                    version=state.version,
+                    source=state.source,
+                    signature_verified=state.signature_verified,
+                    config_path=str(state.config_path),
+                    checked_at=state.checked_at,
+                    updated=state.updated,
+                    last_error=state.last_error,
+                ).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "sync_module_config":
+                params = ModuleConfigRequest.model_validate(request.params)
+                state = sync_module_config(params.module)
+                result = ModuleConfigStatus(
+                    module=params.module,
+                    version=state.version,
+                    source=state.source,
+                    signature_verified=state.signature_verified,
+                    config_path=str(state.config_path),
+                    checked_at=state.checked_at,
+                    updated=state.updated,
+                    last_error=state.last_error,
+                ).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "start_job":
