@@ -58,6 +58,14 @@ class ModuleConfigRequest(BaseModel):
     module: Literal["graduation"]
 
 
+class ActivateLicenseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    license_key: str
+    device_name: str
+    app_version: str
+
+
 class ValidationWarning(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

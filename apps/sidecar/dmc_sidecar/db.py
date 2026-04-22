@@ -25,6 +25,11 @@ CREATE TABLE IF NOT EXISTS license (
     offline_grace_until TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS app_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS job (
     id TEXT PRIMARY KEY,
     module TEXT NOT NULL,

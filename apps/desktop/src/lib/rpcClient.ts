@@ -13,10 +13,10 @@ import type {
   ValidateExcelResponse,
 } from "../types/contracts";
 import {
+  parseLicenseStatus,
   parseAvailableUpdate,
   parseJobActionResponse,
   parseJobStatusSnapshot,
-  parseLicenseStatus,
   parseListJobsResponse,
   parseModuleConfigStatus,
   parseResumeExistingJobResponse,
@@ -122,6 +122,19 @@ export async function syncModuleConfig(
 
 export async function getLicenseStatus(): Promise<LicenseStatus> {
   const result = await sidecarRequest<unknown>("get_license_status", {});
+  return parseLicenseStatus(result);
+}
+
+export async function activateLicense(input: {
+  licenseKey: string;
+  deviceName: string;
+  appVersion: string;
+}): Promise<LicenseStatus> {
+  const result = await sidecarRequest<unknown>("activate_license", {
+    license_key: input.licenseKey,
+    device_name: input.deviceName,
+    app_version: input.appVersion,
+  });
   return parseLicenseStatus(result);
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import messages from "./i18n/th.json";
 import {
+  activateLicense,
   cancelJob,
   checkForAppUpdate,
   getJobStatus,
@@ -127,11 +128,14 @@ export function App() {
   const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
+  const [licenseKey, setLicenseKey] = useState("");
+  const [deviceName, setDeviceName] = useState("dmc-desktop");
+  const [isActivatingLicense, setIsActivatingLicense] = useState(false);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [updateProgress, setUpdateProgress] = useState<{ downloaded: number; contentLength: number | null } | null>(
     null,
   );
-  const licenseBlocksStart = licenseStatus?.configured === true && !licenseStatus.can_start_jobs;
+  const licenseBlocksStart = licenseStatus !== null && !licenseStatus.can_start_jobs;
 
   function describeLicenseStatus(status: LicenseStatus): string {
     if (!status.configured) {
@@ -213,6 +217,13 @@ export function App() {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
   }
+
+  useEffect(() => {
+    if (typeof navigator === "undefined") {
+      return;
+    }
+    setDeviceName((current) => (current !== "dmc-desktop" ? current : `desktop-${navigator.platform || "windows"}`));
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -353,7 +364,7 @@ export function App() {
     setIsStartingJob(true);
     try {
       const latestLicense = await handleRefreshLicense(true);
-      if (latestLicense.configured && !latestLicense.can_start_jobs) {
+      if (!latestLicense.can_start_jobs) {
         setErrorMessage(latestLicense.message ?? messages.app.license.reconnectRequired);
         return;
       }
@@ -450,6 +461,31 @@ export function App() {
       upsertExistingJob(status);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function handleActivateLicense() {
+    if (!licenseKey.trim()) {
+      setErrorMessage("กรุณากรอก license key ก่อน");
+      return;
+    }
+
+    setErrorMessage(null);
+    setIsActivatingLicense(true);
+    try {
+      const appVersion = updaterStatus?.current_version ?? "0.1.0";
+      const status = await activateLicense({
+        licenseKey: licenseKey.trim(),
+        deviceName: deviceName.trim() || "dmc-desktop",
+        appVersion,
+      });
+      setLicenseStatus(status);
+      pushSidecarMessage(`activate_license สำเร็จ: ${status.status}`);
+      await handleRefreshLicense(true);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsActivatingLicense(false);
     }
   }
 
@@ -565,6 +601,60 @@ export function App() {
 
         <section style={{ ...cardStyle, marginBottom: "20px" }}>
           <div style={{ display: "grid", gap: "12px" }}>
+            <div
+              style={{
+                borderRadius: "12px",
+                backgroundColor: licenseStatus?.configured ? "rgb(240, 253, 250)" : "rgb(255, 247, 237)",
+                border: licenseStatus?.configured
+                  ? "1px solid rgb(167, 243, 208)"
+                  : "1px solid rgb(253, 186, 116)",
+                padding: "12px 14px",
+                display: "grid",
+                gap: "10px",
+              }}
+            >
+              <div style={{ fontWeight: 700 }}>License Activation</div>
+              <div style={{ color: "rgb(51, 65, 85)" }}>
+                {licenseStatus?.configured
+                  ? "เครื่องนี้ activate license แล้ว"
+                  : "ถ้ามี cloud แล้ว ยังไม่ activate จะเริ่ม job ใหม่ไม่ได้"}
+              </div>
+              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                <input
+                  value={licenseKey}
+                  onChange={(event) => setLicenseKey(event.target.value)}
+                  placeholder="DMC-XXXX-XXXX"
+                  style={{
+                    flex: 1,
+                    minWidth: "240px",
+                    borderRadius: "12px",
+                    border: "1px solid rgb(203, 213, 225)",
+                    padding: "12px 14px",
+                    fontSize: "15px",
+                  }}
+                />
+                <input
+                  value={deviceName}
+                  onChange={(event) => setDeviceName(event.target.value)}
+                  placeholder="desktop-01"
+                  style={{
+                    flex: 1,
+                    minWidth: "220px",
+                    borderRadius: "12px",
+                    border: "1px solid rgb(203, 213, 225)",
+                    padding: "12px 14px",
+                    fontSize: "15px",
+                  }}
+                />
+                <button
+                  style={{ ...buttonStyle, backgroundColor: "rgb(22, 163, 74)" }}
+                  disabled={connectionState !== "ready" || isActivatingLicense}
+                  onClick={() => void handleActivateLicense()}
+                >
+                  Activate License
+                </button>
+              </div>
+            </div>
             <label style={{ display: "grid", gap: "8px" }}>
               <span style={{ fontWeight: 600 }}>{messages.app.filePathLabel}</span>
               <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>

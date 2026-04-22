@@ -5,7 +5,7 @@ from pathlib import Path
 from urllib.error import URLError
 
 from dmc_sidecar import config
-from dmc_sidecar.license_client import build_license_status_snapshot, refresh_license_status
+from dmc_sidecar.license_client import activate_license, build_license_status_snapshot, refresh_license_status
 from dmc_sidecar.license_store import LicenseStore
 from dmc_sidecar.schemas import LicenseRecord
 
@@ -50,6 +50,16 @@ def test_build_license_status_snapshot_handles_missing_license() -> None:
     assert snapshot.configured is False
     assert snapshot.status == "missing"
     assert snapshot.can_start_jobs is True
+
+
+def test_build_license_status_snapshot_requires_activation_when_cloud_enabled(monkeypatch) -> None:
+    monkeypatch.setattr("dmc_sidecar.license_client.cloud_base_url", lambda: "https://cloud.example.test")
+
+    snapshot = build_license_status_snapshot(None)
+
+    assert snapshot.configured is False
+    assert snapshot.can_start_jobs is False
+    assert snapshot.message == "LICENSE_REQUIRED"
 
 
 def test_refresh_license_status_updates_store_from_cloud(monkeypatch, tmp_path: Path) -> None:
@@ -110,3 +120,42 @@ def test_refresh_license_status_falls_back_to_offline_mode_on_network_error(
     assert snapshot.configured is True
     assert snapshot.offline_mode is True
     assert snapshot.last_error == "HEARTBEAT_FAILED"
+
+
+def test_activate_license_saves_local_record(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("dmc_sidecar.license_client.cloud_base_url", lambda: "https://cloud.example.test")
+    monkeypatch.setattr("dmc_sidecar.license_client.cloud_api_bearer_token", lambda: "dev-token")
+    monkeypatch.setattr("dmc_sidecar.license_client.get_or_create_device_id", lambda: "device-activate-1")
+    monkeypatch.setattr(
+        "dmc_sidecar.license_client.urlopen",
+        lambda request, timeout=10: FakeResponse(
+            {
+                "status": "active",
+                "license_tier": "trial",
+                "school_size_tier": "le_500",
+                "billing_interval": None,
+                "student_count_total": 250,
+                "expires_at": "2026-05-20T00:00:00Z",
+                "modules_enabled": ["graduation"],
+                "max_devices": 3,
+                "offline_grace_days": 7,
+            }
+        ),
+    )
+
+    store = LicenseStore()
+    snapshot = activate_license(
+        store,
+        license_key="DMC-TEST-NEW",
+        device_name="desktop-01",
+        app_version="0.1.0",
+    )
+    loaded = store.get_license()
+
+    assert snapshot.configured is True
+    assert snapshot.message == "ACTIVATION_OK"
+    assert loaded is not None
+    assert loaded.license_key == "DMC-TEST-NEW"
+    assert loaded.device_id == "device-activate-1"
+    assert loaded.student_count_total == 250

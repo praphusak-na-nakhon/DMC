@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from .config import cloud_base_url
 from .schemas import LicenseRecord
 
 
@@ -15,6 +16,8 @@ def _parse_utc(value: str) -> datetime:
 
 def check_license_allows_job_start(record: LicenseRecord | None, *, now: datetime | None = None) -> None:
     if record is None:
+        if cloud_base_url():
+            raise RuntimeError("LICENSE_REQUIRED")
         return
 
     current_time = now.astimezone(UTC) if now is not None else datetime.now(UTC)

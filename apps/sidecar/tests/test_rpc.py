@@ -115,6 +115,61 @@ def test_get_license_status_rpc(monkeypatch, tmp_path: Path) -> None:
     assert response["result"]["modules_enabled"] == ["graduation"]
 
 
+def test_activate_license_rpc_returns_snapshot(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    server = RpcServer(emit_notification=lambda payload: None)
+
+    saved = LicenseRecord(
+        license_key="DMC-TEST-ACTIVATE",
+        status="active",
+        device_id="device-activate-1",
+        license_tier="trial",
+        school_size_tier="le_500",
+        billing_interval=None,
+        student_count_total=200,
+        modules_enabled=["graduation"],
+        max_devices=3,
+        activated_at="2026-04-22T00:00:00Z",
+        expires_at="2026-05-22T00:00:00Z",
+        last_checked_at="2026-04-22T00:00:00Z",
+        offline_grace_until="2026-04-29T00:00:00Z",
+    )
+    monkeypatch.setattr(
+        "dmc_sidecar.rpc.activate_license",
+        lambda store, license_key, device_name, app_version: build_license_status_snapshot(
+            saved,
+            message="ACTIVATION_OK",
+        ),
+    )
+
+    recorded: dict[str, object] = {}
+
+    def fake_record_license_checked(*, result: str, offline_mode: bool) -> None:
+        recorded["result"] = result
+        recorded["offline_mode"] = offline_mode
+
+    monkeypatch.setattr(server.telemetry, "record_license_checked", fake_record_license_checked)
+
+    payload = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "req-activate",
+            "method": "activate_license",
+            "params": {
+                "license_key": "DMC-TEST-ACTIVATE",
+                "device_name": "desktop-01",
+                "app_version": "0.1.0",
+            },
+        }
+    )
+
+    response = json.loads(server.handle_text(payload))
+
+    assert response["result"]["configured"] is True
+    assert response["result"]["message"] == "ACTIVATION_OK"
+    assert recorded == {"result": "ACTIVATION_OK", "offline_mode": False}
+
+
 def test_refresh_license_status_rpc_records_telemetry(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
     store = LicenseStore()

@@ -9,12 +9,13 @@ from pydantic import ValidationError
 
 from . import __version__
 from .job_store import JobStore
-from .license_client import build_license_status_snapshot, refresh_license_status
+from .license_client import activate_license, build_license_status_snapshot, refresh_license_status
 from .license_store import LicenseStore
 from .module_config import load_effective_config, sync_module_config
 from .modules import get_module
 from .runtime import JobManager, build_event_notification
 from .schemas import (
+    ActivateLicenseRequest,
     JobIdRequest,
     ModuleConfigRequest,
     ModuleConfigStatus,
@@ -87,6 +88,20 @@ class RpcServer:
             if request.method == "get_license_status":
                 result = build_license_status_snapshot(self.license_store.get_license()).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "activate_license":
+                params = ActivateLicenseRequest.model_validate(request.params)
+                snapshot = activate_license(
+                    self.license_store,
+                    license_key=params.license_key,
+                    device_name=params.device_name,
+                    app_version=params.app_version,
+                )
+                self.telemetry.record_license_checked(
+                    result=snapshot.message or snapshot.status,
+                    offline_mode=snapshot.offline_mode,
+                )
+                return RpcSuccessResponse(id=request.id, result=snapshot.model_dump())
 
             if request.method == "refresh_license_status":
                 snapshot = refresh_license_status(self.license_store)
