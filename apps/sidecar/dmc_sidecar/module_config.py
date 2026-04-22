@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import hashlib
-import hmac
+import base64
 import json
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -12,12 +11,13 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import BaseModel, ConfigDict
 
 from .config import (
     cloud_api_bearer_token,
     cloud_base_url,
-    config_signing_secret,
+    config_signing_keys_path,
     configs_dir,
     repo_root,
 )
@@ -69,31 +69,67 @@ def _canonical_payload(version: str, payload: dict[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
+def _load_key_ring() -> dict[str, str]:
+    key_ring = _read_json_file(config_signing_keys_path())
+    raw_keys = key_ring.get("keys", [])
+    if not isinstance(raw_keys, list):
+        raise RuntimeError("CONFIG_KEYRING_INVALID")
+
+    mapping: dict[str, str] = {}
+    for item in raw_keys:
+        if not isinstance(item, dict):
+            continue
+        key_id = item.get("key_id")
+        algorithm = item.get("algorithm")
+        public_key_base64 = item.get("public_key_base64")
+        if (
+            isinstance(key_id, str)
+            and isinstance(algorithm, str)
+            and algorithm == "ed25519"
+            and isinstance(public_key_base64, str)
+        ):
+            mapping[key_id] = public_key_base64
+    if not mapping:
+        raise RuntimeError("CONFIG_KEYRING_INVALID")
+    return mapping
+
+
 def verify_signature(version: str, payload: dict[str, Any], signature: str) -> None:
-    prefix = "hmac-sha256:"
-    if not signature.startswith(prefix):
+    parts = signature.split(":", 2)
+    if len(parts) != 3:
+        raise RuntimeError("CONFIG_SIGNATURE_INVALID")
+    algorithm, key_id, encoded_signature = parts
+    if algorithm != "ed25519":
         raise RuntimeError("CONFIG_SIGNATURE_INVALID")
 
-    secret = config_signing_secret()
-    if not secret:
+    public_key_base64 = _load_key_ring().get(key_id)
+    if public_key_base64 is None:
         raise RuntimeError("CONFIG_SIGNATURE_INVALID")
 
-    expected = hmac.new(
-        secret.encode("utf-8"),
-        _canonical_payload(version, payload),
-        hashlib.sha256,
-    ).hexdigest()
-    if not hmac.compare_digest(signature[len(prefix) :], expected):
-        raise RuntimeError("CONFIG_SIGNATURE_INVALID")
+    try:
+        public_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key_base64))
+        public_key.verify(
+            base64.b64decode(encoded_signature),
+            _canonical_payload(version, payload),
+        )
+    except Exception as exc:
+        raise RuntimeError("CONFIG_SIGNATURE_INVALID") from exc
 
 
 def _read_json_file(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _read_bundled_config(path: Path) -> dict[str, Any]:
+    payload = _read_json_file(path)
+    if "version" not in payload:
+        raise RuntimeError("CONFIG_SIGNATURE_INVALID")
+    return payload
+
+
 def _load_bundled_state(module: str, *, last_error: str | None = None) -> ModuleConfigState:
     path = bundled_config_path(module)
-    payload = _read_json_file(path)
+    payload = _read_bundled_config(path)
     return ModuleConfigState(
         module=module,
         version=str(payload["version"]),

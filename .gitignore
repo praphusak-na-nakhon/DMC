@@ -9,6 +9,7 @@ obec-fill-review.csv
 .mypy_cache/
 .ruff_cache/
 .venv/
+*.egg-info/
 node_modules/
 dist/
 coverage/

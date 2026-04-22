@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import base64
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
 from app.config import settings
+from app.config_signing import canonical_config_payload, sign_config_payload
 from app.main import app
-from app.routes.config import sign_config_payload
 
 
 client = TestClient(app)
@@ -58,9 +61,18 @@ def test_config_returns_signed_payload() -> None:
     response = client.get("/v1/config/graduation", headers=auth_headers())
     assert response.status_code == 200
     payload = response.json()
-    assert payload["signature"].startswith("hmac-sha256:")
+    assert payload["signature"].startswith(f"ed25519:{settings.config_signing_key_id}:")
     expected = sign_config_payload(payload["version"], payload["config"])
     assert payload["signature"] == expected
+
+    _, _, encoded_signature = payload["signature"].split(":", 2)
+    verify_key = Ed25519PrivateKey.from_private_bytes(
+        bytes.fromhex(settings.config_signing_private_key_hex)
+    ).public_key()
+    verify_key.verify(
+        base64.b64decode(encoded_signature),
+        canonical_config_payload(payload["version"], payload["config"]),
+    )
 
 
 def test_config_returns_204_when_current_version_matches() -> None:

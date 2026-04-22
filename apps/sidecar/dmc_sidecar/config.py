@@ -62,5 +62,5 @@ def cloud_api_bearer_token() -> str:
     return os.getenv("DMC_CLOUD_API_BEARER_TOKEN", "dmc-dev-token").strip()
 
 
-def config_signing_secret() -> str:
-    return os.getenv("DMC_CLOUD_CONFIG_SIGNING_SECRET", "dmc-dev-signing-secret").strip()
+def config_signing_keys_path() -> Path:
+    return repo_root() / "packages" / "shared-schemas" / "config-signing" / "keys.json"
