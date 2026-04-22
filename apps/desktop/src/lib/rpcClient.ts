@@ -7,6 +7,15 @@ import type {
   StartJobResponse,
   ValidateExcelResponse,
 } from "../types/contracts";
+import {
+  parseJobActionResponse,
+  parseJobStatusSnapshot,
+  parseListJobsResponse,
+  parseResumeExistingJobResponse,
+  parseSidecarEvent,
+  parseStartJobResponse,
+  parseValidateExcelResponse,
+} from "../types/contracts";
 
 export type JsonRpcRequest = {
   jsonrpc: "2.0";
@@ -69,7 +78,8 @@ export async function validateExcel(
   path: string,
   module: "graduation" = "graduation",
 ): Promise<ValidateExcelResponse> {
-  return sidecarRequest<ValidateExcelResponse>("validate_excel", { path, module });
+  const result = await sidecarRequest<unknown>("validate_excel", { path, module });
+  return parseValidateExcelResponse(result);
 }
 
 export async function startGraduationJob(input: {
@@ -79,7 +89,7 @@ export async function startGraduationJob(input: {
   stopOnReview: boolean;
   minScore: number;
 }): Promise<StartJobResponse> {
-  return sidecarRequest<StartJobResponse>("start_job", {
+  const result = await sidecarRequest<unknown>("start_job", {
     job_id: input.jobId,
     module: "graduation",
     excel_path: input.excelPath,
@@ -89,41 +99,55 @@ export async function startGraduationJob(input: {
       min_score: input.minScore,
     },
   });
+  return parseStartJobResponse(result);
 }
 
 export async function getJobStatus(jobId: string): Promise<JobStatusSnapshot> {
-  return sidecarRequest<JobStatusSnapshot>("get_job_status", { job_id: jobId });
+  const result = await sidecarRequest<unknown>("get_job_status", { job_id: jobId });
+  return parseJobStatusSnapshot(result);
 }
 
 export async function listJobs(limit = 20): Promise<ListJobsResponse> {
-  return sidecarRequest<ListJobsResponse>("list_jobs", { limit });
+  const result = await sidecarRequest<unknown>("list_jobs", { limit });
+  return parseListJobsResponse(result);
 }
 
 export async function pauseJob(jobId: string): Promise<{ job_id: string; status: string }> {
-  return sidecarRequest<{ job_id: string; status: string }>("pause_job", { job_id: jobId });
+  const result = await sidecarRequest<unknown>("pause_job", { job_id: jobId });
+  return parseJobActionResponse(result);
 }
 
 export async function resumeJob(jobId: string): Promise<{ job_id: string; status: string }> {
-  return sidecarRequest<{ job_id: string; status: string }>("resume_job", { job_id: jobId });
+  const result = await sidecarRequest<unknown>("resume_job", { job_id: jobId });
+  return parseJobActionResponse(result);
 }
 
 export async function resumeExistingJob(
   jobId: string,
 ): Promise<{ job_id: string; status: string; accepted: boolean }> {
-  return sidecarRequest<{ job_id: string; status: string; accepted: boolean }>(
+  const result = await sidecarRequest<unknown>(
     "resume_existing_job",
     { job_id: jobId },
   );
+  return parseResumeExistingJobResponse(result);
 }
 
 export async function cancelJob(jobId: string): Promise<{ job_id: string; status: string }> {
-  return sidecarRequest<{ job_id: string; status: string }>("cancel_job", { job_id: jobId });
+  const result = await sidecarRequest<unknown>("cancel_job", { job_id: jobId });
+  return parseJobActionResponse(result);
 }
 
 export async function listenSidecarEvents(
   callback: (event: SidecarEvent) => void,
 ): Promise<UnlistenFn> {
-  return listen<SidecarEvent>("sidecar-event", (event) => {
-    callback(event.payload);
+  return listen<unknown>("sidecar-event", (event) => {
+    try {
+      callback(parseSidecarEvent(event.payload));
+    } catch (error) {
+      callback({
+        type: "sidecar_stderr",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   });
 }
