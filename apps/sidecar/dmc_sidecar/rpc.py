@@ -26,17 +26,21 @@ from .schemas import (
     StartJobRequest,
     ValidateExcelRequest,
 )
+from .telemetry import TelemetryClient
 
 
 class RpcServer:
     def __init__(self, emit_notification: Callable[[dict[str, Any]], None]) -> None:
         self.job_store = JobStore()
         self.license_store = LicenseStore()
+        self.telemetry = TelemetryClient()
         self.job_manager = JobManager(
             job_store=self.job_store,
             license_store=self.license_store,
+            telemetry=self.telemetry,
             emit_notification=emit_notification,
         )
+        self.telemetry.record_app_started(app_version=__version__, platform=sys.platform)
 
     def handle_text(self, raw_text: str) -> str:
         try:
@@ -85,12 +89,24 @@ class RpcServer:
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "refresh_license_status":
-                result = refresh_license_status(self.license_store).model_dump()
+                snapshot = refresh_license_status(self.license_store)
+                self.telemetry.record_license_checked(
+                    result=snapshot.message or snapshot.status,
+                    offline_mode=snapshot.offline_mode,
+                )
+                result = snapshot.model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "sync_module_config":
                 params = ModuleConfigRequest.model_validate(request.params)
+                previous_state = load_effective_config(params.module)
                 state = sync_module_config(params.module)
+                if state.updated:
+                    self.telemetry.record_config_updated(
+                        module=params.module,
+                        from_version=previous_state.version,
+                        to_version=state.version,
+                    )
                 result = ModuleConfigStatus(
                     module=params.module,
                     version=state.version,

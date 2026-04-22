@@ -10,6 +10,7 @@ obec-fill-review.csv
 .ruff_cache/
 .venv/
 *.egg-info/
+.dmc-assistant-data/
 node_modules/
 dist/
 coverage/

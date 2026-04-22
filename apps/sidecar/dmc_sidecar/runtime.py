@@ -10,6 +10,7 @@ from typing import Any, Callable
 from .job_store import JobStore
 from .license_policy import check_license_allows_job_start
 from .license_store import LicenseStore
+from .telemetry import TelemetryClient
 
 
 def utc_now() -> str:
@@ -131,10 +132,12 @@ class JobManager:
         *,
         job_store: JobStore,
         license_store: LicenseStore,
+        telemetry: TelemetryClient,
         emit_notification: Callable[[dict[str, Any]], None],
     ) -> None:
         self.job_store = job_store
         self.license_store = license_store
+        self.telemetry = telemetry
         self.emit_notification = emit_notification
         self._jobs: dict[str, ActiveJob] = {}
         self._lock = threading.Lock()
@@ -229,6 +232,15 @@ class JobManager:
                 options=context.options,
                 context=context,
             )
+            status = self.job_store.get_status(context.job_id)
+            if status is not None and status["status"] == "done":
+                self.telemetry.record_job_completed(
+                    module=module_name,
+                    total=int(status["total"] or 0),
+                    succeeded=int(status["succeeded"]),
+                    failed=int(status["failed"]),
+                    duration_sec=_duration_seconds(status["started_at"], status["finished_at"]),
+                )
         except Exception as exc:  # pragma: no cover - background defensive path
             code = str(exc)
             checkpoint = context.job_store.load_checkpoint(context.job_id)
@@ -249,6 +261,11 @@ class JobManager:
                         "code": code,
                         "message": str(exc),
                     }
+                )
+                self.telemetry.record_job_failed(
+                    module=module_name,
+                    error_code=code,
+                    processed=context.snapshot.processed,
                 )
         finally:
             with self._lock:
@@ -271,3 +288,14 @@ def build_event_notification(payload: dict[str, Any]) -> str:
         },
         ensure_ascii=False,
     )
+
+
+def _duration_seconds(started_at: str | None, finished_at: str | None) -> int:
+    if not started_at or not finished_at:
+        return 0
+    try:
+        started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        finished = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
+    except ValueError:
+        return 0
+    return max(0, int((finished - started).total_seconds()))

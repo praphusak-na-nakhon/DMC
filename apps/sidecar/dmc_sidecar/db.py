@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS job (
     finished_at TEXT,
     checkpoint_json TEXT
 );
+
+CREATE TABLE IF NOT EXISTS telemetry_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 """
 
 
