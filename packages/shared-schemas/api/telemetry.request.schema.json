@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dmc-assistant.local/schemas/api/telemetry.request.schema.json",
+  "title": "TelemetryBatchRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "events"
+  ],
+  "properties": {
+    "events": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["event", "ts", "app_version", "platform"],
+            "properties": {
+              "event": { "const": "app_started" },
+              "ts": { "type": "string", "format": "date-time" },
+              "app_version": { "type": "string" },
+              "platform": { "type": "string" }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["event", "ts", "result", "offline_mode"],
+            "properties": {
+              "event": { "const": "license_checked" },
+              "ts": { "type": "string", "format": "date-time" },
+              "result": { "type": "string" },
+              "offline_mode": { "type": "boolean" }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["event", "ts", "module", "total", "succeeded", "failed", "duration_sec"],
+            "properties": {
+              "event": { "const": "job_completed" },
+              "ts": { "type": "string", "format": "date-time" },
+              "module": { "type": "string" },
+              "total": { "type": "integer" },
+              "succeeded": { "type": "integer" },
+              "failed": { "type": "integer" },
+              "duration_sec": { "type": "integer" }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["event", "ts", "module", "error_code", "processed"],
+            "properties": {
+              "event": { "const": "job_failed" },
+              "ts": { "type": "string", "format": "date-time" },
+              "module": { "type": "string" },
+              "error_code": { "type": "string" },
+              "processed": { "type": "integer" }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["event", "ts", "module", "from_version", "to_version"],
+            "properties": {
+              "event": { "const": "config_updated" },
+              "ts": { "type": "string", "format": "date-time" },
+              "module": { "type": "string" },
+              "from_version": { "type": "string" },
+              "to_version": { "type": "string" }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,602 @@
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import messages from "./i18n/th.json";
+import {
+  cancelJob,
+  getJobStatus,
+  initializeSidecar,
+  listenSidecarEvents,
+  pauseJob,
+  resumeJob,
+  startGraduationJob,
+  validateExcel,
+} from "./lib/rpcClient";
+import { useJobStore } from "./stores/useJobStore";
+
+function formatSummary(template: string, accepted: number, total: number): string {
+  return template.replace("{accepted}", String(accepted)).replace("{total}", String(total));
+}
+
+function buildJobId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `job-${Date.now()}`;
+}
+
+const cardStyle: CSSProperties = {
+  border: "1px solid rgb(226, 232, 240)",
+  borderRadius: "16px",
+  padding: "20px",
+  backgroundColor: "rgba(255, 255, 255, 0.92)",
+};
+
+const buttonStyle: CSSProperties = {
+  border: "none",
+  borderRadius: "999px",
+  padding: "11px 16px",
+  fontSize: "14px",
+  fontWeight: 600,
+  cursor: "pointer",
+  backgroundColor: "rgb(15, 118, 110)",
+  color: "white",
+};
+
+export function App() {
+  const {
+    preview,
+    currentJob,
+    excelPath,
+    connectionState,
+    isValidating,
+    isStartingJob,
+    errorMessage,
+    sidecarMessages,
+    activeJobId,
+    setExcelPath,
+    setPreview,
+    setCurrentJob,
+    setConnectionState,
+    setIsValidating,
+    setIsStartingJob,
+    setErrorMessage,
+    pushSidecarMessage,
+    setActiveJobId,
+    applySidecarEvent,
+  } = useJobStore();
+
+  const [minScore, setMinScore] = useState(72);
+  const [stopOnReview, setStopOnReview] = useState(true);
+
+  async function handleConnect() {
+    setErrorMessage(null);
+    setConnectionState("connecting");
+    try {
+      await initializeSidecar();
+      setConnectionState("ready");
+    } catch (error) {
+      setConnectionState("error");
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    async function bootstrap() {
+      try {
+        await handleConnect();
+        if (disposed) {
+          return;
+        }
+        unlisten = await listenSidecarEvents((event) => {
+          applySidecarEvent(event);
+        });
+      } catch (error) {
+        if (!disposed) {
+          const message = error instanceof Error ? error.message : String(error);
+          setConnectionState("error");
+          setErrorMessage(message);
+        }
+      }
+    }
+
+    void bootstrap();
+
+    return () => {
+      disposed = true;
+      if (unlisten) {
+        void unlisten();
+      }
+    };
+  }, [applySidecarEvent, setConnectionState, setErrorMessage]);
+
+  useEffect(() => {
+    if (!activeJobId) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void getJobStatus(activeJobId)
+        .then((status) => {
+          setCurrentJob(status);
+        })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          setErrorMessage(message);
+        });
+    }, 2000);
+
+    return () => window.clearInterval(timer);
+  }, [activeJobId, setCurrentJob, setErrorMessage]);
+
+  const progressPercent = useMemo(() => {
+    if (!currentJob?.total || currentJob.total <= 0) {
+      return 0;
+    }
+    return Math.round((currentJob.processed / currentJob.total) * 100);
+  }, [currentJob]);
+
+  async function handleValidate() {
+    if (!excelPath.trim()) {
+      setErrorMessage("กรุณาระบุพาธไฟล์ Excel ก่อน");
+      return;
+    }
+
+    setErrorMessage(null);
+    setIsValidating(true);
+    try {
+      const response = await validateExcel(excelPath.trim());
+      setPreview(response);
+      pushSidecarMessage(`validate_excel สำเร็จ: ${response.rows_accepted}/${response.rows_total}`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsValidating(false);
+    }
+  }
+
+  async function handleStart(dryRun: boolean) {
+    if (!excelPath.trim()) {
+      setErrorMessage("กรุณาระบุพาธไฟล์ Excel ก่อน");
+      return;
+    }
+
+    setErrorMessage(null);
+    setIsStartingJob(true);
+    try {
+      const result = await startGraduationJob({
+        jobId: buildJobId(),
+        excelPath: excelPath.trim(),
+        dryRun,
+        stopOnReview,
+        minScore,
+      });
+      setActiveJobId(result.job_id);
+      setCurrentJob({
+        job_id: result.job_id,
+        module: "graduation",
+        status: "running",
+        processed: 0,
+        total: preview?.rows_accepted ?? null,
+        succeeded: 0,
+        failed: 0,
+        current_page: 1,
+        needs_auth: false,
+        auth_reason: null,
+        report_path: null,
+        stopped_item: null,
+      });
+      pushSidecarMessage(
+        `${dryRun ? "เริ่ม dry run" : "เริ่มงานจริง"} แล้ว: ${result.job_id}`,
+      );
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsStartingJob(false);
+    }
+  }
+
+  async function handleResume() {
+    if (!activeJobId) {
+      return;
+    }
+    try {
+      await resumeJob(activeJobId);
+      pushSidecarMessage(`resume_job ส่งแล้ว: ${activeJobId}`);
+      const status = await getJobStatus(activeJobId);
+      setCurrentJob(status);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function handlePause() {
+    if (!activeJobId) {
+      return;
+    }
+    try {
+      await pauseJob(activeJobId);
+      const status = await getJobStatus(activeJobId);
+      setCurrentJob(status);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function handleCancel() {
+    if (!activeJobId) {
+      return;
+    }
+    try {
+      await cancelJob(activeJobId);
+      const status = await getJobStatus(activeJobId);
+      setCurrentJob(status);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function handleRefreshStatus() {
+    if (!activeJobId) {
+      return;
+    }
+    try {
+      const status = await getJobStatus(activeJobId);
+      setCurrentJob(status);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  return (
+    <main
+      style={{
+        minHeight: "100vh",
+        padding: "28px",
+        background:
+          "radial-gradient(circle at top left, rgb(240, 253, 250), rgb(226, 232, 240) 50%, rgb(248, 250, 252))",
+        color: "rgb(15, 23, 42)",
+        fontFamily: "\"Segoe UI\", Tahoma, sans-serif",
+      }}
+    >
+      <section
+        style={{
+          maxWidth: "1180px",
+          margin: "0 auto",
+          backgroundColor: "rgba(255, 255, 255, 0.9)",
+          borderRadius: "24px",
+          padding: "28px",
+          boxShadow: "0 30px 80px rgba(15, 23, 42, 0.12)",
+          backdropFilter: "blur(10px)",
+        }}
+      >
+        <p style={{ margin: 0, fontSize: "13px", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+          {messages.app.tagline}
+        </p>
+        <div
+          style={{
+            display: "flex",
+            gap: "20px",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            marginTop: "10px",
+            marginBottom: "24px",
+          }}
+        >
+          <div style={{ maxWidth: "760px" }}>
+            <h1 style={{ marginTop: 0, marginBottom: "14px", fontSize: "38px" }}>
+              {messages.app.title}
+            </h1>
+            <p style={{ lineHeight: 1.7, margin: 0 }}>{messages.app.description}</p>
+          </div>
+          <div
+            style={{
+              ...cardStyle,
+              minWidth: "220px",
+              backgroundColor:
+                connectionState === "ready" ? "rgb(240, 253, 250)" : "rgba(255, 255, 255, 0.9)",
+            }}
+          >
+            <div style={{ fontSize: "13px", color: "rgb(71, 85, 105)" }}>Sidecar</div>
+            <div style={{ fontSize: "20px", fontWeight: 700, marginTop: "6px" }}>
+              {connectionState === "ready"
+                ? messages.app.connected
+                : connectionState === "connecting"
+                  ? messages.app.connecting
+                  : connectionState}
+            </div>
+          </div>
+        </div>
+
+        <section style={{ ...cardStyle, marginBottom: "20px" }}>
+          <div style={{ display: "grid", gap: "12px" }}>
+            <label style={{ display: "grid", gap: "8px" }}>
+              <span style={{ fontWeight: 600 }}>{messages.app.filePathLabel}</span>
+              <input
+                value={excelPath}
+                onChange={(event) => setExcelPath(event.target.value)}
+                placeholder={messages.app.filePathPlaceholder}
+                style={{
+                  borderRadius: "12px",
+                  border: "1px solid rgb(203, 213, 225)",
+                  padding: "12px 14px",
+                  fontSize: "15px",
+                }}
+              />
+            </label>
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "10px",
+                alignItems: "center",
+              }}
+            >
+              <button style={buttonStyle} onClick={() => void handleConnect()}>
+                {messages.app.connect}
+              </button>
+              <button style={buttonStyle} disabled={isValidating} onClick={() => void handleValidate()}>
+                {messages.app.validate}
+              </button>
+              <button
+                style={buttonStyle}
+                disabled={isStartingJob}
+                onClick={() => void handleStart(true)}
+              >
+                {messages.app.startDryRun}
+              </button>
+              <button
+                style={{ ...buttonStyle, backgroundColor: "rgb(22, 163, 74)" }}
+                disabled={isStartingJob}
+                onClick={() => void handleStart(false)}
+              >
+                {messages.app.startLive}
+              </button>
+              <button
+                style={{ ...buttonStyle, backgroundColor: "rgb(14, 116, 144)" }}
+                disabled={!activeJobId}
+                onClick={() => void handleRefreshStatus()}
+              >
+                {messages.app.refreshStatus}
+              </button>
+              <button
+                style={{ ...buttonStyle, backgroundColor: "rgb(100, 116, 139)" }}
+                disabled={!activeJobId}
+                onClick={() => void handlePause()}
+              >
+                {messages.app.pause}
+              </button>
+              <button
+                style={{ ...buttonStyle, backgroundColor: "rgb(217, 119, 6)" }}
+                disabled={!currentJob?.needs_auth}
+                onClick={() => void handleResume()}
+              >
+                {messages.app.resume}
+              </button>
+              <button
+                style={{ ...buttonStyle, backgroundColor: "rgb(220, 38, 38)" }}
+                disabled={!activeJobId}
+                onClick={() => void handleCancel()}
+              >
+                {messages.app.cancel}
+              </button>
+            </div>
+            <div style={{ display: "flex", gap: "20px", alignItems: "center", flexWrap: "wrap" }}>
+              <label style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                <span style={{ fontWeight: 600 }}>{messages.app.minScoreLabel}</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={minScore}
+                  onChange={(event) => setMinScore(Number(event.target.value))}
+                  style={{
+                    width: "90px",
+                    borderRadius: "10px",
+                    border: "1px solid rgb(203, 213, 225)",
+                    padding: "8px 10px",
+                  }}
+                />
+              </label>
+              <label style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={stopOnReview}
+                  onChange={(event) => setStopOnReview(event.target.checked)}
+                />
+                <span>{messages.app.stopOnReview}</span>
+              </label>
+            </div>
+            <p style={{ margin: 0, color: "rgb(71, 85, 105)" }}>{messages.app.dryRunHint}</p>
+            <p style={{ margin: 0, color: "rgb(180, 83, 9)" }}>{messages.app.authHint}</p>
+            {errorMessage ? (
+              <div
+                style={{
+                  borderRadius: "12px",
+                  backgroundColor: "rgb(254, 242, 242)",
+                  border: "1px solid rgb(254, 202, 202)",
+                  color: "rgb(153, 27, 27)",
+                  padding: "12px 14px",
+                }}
+              >
+                {errorMessage}
+              </div>
+            ) : null}
+          </div>
+        </section>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1.2fr 1fr",
+            gap: "20px",
+          }}
+        >
+          <section style={cardStyle}>
+            <h2 style={{ marginTop: 0 }}>{messages.app.preview.title}</h2>
+            {preview ? (
+              <>
+                <p style={{ marginTop: 0, lineHeight: 1.6 }}>
+                  {preview.detected_level} •{" "}
+                  {formatSummary(
+                    messages.app.preview.summaryRows,
+                    preview.rows_accepted,
+                    preview.rows_total,
+                  )}
+                </p>
+                <div style={{ marginBottom: "16px" }}>
+                  <strong>{messages.app.preview.warnings}</strong>
+                  <div style={{ marginTop: "8px", color: "rgb(71, 85, 105)" }}>
+                    {preview.warnings.length === 0
+                      ? "ไม่มี warning"
+                      : preview.warnings.map((warning) => (
+                          <div key={`${warning.code}-${warning.row_index}`}>
+                            {warning.code} • row {warning.row_index} • {warning.message_th}
+                          </div>
+                        ))}
+                  </div>
+                </div>
+                <strong>{messages.app.preview.tableTitle}</strong>
+                <div style={{ overflowX: "auto", marginTop: "10px" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                    <thead>
+                      <tr style={{ textAlign: "left", backgroundColor: "rgb(241, 245, 249)" }}>
+                        <th style={{ padding: "10px" }}>ลำดับ</th>
+                        <th style={{ padding: "10px" }}>ห้อง</th>
+                        <th style={{ padding: "10px" }}>เลขนักเรียน</th>
+                        <th style={{ padding: "10px" }}>ชื่อ</th>
+                        <th style={{ padding: "10px" }}>สถานะ</th>
+                        <th style={{ padding: "10px" }}>รหัส</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.preview.map((row) => (
+                        <tr key={`${row.order}-${row.student_no}`}>
+                          <td style={{ padding: "10px", borderTop: "1px solid rgb(226, 232, 240)" }}>
+                            {row.order}
+                          </td>
+                          <td style={{ padding: "10px", borderTop: "1px solid rgb(226, 232, 240)" }}>
+                            {row.room ?? "-"}
+                          </td>
+                          <td style={{ padding: "10px", borderTop: "1px solid rgb(226, 232, 240)" }}>
+                            {row.student_no}
+                          </td>
+                          <td style={{ padding: "10px", borderTop: "1px solid rgb(226, 232, 240)" }}>
+                            {row.first_name} {row.last_name}
+                          </td>
+                          <td style={{ padding: "10px", borderTop: "1px solid rgb(226, 232, 240)" }}>
+                            {row.status_text}
+                          </td>
+                          <td style={{ padding: "10px", borderTop: "1px solid rgb(226, 232, 240)" }}>
+                            {row.status_code}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <p style={{ marginBottom: 0 }}>{messages.app.preview.empty}</p>
+            )}
+          </section>
+
+          <div style={{ display: "grid", gap: "20px" }}>
+            <section style={cardStyle}>
+              <h2 style={{ marginTop: 0 }}>{messages.app.progress.title}</h2>
+              {currentJob ? (
+                <>
+                  <div
+                    style={{
+                      height: "14px",
+                      borderRadius: "999px",
+                      backgroundColor: "rgb(226, 232, 240)",
+                      overflow: "hidden",
+                      marginBottom: "14px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${progressPercent}%`,
+                        height: "100%",
+                        background:
+                          "linear-gradient(90deg, rgb(13, 148, 136), rgb(34, 197, 94))",
+                        transition: "width 200ms ease",
+                      }}
+                    />
+                  </div>
+                  <div style={{ display: "grid", gap: "8px", lineHeight: 1.6 }}>
+                    <div>
+                      <strong>{messages.app.progress.status}:</strong> {currentJob.status}
+                    </div>
+                    <div>
+                      <strong>{messages.app.progress.processed}:</strong> {currentJob.processed}/
+                      {currentJob.total ?? "-"}
+                    </div>
+                    <div>
+                      <strong>{messages.app.progress.currentPage}:</strong>{" "}
+                      {currentJob.current_page ?? "-"}
+                    </div>
+                    <div>
+                      <strong>{messages.app.progress.success}:</strong> {currentJob.succeeded}
+                    </div>
+                    <div>
+                      <strong>{messages.app.progress.failed}:</strong> {currentJob.failed}
+                    </div>
+                    <div>
+                      <strong>Report:</strong> {currentJob.report_path ?? "-"}
+                    </div>
+                    {currentJob.needs_auth ? (
+                      <div
+                        style={{
+                          marginTop: "8px",
+                          borderRadius: "12px",
+                          backgroundColor: "rgb(255, 247, 237)",
+                          border: "1px solid rgb(253, 230, 138)",
+                          padding: "12px 14px",
+                          color: "rgb(154, 52, 18)",
+                        }}
+                      >
+                        ต้องลงชื่อเข้าใช้ใหม่ก่อน resume
+                        <div style={{ marginTop: "6px" }}>
+                          reason: {currentJob.auth_reason ?? "auth_required"}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </>
+              ) : (
+                <p style={{ marginBottom: 0 }}>{messages.app.progress.empty}</p>
+              )}
+            </section>
+
+            <section style={cardStyle}>
+              <h2 style={{ marginTop: 0 }}>{messages.app.sidecarLog.title}</h2>
+              {sidecarMessages.length > 0 ? (
+                <div style={{ display: "grid", gap: "8px" }}>
+                  {sidecarMessages.map((message, index) => (
+                    <div
+                      key={`${message}-${index}`}
+                      style={{
+                        borderRadius: "12px",
+                        backgroundColor: "rgb(248, 250, 252)",
+                        padding: "10px 12px",
+                        color: "rgb(51, 65, 85)",
+                      }}
+                    >
+                      {message}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={{ marginBottom: 0 }}>{messages.app.sidecarLog.empty}</p>
+              )}
+            </section>
+          </div>
+        </div>
+      </section>
+    </main>
+  );
+}

@@ -6,6 +6,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import pandas as pd
@@ -447,6 +448,8 @@ def fill_current_page(
     dry_run: bool,
     stop_on_review: bool,
     level_label: str,
+    before_row: Callable[[], None] | None = None,
+    after_row: Callable[[dict], None] | None = None,
 ) -> tuple[list[dict], dict | None]:
     rows = page.locator("tr[id^='tr-']")
     page_number = get_current_page_number(page)
@@ -459,6 +462,9 @@ def fill_current_page(
         row_info = extract_row_info(row)
         if not row_info:
             continue
+        if before_row is not None:
+            # Hook after row extraction so progress/cancel checks only apply to usable rows.
+            before_row()
 
         if rules["require_exact_student_no"] and row_info["student_no"]:
             exact_student = next(
@@ -495,6 +501,8 @@ def fill_current_page(
                 result["applied"] = not dry_run
                 result["note"] = "default_missing_dry_run" if dry_run else "default_missing_filled"
                 results.append(result)
+                if after_row is not None:
+                    after_row(result)
                 continue
 
         student, score = choose_best_match(row_info, students, used_orders)
@@ -526,10 +534,14 @@ def fill_current_page(
                 result["applied"] = not dry_run
                 result["note"] = "default_missing_dry_run" if dry_run else "default_missing_filled"
                 results.append(result)
+                if after_row is not None:
+                    after_row(result)
                 continue
 
             result["note"] = "no_match"
             results.append(result)
+            if after_row is not None:
+                after_row(result)
             if stop_on_review:
                 stop_item = result
                 break
@@ -549,10 +561,14 @@ def fill_current_page(
                 result["applied"] = not dry_run
                 result["note"] = "default_missing_dry_run" if dry_run else "default_missing_filled"
                 results.append(result)
+                if after_row is not None:
+                    after_row(result)
                 continue
 
             result["note"] = f"low_confidence_below_{min_score}"
             results.append(result)
+            if after_row is not None:
+                after_row(result)
             if stop_on_review:
                 stop_item = result
                 break
@@ -561,6 +577,8 @@ def fill_current_page(
         if not student.status_code:
             result["note"] = "status_code_not_mapped"
             results.append(result)
+            if after_row is not None:
+                after_row(result)
             if stop_on_review:
                 stop_item = result
                 break
@@ -569,6 +587,8 @@ def fill_current_page(
         if not option_exists(row_info["select"], student.status_code):
             result["note"] = "option_value_not_found"
             results.append(result)
+            if after_row is not None:
+                after_row(result)
             if stop_on_review:
                 stop_item = result
                 break
@@ -582,6 +602,8 @@ def fill_current_page(
         result["applied"] = not dry_run
         result["note"] = "dry_run" if dry_run else "filled"
         results.append(result)
+        if after_row is not None:
+            after_row(result)
 
     return results, stop_item
 
@@ -648,18 +670,27 @@ def print_summary(results: list[dict], min_score: int) -> None:
             )
 
 
-def save_reports(results: list[dict]) -> tuple[Path, Path, Path]:
-    REPORT_JSON.write_text(
+def save_reports(
+    results: list[dict],
+    report_json: Path | None = None,
+    report_csv: Path | None = None,
+    review_csv: Path | None = None,
+) -> tuple[Path, Path, Path]:
+    report_json = report_json or REPORT_JSON
+    report_csv = report_csv or REPORT_CSV
+    review_csv = review_csv or REVIEW_CSV
+
+    report_json.write_text(
         json.dumps(results, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
     df = pd.DataFrame(results)
-    df.to_csv(REPORT_CSV, index=False, encoding="utf-8-sig")
+    df.to_csv(report_csv, index=False, encoding="utf-8-sig")
 
     review_mask = df["note"].astype(str).apply(needs_review)
-    df.loc[review_mask].to_csv(REVIEW_CSV, index=False, encoding="utf-8-sig")
-    return REPORT_JSON.resolve(), REPORT_CSV.resolve(), REVIEW_CSV.resolve()
+    df.loc[review_mask].to_csv(review_csv, index=False, encoding="utf-8-sig")
+    return report_json.resolve(), report_csv.resolve(), review_csv.resolve()
 
 
 def run(

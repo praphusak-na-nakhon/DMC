@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dmc-assistant.local/schemas/api/license.heartbeat.response.schema.json",
+  "title": "LicenseHeartbeatResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "license_tier",
+    "school_size_tier",
+    "billing_interval",
+    "student_count_total",
+    "expires_at",
+    "modules_enabled",
+    "max_devices",
+    "offline_grace_days"
+  ],
+  "properties": {
+    "status": {
+      "type": "string"
+    },
+    "license_tier": {
+      "type": "string"
+    },
+    "school_size_tier": {
+      "type": "string"
+    },
+    "billing_interval": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "student_count_total": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "modules_enabled": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "max_devices": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "offline_grace_days": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

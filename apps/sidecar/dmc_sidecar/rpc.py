@@ -1,0 +1,183 @@
+from __future__ import annotations
+
+import sys
+import threading
+from pathlib import Path
+from typing import Any, Callable
+
+from pydantic import ValidationError
+
+from . import __version__
+from .job_store import JobStore
+from .license_store import LicenseStore
+from .modules import get_module
+from .runtime import JobManager, build_event_notification
+from .schemas import (
+    PingResponse,
+    RpcErrorData,
+    RpcErrorResponse,
+    RpcRequest,
+    RpcSuccessResponse,
+    StartJobRequest,
+    ValidateExcelRequest,
+)
+
+
+class RpcServer:
+    def __init__(self, emit_notification: Callable[[dict[str, Any]], None]) -> None:
+        self.job_store = JobStore()
+        self.license_store = LicenseStore()
+        self.job_manager = JobManager(
+            job_store=self.job_store,
+            license_store=self.license_store,
+            emit_notification=emit_notification,
+        )
+
+    def handle_text(self, raw_text: str) -> str:
+        try:
+            request = RpcRequest.model_validate_json(raw_text)
+            response = self.dispatch(request)
+        except ValidationError as exc:
+            response = RpcErrorResponse(
+                id=None,
+                error=RpcErrorData(
+                    code="RPC_INVALID_REQUEST",
+                    message="Request payload does not match the JSON-RPC schema.",
+                    details={"errors": exc.errors()},
+                ),
+            )
+        return response.model_dump_json()
+
+    def dispatch(self, request: RpcRequest) -> RpcSuccessResponse | RpcErrorResponse:
+        try:
+            if request.method == "ping":
+                result = PingResponse(sidecar_version=__version__).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "validate_excel":
+                params = ValidateExcelRequest.model_validate(request.params)
+                module = get_module(params.module)
+                result = module.validate_excel(Path(params.path)).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "start_job":
+                params = StartJobRequest.model_validate(request.params)
+                self.job_store.create_pending_job(
+                    job_id=params.job_id,
+                    module=params.module,
+                    source_file=params.excel_path,
+                )
+                self.job_manager.start_job(
+                    job_id=params.job_id,
+                    module_name=params.module,
+                    excel_path=Path(params.excel_path),
+                    options=params.options,
+                )
+                return RpcSuccessResponse(
+                    id=request.id,
+                    result={"accepted": True, "job_id": params.job_id},
+                )
+
+            if request.method == "get_job_status":
+                job_id = str(request.params.get("job_id", "")).strip()
+                status = self.job_manager.get_runtime_status(job_id) or self.job_store.get_status(job_id)
+                if status is None:
+                    return self._error(
+                        request.id,
+                        code="JOB_NOT_FOUND",
+                        message="Job not found.",
+                    )
+                return RpcSuccessResponse(id=request.id, result=status)
+
+            if request.method == "pause_job":
+                return self._set_job_status(request.id, request.params, "paused")
+
+            if request.method == "resume_job":
+                return self._set_job_status(request.id, request.params, "running")
+
+            if request.method == "cancel_job":
+                return self._set_job_status(request.id, request.params, "cancelled")
+
+            return self._error(
+                request.id,
+                code="RPC_METHOD_NOT_FOUND",
+                message=f"Unsupported method: {request.method}",
+            )
+        except RuntimeError as exc:
+            return self._error(
+                request.id,
+                code=str(exc),
+                message=str(exc),
+            )
+        except NotImplementedError as exc:
+            return self._error(
+                request.id,
+                code="METHOD_NOT_IMPLEMENTED",
+                message=str(exc),
+            )
+        except Exception as exc:  # pragma: no cover - defensive boundary
+            return self._error(
+                request.id,
+                code="UNEXPECTED_ERROR",
+                message=str(exc),
+            )
+
+    def _set_job_status(
+        self,
+        request_id: str | int | None,
+        params: dict[str, Any],
+        status: str,
+    ) -> RpcSuccessResponse | RpcErrorResponse:
+        job_id = str(params.get("job_id", "")).strip()
+        snapshot = self.job_manager.get_runtime_status(job_id) or self.job_store.get_status(job_id)
+        if snapshot is None:
+            return self._error(request_id, code="JOB_NOT_FOUND", message="Job not found.")
+
+        if status == "paused":
+            self.job_manager.pause_job(job_id)
+        elif status == "running":
+            self.job_manager.resume_job(job_id)
+        elif status == "cancelled":
+            self.job_manager.cancel_job(job_id)
+
+        return RpcSuccessResponse(id=request_id, result={"job_id": job_id, "status": status})
+
+    def _error(
+        self,
+        request_id: str | int | None,
+        *,
+        code: str,
+        message: str,
+        details: dict[str, Any] | None = None,
+    ) -> RpcErrorResponse:
+        return RpcErrorResponse(
+            id=request_id,
+            error=RpcErrorData(
+                code=code,
+                message=message,
+                details=details or {},
+            ),
+        )
+
+
+def run_stdio_server() -> int:
+    write_lock = threading.Lock()
+
+    def emit_notification(payload: dict[str, Any]) -> None:
+        with write_lock:
+            sys.stdout.write(build_event_notification(payload) + "\n")
+            sys.stdout.flush()
+
+    server = RpcServer(emit_notification=emit_notification)
+    while True:
+        line = sys.stdin.readline()
+        if line == "":
+            break
+        raw = line.strip()
+        if not raw:
+            continue
+        response_text = server.handle_text(raw)
+        with write_lock:
+            sys.stdout.write(response_text + "\n")
+            sys.stdout.flush()
+    return 0

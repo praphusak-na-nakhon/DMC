@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dmc-assistant.local/schemas/ipc/ping.response.schema.json",
+  "title": "PingResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "value",
+    "sidecar_version"
+  ],
+  "properties": {
+    "value": {
+      "const": "pong"
+    },
+    "sidecar_version": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

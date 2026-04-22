@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dmc-assistant.local/schemas/ipc/validate_excel.request.schema.json",
+  "title": "ValidateExcelRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "path",
+    "module"
+  ],
+  "properties": {
+    "path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "module": {
+      "type": "string",
+      "enum": [
+        "graduation"
+      ]
+    }
+  }
+}

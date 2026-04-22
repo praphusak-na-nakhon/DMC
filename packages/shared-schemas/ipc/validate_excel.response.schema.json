@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dmc-assistant.local/schemas/ipc/validate_excel.response.schema.json",
+  "title": "ValidateExcelResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "module",
+    "detected_level",
+    "rows_total",
+    "rows_accepted",
+    "warnings",
+    "preview"
+  ],
+  "properties": {
+    "module": {
+      "type": "string",
+      "enum": [
+        "graduation"
+      ]
+    },
+    "detected_level": {
+      "type": "string",
+      "enum": [
+        "ม.3",
+        "ม.6"
+      ]
+    },
+    "rows_total": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "rows_accepted": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "row_index",
+          "message_th"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "row_index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "message_th": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "preview": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "order",
+          "level_label",
+          "room",
+          "student_no",
+          "first_name",
+          "last_name",
+          "status_text",
+          "status_code"
+        ],
+        "properties": {
+          "order": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "level_label": {
+            "type": "string"
+          },
+          "room": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "student_no": {
+            "type": "string"
+          },
+          "first_name": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "status_text": {
+            "type": "string"
+          },
+          "status_code": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

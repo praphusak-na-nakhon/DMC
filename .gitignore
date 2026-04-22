@@ -4,3 +4,13 @@ __pycache__/
 obec-fill-report.csv
 obec-fill-report.json
 obec-fill-review.csv
+~$*.xlsx
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+node_modules/
+dist/
+coverage/
+target/
+apps/desktop/src-tauri/target/

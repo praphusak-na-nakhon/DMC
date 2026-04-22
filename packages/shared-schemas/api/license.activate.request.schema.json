@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dmc-assistant.local/schemas/api/license.activate.request.schema.json",
+  "title": "LicenseActivateRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "license_key",
+    "device_id",
+    "device_name",
+    "app_version"
+  ],
+  "properties": {
+    "license_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "device_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "device_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "app_version": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

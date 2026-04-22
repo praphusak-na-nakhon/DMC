@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dmc-assistant.local/schemas/ipc/ping.request.schema.json",
+  "title": "PingRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {}
+}
