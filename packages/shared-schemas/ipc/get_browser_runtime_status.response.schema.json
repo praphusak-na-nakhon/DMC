@@ -5,21 +5,50 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "state": {
+      "type": "string",
+      "enum": ["ready", "missing", "installing", "failed"]
+    },
     "installed": { "type": "boolean" },
     "install_dir": { "type": "string" },
     "executable_path": { "type": ["string", "null"] },
     "bootstrap_supported": { "type": "boolean" },
     "bootstrap_performed": { "type": "boolean" },
+    "estimated_download_bytes": { "type": ["integer", "null"] },
+    "required_components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "install_location": { "type": "string" },
+          "download_url": { "type": "string" },
+          "download_bytes": { "type": ["integer", "null"] }
+        },
+        "required": ["name", "install_location", "download_url", "download_bytes"]
+      }
+    },
     "message": { "type": ["string", "null"] },
-    "last_error": { "type": ["string", "null"] }
+    "guidance": { "type": ["string", "null"] },
+    "last_error": { "type": ["string", "null"] },
+    "log_tail": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
   },
   "required": [
+    "state",
     "installed",
     "install_dir",
     "executable_path",
     "bootstrap_supported",
     "bootstrap_performed",
+    "estimated_download_bytes",
+    "required_components",
     "message",
-    "last_error"
+    "guidance",
+    "last_error",
+    "log_tail"
   ]
 }

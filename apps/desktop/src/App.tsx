@@ -54,6 +54,35 @@ function formatTimestamp(value: string | null): string {
   });
 }
 
+function formatBytes(value: number | null): string {
+  if (value === null || value <= 0) {
+    return "-";
+  }
+  const units = ["B", "KB", "MB", "GB"];
+  let current = value;
+  let unitIndex = 0;
+  while (current >= 1024 && unitIndex < units.length - 1) {
+    current /= 1024;
+    unitIndex += 1;
+  }
+  return `${current.toFixed(current >= 100 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function describeBrowserRuntimePhase(phase: "checking" | "installing" | "verifying" | "ready" | "failed"): string {
+  switch (phase) {
+    case "checking":
+      return "Check installer prerequisites";
+    case "installing":
+      return "Download and install Chromium runtime";
+    case "verifying":
+      return "Verify installed browser runtime";
+    case "ready":
+      return "Browser runtime is ready";
+    case "failed":
+      return "Browser runtime setup failed";
+  }
+}
+
 const cardStyle: CSSProperties = {
   border: "1px solid rgb(226, 232, 240)",
   borderRadius: "16px",
@@ -134,6 +163,12 @@ export function App() {
   const [deviceName, setDeviceName] = useState("dmc-desktop");
   const [isActivatingLicense, setIsActivatingLicense] = useState(false);
   const [browserRuntimeStatus, setBrowserRuntimeStatus] = useState<BrowserRuntimeStatus | null>(null);
+  const [browserRuntimeProgress, setBrowserRuntimeProgress] = useState<{
+    phase: "checking" | "installing" | "verifying" | "ready" | "failed";
+    message: string;
+    percent: number | null;
+    detail: string | null;
+  } | null>(null);
   const [isBootstrappingBrowser, setIsBootstrappingBrowser] = useState(false);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [updateProgress, setUpdateProgress] = useState<{ downloaded: number; contentLength: number | null } | null>(
@@ -209,6 +244,23 @@ export function App() {
     try {
       const status = await getBrowserRuntimeStatus();
       setBrowserRuntimeStatus(status);
+      if (status.installed) {
+        setBrowserRuntimeProgress({
+          phase: "ready",
+          message: status.message ?? "Chromium browser runtime is ready.",
+          percent: 100,
+          detail: status.executable_path,
+        });
+      } else if (status.last_error) {
+        setBrowserRuntimeProgress({
+          phase: "failed",
+          message: status.message ?? "Chromium browser runtime is not ready yet.",
+          percent: null,
+          detail: status.last_error,
+        });
+      } else {
+        setBrowserRuntimeProgress(null);
+      }
       return status;
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -254,6 +306,14 @@ export function App() {
           return;
         }
         unlisten = await listenSidecarEvents((event) => {
+          if (event.type === "browser_runtime_progress") {
+            setBrowserRuntimeProgress({
+              phase: event.phase,
+              message: event.message,
+              percent: event.percent,
+              detail: event.detail,
+            });
+          }
           applySidecarEvent(event);
         });
         unlistenUpdater = await listenUpdaterEvents((event) => {
@@ -414,9 +474,21 @@ export function App() {
   async function handleBootstrapBrowserRuntime() {
     setErrorMessage(null);
     setIsBootstrappingBrowser(true);
+    setBrowserRuntimeProgress({
+      phase: "checking",
+      message: "Preparing the Chromium browser runtime installer.",
+      percent: 5,
+      detail: null,
+    });
     try {
       const status = await bootstrapBrowserRuntime();
       setBrowserRuntimeStatus(status);
+      setBrowserRuntimeProgress({
+        phase: status.installed ? "ready" : "failed",
+        message: status.message ?? (status.installed ? "Chromium browser runtime is ready." : "Chromium browser runtime setup failed."),
+        percent: status.installed ? 100 : null,
+        detail: status.installed ? status.executable_path : status.last_error,
+      });
       pushSidecarMessage(
         status.installed
           ? `Chromium runtime ready: ${status.install_dir}`
@@ -896,16 +968,84 @@ export function App() {
                   gap: "8px",
                 }}
               >
-                <div style={{ fontWeight: 700 }}>Browser Runtime</div>
+                <div style={{ fontWeight: 700 }}>Browser Runtime Setup</div>
                 <div>{browserRuntimeStatus.message ?? "-"}</div>
+                <div>State: {browserRuntimeStatus.state}</div>
                 <div>Install dir: {browserRuntimeStatus.install_dir}</div>
                 <div>Executable: {browserRuntimeStatus.executable_path ?? "-"}</div>
+                <div>
+                  Estimated download: {formatBytes(browserRuntimeStatus.estimated_download_bytes)}
+                </div>
+                {browserRuntimeProgress ? (
+                  <div
+                    style={{
+                      borderRadius: "12px",
+                      backgroundColor: "rgba(255,255,255,0.7)",
+                      border: "1px solid rgba(148, 163, 184, 0.35)",
+                      padding: "10px 12px",
+                      display: "grid",
+                      gap: "6px",
+                    }}
+                  >
+                    <div style={{ fontWeight: 700 }}>{describeBrowserRuntimePhase(browserRuntimeProgress.phase)}</div>
+                    <div>{browserRuntimeProgress.message}</div>
+                    {browserRuntimeProgress.percent !== null ? (
+                      <div
+                        style={{
+                          height: "10px",
+                          borderRadius: "999px",
+                          backgroundColor: "rgb(226, 232, 240)",
+                          overflow: "hidden",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: `${browserRuntimeProgress.percent}%`,
+                            height: "100%",
+                            background:
+                              browserRuntimeProgress.phase === "failed"
+                                ? "linear-gradient(90deg, rgb(248, 113, 113), rgb(239, 68, 68))"
+                                : "linear-gradient(90deg, rgb(37, 99, 235), rgb(34, 197, 94))",
+                          }}
+                        />
+                      </div>
+                    ) : null}
+                    {browserRuntimeProgress.detail ? <div>{browserRuntimeProgress.detail}</div> : null}
+                  </div>
+                ) : null}
+                {browserRuntimeStatus.required_components.length > 0 ? (
+                  <div style={{ display: "grid", gap: "4px" }}>
+                    <div style={{ fontWeight: 700 }}>Installer plan</div>
+                    {browserRuntimeStatus.required_components.map((component) => (
+                      <div key={`${component.name}-${component.install_location}`}>
+                        {component.name} • {formatBytes(component.download_bytes)}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {browserRuntimeStatus.guidance ? (
+                  <div>
+                    Guidance: {browserRuntimeStatus.guidance}
+                  </div>
+                ) : null}
                 {browserRuntimeStatus.last_error ? <div>Last error: {browserRuntimeStatus.last_error}</div> : null}
+                {browserRuntimeStatus.log_tail.length > 0 ? (
+                  <div style={{ display: "grid", gap: "4px" }}>
+                    <div style={{ fontWeight: 700 }}>Installer log tail</div>
+                    {browserRuntimeStatus.log_tail.map((line, index) => (
+                      <div key={`${line}-${index}`}>{line}</div>
+                    ))}
+                  </div>
+                ) : null}
                 {!browserRuntimeStatus.installed ? (
                   <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
                     <button
                       style={{ ...buttonStyle, backgroundColor: "rgb(37, 99, 235)" }}
-                      disabled={connectionState !== "ready" || isBootstrappingBrowser}
+                      disabled={
+                        connectionState !== "ready" ||
+                        isBootstrappingBrowser ||
+                        !browserRuntimeStatus.bootstrap_supported
+                      }
                       onClick={() => void handleBootstrapBrowserRuntime()}
                     >
                       {isBootstrappingBrowser ? "Installing Chromium..." : "Install Chromium Runtime"}

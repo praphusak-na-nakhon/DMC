@@ -154,14 +154,26 @@ export type LicenseStatus = {
   last_error: string | null;
 };
 
+export type BrowserRuntimePackage = {
+  name: string;
+  install_location: string;
+  download_url: string;
+  download_bytes: number | null;
+};
+
 export type BrowserRuntimeStatus = {
+  state: "ready" | "missing" | "installing" | "failed";
   installed: boolean;
   install_dir: string;
   executable_path: string | null;
   bootstrap_supported: boolean;
   bootstrap_performed: boolean;
+  estimated_download_bytes: number | null;
+  required_components: BrowserRuntimePackage[];
   message: string | null;
+  guidance: string | null;
   last_error: string | null;
+  log_tail: string[];
 };
 
 export type ListJobsResponse = {
@@ -259,6 +271,13 @@ export type SidecarEvent =
   | {
       type: "sidecar_stderr";
       message: string;
+    }
+  | {
+      type: "browser_runtime_progress";
+      phase: "checking" | "installing" | "verifying" | "ready" | "failed";
+      message: string;
+      percent: number | null;
+      detail: string | null;
     };
 
 function parseValidationWarning(value: unknown, index: number): ValidationWarning {
@@ -383,16 +402,40 @@ export function parseLicenseStatus(value: unknown): LicenseStatus {
   };
 }
 
+function parseBrowserRuntimePackage(value: unknown, index: number): BrowserRuntimePackage {
+  const record = asRecord(value, `browser_runtime_package[${index}]`);
+  return {
+    name: readString(record, "name", "browser_runtime_package"),
+    install_location: readString(record, "install_location", "browser_runtime_package"),
+    download_url: readString(record, "download_url", "browser_runtime_package"),
+    download_bytes: readOptionalNumber(record, "download_bytes", "browser_runtime_package"),
+  };
+}
+
 export function parseBrowserRuntimeStatus(value: unknown): BrowserRuntimeStatus {
   const record = asRecord(value, "browser_runtime_status");
+  const state = readString(record, "state", "browser_runtime_status");
+  if (state !== "ready" && state !== "missing" && state !== "installing" && state !== "failed") {
+    throw new Error("browser_runtime_status.state must be ready, missing, installing, or failed");
+  }
   return {
+    state,
     installed: readBoolean(record, "installed", "browser_runtime_status"),
     install_dir: readString(record, "install_dir", "browser_runtime_status"),
     executable_path: readOptionalString(record, "executable_path", "browser_runtime_status"),
     bootstrap_supported: readBoolean(record, "bootstrap_supported", "browser_runtime_status"),
     bootstrap_performed: readBoolean(record, "bootstrap_performed", "browser_runtime_status"),
+    estimated_download_bytes: readOptionalNumber(record, "estimated_download_bytes", "browser_runtime_status"),
+    required_components: readArray(record, "required_components", "browser_runtime_status").map(parseBrowserRuntimePackage),
     message: readOptionalString(record, "message", "browser_runtime_status"),
+    guidance: readOptionalString(record, "guidance", "browser_runtime_status"),
     last_error: readOptionalString(record, "last_error", "browser_runtime_status"),
+    log_tail: readArray(record, "log_tail", "browser_runtime_status").map((item, index) => {
+      if (typeof item !== "string") {
+        throw new Error(`browser_runtime_status.log_tail[${index}] must be a string`);
+      }
+      return item;
+    }),
   };
 }
 
@@ -555,6 +598,26 @@ export function parseSidecarEvent(value: unknown): SidecarEvent {
       return {
         type: "sidecar_stderr",
         message: readString(record, "message", "sidecar_event"),
+      };
+    case "browser_runtime_progress":
+      return {
+        type: "browser_runtime_progress",
+        phase: (() => {
+          const phase = readString(record, "phase", "sidecar_event");
+          if (
+            phase !== "checking" &&
+            phase !== "installing" &&
+            phase !== "verifying" &&
+            phase !== "ready" &&
+            phase !== "failed"
+          ) {
+            throw new Error(`Unsupported browser runtime phase: ${phase}`);
+          }
+          return phase;
+        })(),
+        message: readString(record, "message", "sidecar_event"),
+        percent: readOptionalNumber(record, "percent", "sidecar_event"),
+        detail: readOptionalString(record, "detail", "sidecar_event"),
       };
     default:
       throw new Error(`Unsupported sidecar event type: ${eventType}`);

@@ -166,13 +166,27 @@ class ModuleConfigStatus(BaseModel):
     last_error: str | None
 
 
+class BrowserRuntimePackage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    install_location: str
+    download_url: str
+    download_bytes: int | None
+
+
 class BrowserRuntimeStatus(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    state: Literal["ready", "missing", "installing", "failed"]
     installed: bool
     install_dir: str
     executable_path: str | None
     bootstrap_supported: bool
     bootstrap_performed: bool
+    estimated_download_bytes: int | None
+    required_components: list[BrowserRuntimePackage] = Field(default_factory=list)
     message: str | None
+    guidance: str | None
     last_error: str | None
+    log_tail: list[str] = Field(default_factory=list)

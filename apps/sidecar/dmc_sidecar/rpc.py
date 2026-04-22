@@ -34,6 +34,7 @@ from .telemetry import TelemetryClient
 
 class RpcServer:
     def __init__(self, emit_notification: Callable[[dict[str, Any]], None]) -> None:
+        self.emit_notification = emit_notification
         self.job_store = JobStore()
         self.license_store = LicenseStore()
         self.telemetry = TelemetryClient(license_store=self.license_store)
@@ -96,7 +97,7 @@ class RpcServer:
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "bootstrap_browser_runtime":
-                result = bootstrap_browser_runtime().model_dump()
+                result = bootstrap_browser_runtime(emit_progress=self.emit_notification).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "activate_license":

@@ -50,6 +50,8 @@ if (Test-Path $pyInstallerExe) {
         --distpath $sidecarDist `
         --workpath $sidecarBuild `
         --specpath $sidecarBuild `
+        --hidden-import playwright.sync_api `
+        --collect-data playwright `
         --paths $sidecarRoot `
         $sidecarEntry
 } else {
@@ -61,6 +63,8 @@ if (Test-Path $pyInstallerExe) {
         --distpath $sidecarDist `
         --workpath $sidecarBuild `
         --specpath $sidecarBuild `
+        --hidden-import playwright.sync_api `
+        --collect-data playwright `
         --paths $sidecarRoot `
         $sidecarEntry
 }

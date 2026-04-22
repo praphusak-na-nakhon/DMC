@@ -211,6 +211,15 @@ export const useJobStore = create<JobStoreState>((set) => ({
         };
       }
 
+      if (event.type === "browser_runtime_progress") {
+        return {
+          sidecarMessages: [
+            `browser runtime: ${event.message}${event.detail ? ` (${event.detail})` : ""}`,
+            ...state.sidecarMessages,
+          ].slice(0, 8),
+        };
+      }
+
       return state;
     }),
   reset: () =>
