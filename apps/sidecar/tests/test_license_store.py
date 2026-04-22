@@ -14,11 +14,13 @@ def test_license_store_roundtrip(monkeypatch, tmp_path: Path) -> None:
     store = LicenseStore()
     record = LicenseRecord(
         license_key="DMC-TEST-0001",
+        status="active",
         device_id="device-1",
         license_tier="trial",
         school_size_tier="le_500",
         billing_interval=None,
         student_count_total=100,
+        modules_enabled=["graduation"],
         max_devices=3,
         activated_at="2026-04-22T00:00:00Z",
         expires_at="2026-05-06T00:00:00Z",
@@ -40,11 +42,13 @@ def test_heartbeat_updates_dates(monkeypatch, tmp_path: Path) -> None:
     store.save_activation(
         LicenseRecord(
             license_key="DMC-TEST-0002",
+            status="active",
             device_id="device-2",
             license_tier="trial",
             school_size_tier="le_500",
             billing_interval=None,
             student_count_total=100,
+            modules_enabled=["graduation"],
             max_devices=3,
             activated_at="2026-04-22T00:00:00Z",
             expires_at="2026-05-06T00:00:00Z",
@@ -54,14 +58,24 @@ def test_heartbeat_updates_dates(monkeypatch, tmp_path: Path) -> None:
     )
 
     store.update_heartbeat(
+        status="active",
+        license_tier="trial",
+        school_size_tier="le_500",
+        billing_interval=None,
+        student_count_total=120,
+        modules_enabled=["graduation"],
+        max_devices=3,
+        expires_at="2026-05-10T00:00:00Z",
         last_checked_at="2026-04-23T00:00:00Z",
         offline_grace_until="2026-04-30T00:00:00Z",
     )
     loaded = store.get_license()
 
     assert loaded is not None
+    assert loaded.status == "active"
     assert loaded.last_checked_at == "2026-04-23T00:00:00Z"
     assert loaded.offline_grace_until == "2026-04-30T00:00:00Z"
+    assert loaded.student_count_total == 120
 
 
 def test_job_store_checkpoint_roundtrip(monkeypatch, tmp_path: Path) -> None:

@@ -6,7 +6,9 @@ from pathlib import Path
 from dmc_sidecar import config
 from dmc_sidecar.checkpoint import JobCheckpoint
 from dmc_sidecar.job_store import JobStore
+from dmc_sidecar.license_store import LicenseStore
 from dmc_sidecar.rpc import RpcServer
+from dmc_sidecar.schemas import LicenseRecord
 
 
 def test_ping_rpc() -> None:
@@ -72,6 +74,44 @@ def test_get_module_config_status_rpc(monkeypatch, tmp_path: Path) -> None:
     assert response["result"]["module"] == "graduation"
     assert response["result"]["source"] == "bundled"
     assert response["result"]["version"] == "0.1.0"
+
+
+def test_get_license_status_rpc(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    store = LicenseStore()
+    store.save_activation(
+        LicenseRecord(
+            license_key="DMC-TEST-0005",
+            status="active",
+            device_id="device-5",
+            license_tier="trial",
+            school_size_tier="le_500",
+            billing_interval=None,
+            student_count_total=100,
+            modules_enabled=["graduation"],
+            max_devices=3,
+            activated_at="2026-04-22T00:00:00Z",
+            expires_at="2026-05-06T00:00:00Z",
+            last_checked_at="2026-04-22T00:00:00Z",
+            offline_grace_until="2026-05-01T00:00:00Z",
+        )
+    )
+
+    server = RpcServer(emit_notification=lambda payload: None)
+    payload = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "req-license",
+            "method": "get_license_status",
+            "params": {},
+        }
+    )
+
+    response = json.loads(server.handle_text(payload))
+
+    assert response["result"]["configured"] is True
+    assert response["result"]["status"] == "active"
+    assert response["result"]["modules_enabled"] == ["graduation"]
 
 
 def test_resume_existing_job_rpc_uses_checkpoint_state_after_pause(monkeypatch, tmp_path: Path) -> None:

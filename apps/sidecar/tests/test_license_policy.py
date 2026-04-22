@@ -11,11 +11,13 @@ from dmc_sidecar.schemas import LicenseRecord
 def build_license(offline_grace_until: str) -> LicenseRecord:
     return LicenseRecord(
         license_key="DMC-TEST-0001",
+        status="active",
         device_id="device-1",
         license_tier="trial",
         school_size_tier="le_500",
         billing_interval=None,
         student_count_total=100,
+        modules_enabled=["graduation"],
         max_devices=3,
         activated_at="2026-04-22T00:00:00Z",
         expires_at="2026-05-06T00:00:00Z",

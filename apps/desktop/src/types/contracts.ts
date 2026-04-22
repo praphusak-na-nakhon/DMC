@@ -134,6 +134,26 @@ export type ModuleConfigStatus = {
   last_error: string | null;
 };
 
+export type LicenseStatus = {
+  configured: boolean;
+  status: string;
+  license_tier: string | null;
+  school_size_tier: string | null;
+  billing_interval: string | null;
+  student_count_total: number | null;
+  max_devices: number | null;
+  modules_enabled: string[];
+  expires_at: string | null;
+  last_checked_at: string | null;
+  offline_grace_until: string | null;
+  offline_mode: boolean;
+  within_offline_grace: boolean;
+  can_start_jobs: boolean;
+  needs_attention: boolean;
+  message: string | null;
+  last_error: string | null;
+};
+
 export type ListJobsResponse = {
   items: JobStatusSnapshot[];
 };
@@ -286,6 +306,34 @@ export function parseModuleConfigStatus(value: unknown): ModuleConfigStatus {
     checked_at: readString(record, "checked_at", "module_config_status"),
     updated: readBoolean(record, "updated", "module_config_status"),
     last_error: readOptionalString(record, "last_error", "module_config_status"),
+  };
+}
+
+export function parseLicenseStatus(value: unknown): LicenseStatus {
+  const record = asRecord(value, "license_status");
+  return {
+    configured: readBoolean(record, "configured", "license_status"),
+    status: readString(record, "status", "license_status"),
+    license_tier: readOptionalString(record, "license_tier", "license_status"),
+    school_size_tier: readOptionalString(record, "school_size_tier", "license_status"),
+    billing_interval: readOptionalString(record, "billing_interval", "license_status"),
+    student_count_total: readOptionalNumber(record, "student_count_total", "license_status"),
+    max_devices: readOptionalNumber(record, "max_devices", "license_status"),
+    modules_enabled: readArray(record, "modules_enabled", "license_status").map((item, index) => {
+      if (typeof item !== "string") {
+        throw new Error(`license_status.modules_enabled[${index}] must be a string`);
+      }
+      return item;
+    }),
+    expires_at: readOptionalString(record, "expires_at", "license_status"),
+    last_checked_at: readOptionalString(record, "last_checked_at", "license_status"),
+    offline_grace_until: readOptionalString(record, "offline_grace_until", "license_status"),
+    offline_mode: readBoolean(record, "offline_mode", "license_status"),
+    within_offline_grace: readBoolean(record, "within_offline_grace", "license_status"),
+    can_start_jobs: readBoolean(record, "can_start_jobs", "license_status"),
+    needs_attention: readBoolean(record, "needs_attention", "license_status"),
+    message: readOptionalString(record, "message", "license_status"),
+    last_error: readOptionalString(record, "last_error", "license_status"),
   };
 }
 

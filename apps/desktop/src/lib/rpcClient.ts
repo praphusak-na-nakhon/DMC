@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   JobStatusSnapshot,
+  LicenseStatus,
   ListJobsResponse,
   ModuleConfigStatus,
   SidecarEvent,
@@ -11,6 +12,7 @@ import type {
 import {
   parseJobActionResponse,
   parseJobStatusSnapshot,
+  parseLicenseStatus,
   parseListJobsResponse,
   parseModuleConfigStatus,
   parseResumeExistingJobResponse,
@@ -96,6 +98,16 @@ export async function syncModuleConfig(
 ): Promise<ModuleConfigStatus> {
   const result = await sidecarRequest<unknown>("sync_module_config", { module });
   return parseModuleConfigStatus(result);
+}
+
+export async function getLicenseStatus(): Promise<LicenseStatus> {
+  const result = await sidecarRequest<unknown>("get_license_status", {});
+  return parseLicenseStatus(result);
+}
+
+export async function refreshLicenseStatus(): Promise<LicenseStatus> {
+  const result = await sidecarRequest<unknown>("refresh_license_status", {});
+  return parseLicenseStatus(result);
 }
 
 export async function startGraduationJob(input: {

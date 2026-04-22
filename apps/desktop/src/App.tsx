@@ -3,6 +3,7 @@ import messages from "./i18n/th.json";
 import {
   cancelJob,
   getJobStatus,
+  getLicenseStatus,
   getModuleConfigStatus,
   initializeSidecar,
   listJobs,
@@ -11,12 +12,13 @@ import {
   pauseJob,
   resumeExistingJob,
   resumeJob,
+  refreshLicenseStatus,
   startGraduationJob,
   syncModuleConfig,
   validateExcel,
 } from "./lib/rpcClient";
 import { useJobStore } from "./stores/useJobStore";
-import type { JobStatusSnapshot } from "./types/contracts";
+import type { JobStatusSnapshot, LicenseStatus } from "./types/contracts";
 
 function formatSummary(template: string, accepted: number, total: number): string {
   return template.replace("{accepted}", String(accepted)).replace("{total}", String(total));
@@ -89,6 +91,7 @@ export function App() {
   const {
     preview,
     currentJob,
+    licenseStatus,
     moduleConfigStatus,
     existingJobs,
     excelPath,
@@ -101,6 +104,7 @@ export function App() {
     setExcelPath,
     setPreview,
     setCurrentJob,
+    setLicenseStatus,
     setModuleConfigStatus,
     setExistingJobs,
     upsertExistingJob,
@@ -115,6 +119,20 @@ export function App() {
 
   const [minScore, setMinScore] = useState(72);
   const [stopOnReview, setStopOnReview] = useState(true);
+  const licenseBlocksStart = licenseStatus?.configured === true && !licenseStatus.can_start_jobs;
+
+  function describeLicenseStatus(status: LicenseStatus): string {
+    if (!status.configured) {
+      return messages.app.license.devMode;
+    }
+    if (status.last_error === "HEARTBEAT_FAILED" && status.within_offline_grace) {
+      return `${messages.app.license.offlineMode} ${formatTimestamp(status.offline_grace_until)}`;
+    }
+    if (!status.can_start_jobs) {
+      return status.message ?? messages.app.license.reconnectRequired;
+    }
+    return messages.app.license.active;
+  }
 
   async function handleLoadJobs() {
     try {
@@ -142,14 +160,32 @@ export function App() {
     }
   }
 
+  async function handleRefreshLicense(heartbeat: boolean): Promise<LicenseStatus> {
+    try {
+      const status = heartbeat ? await refreshLicenseStatus() : await getLicenseStatus();
+      setLicenseStatus(status);
+      pushSidecarMessage(
+        heartbeat
+          ? `license status: ${status.status}${status.offline_mode ? " (offline)" : ""}`
+          : `license local: ${status.status}`,
+      );
+      return status;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
   async function handleConnect() {
     setErrorMessage(null);
     setConnectionState("connecting");
     try {
       await initializeSidecar();
       setConnectionState("ready");
+      await handleRefreshLicense(false);
       setModuleConfigStatus(await getModuleConfigStatus("graduation"));
       await handleLoadJobs();
+      await handleRefreshLicense(true);
       await handleSyncConfig();
     } catch (error) {
       setConnectionState("error");
@@ -188,6 +224,18 @@ export function App() {
       }
     };
   }, [applySidecarEvent, setConnectionState, setErrorMessage]);
+
+  useEffect(() => {
+    if (connectionState !== "ready") {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void handleRefreshLicense(true);
+    }, 5 * 60 * 1000);
+
+    return () => window.clearInterval(timer);
+  }, [connectionState]);
 
   useEffect(() => {
     if (!activeJobId) {
@@ -256,6 +304,11 @@ export function App() {
     setErrorMessage(null);
     setIsStartingJob(true);
     try {
+      const latestLicense = await handleRefreshLicense(true);
+      if (latestLicense.configured && !latestLicense.can_start_jobs) {
+        setErrorMessage(latestLicense.message ?? messages.app.license.reconnectRequired);
+        return;
+      }
       await handleSyncConfig();
       const result = await startGraduationJob({
         jobId: buildJobId(),
@@ -410,6 +463,12 @@ export function App() {
                   ? messages.app.connecting
                   : connectionState}
             </div>
+            {licenseStatus ? (
+              <div style={{ marginTop: "10px", fontSize: "13px", color: "rgb(51, 65, 85)", lineHeight: 1.5 }}>
+                <div>{messages.app.license.title}: {describeLicenseStatus(licenseStatus)}</div>
+                <div>{messages.app.license.lastChecked}: {formatTimestamp(licenseStatus.last_checked_at)}</div>
+              </div>
+            ) : null}
             {moduleConfigStatus ? (
               <div style={{ marginTop: "10px", fontSize: "13px", color: "rgb(51, 65, 85)", lineHeight: 1.5 }}>
                 <div>
@@ -467,6 +526,12 @@ export function App() {
                 {messages.app.refreshJobs}
               </button>
               <button
+                style={{ ...buttonStyle, backgroundColor: "rgb(37, 99, 235)" }}
+                onClick={() => void handleRefreshLicense(true)}
+              >
+                {messages.app.license.refresh}
+              </button>
+              <button
                 style={{ ...buttonStyle, backgroundColor: "rgb(2, 132, 199)" }}
                 onClick={() => void handleSyncConfig()}
               >
@@ -477,14 +542,14 @@ export function App() {
               </button>
               <button
                 style={buttonStyle}
-                disabled={isStartingJob}
+                disabled={isStartingJob || licenseBlocksStart}
                 onClick={() => void handleStart(true)}
               >
                 {messages.app.startDryRun}
               </button>
               <button
                 style={{ ...buttonStyle, backgroundColor: "rgb(22, 163, 74)" }}
-                disabled={isStartingJob}
+                disabled={isStartingJob || licenseBlocksStart}
                 onClick={() => void handleStart(false)}
               >
                 {messages.app.startLive}
@@ -546,6 +611,34 @@ export function App() {
             </div>
             <p style={{ margin: 0, color: "rgb(71, 85, 105)" }}>{messages.app.dryRunHint}</p>
             <p style={{ margin: 0, color: "rgb(180, 83, 9)" }}>{messages.app.authHint}</p>
+            {licenseStatus ? (
+              <div
+                style={{
+                  borderRadius: "12px",
+                  backgroundColor: licenseStatus.needs_attention ? "rgb(255, 247, 237)" : "rgb(240, 253, 250)",
+                  border: licenseStatus.needs_attention
+                    ? "1px solid rgb(253, 186, 116)"
+                    : "1px solid rgb(167, 243, 208)",
+                  color: licenseStatus.needs_attention ? "rgb(154, 52, 18)" : "rgb(6, 95, 70)",
+                  padding: "12px 14px",
+                }}
+              >
+                <div>
+                  {messages.app.license.title}: {describeLicenseStatus(licenseStatus)}
+                </div>
+                <div>
+                  {messages.app.license.expiresAt}: {formatTimestamp(licenseStatus.expires_at)}
+                </div>
+                <div>
+                  {messages.app.license.offlineGraceUntil}: {formatTimestamp(licenseStatus.offline_grace_until)}
+                </div>
+                {licenseStatus.last_error ? (
+                  <div>
+                    {messages.app.license.lastError}: {licenseStatus.last_error}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             {moduleConfigStatus ? (
               <div
                 style={{

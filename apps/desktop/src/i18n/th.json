@@ -29,6 +29,18 @@
     "configFallback": "Fallback reason",
     "connected": "เชื่อมต่อ sidecar แล้ว",
     "connecting": "กำลังเชื่อมต่อ sidecar",
+    "license": {
+      "title": "License",
+      "refresh": "Refresh License",
+      "active": "พร้อมใช้งาน",
+      "devMode": "ยังไม่มี license local (dev mode)",
+      "offlineMode": "offline mode ใช้ได้ถึง",
+      "reconnectRequired": "ต้องเชื่อมต่อ cloud หรือ renew ก่อนเริ่มงานใหม่",
+      "lastChecked": "Last Checked",
+      "expiresAt": "Expires At",
+      "offlineGraceUntil": "Offline Grace Until",
+      "lastError": "Last Error"
+    },
     "preview": {
       "title": "Validate / Preview",
       "empty": "ยังไม่มีผล validate",

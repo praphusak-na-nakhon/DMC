@@ -11,11 +11,13 @@ SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS license (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     license_key TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
     device_id TEXT NOT NULL,
     license_tier TEXT NOT NULL,
     school_size_tier TEXT NOT NULL,
     billing_interval TEXT,
     student_count_total INTEGER NOT NULL,
+    modules_enabled_json TEXT NOT NULL DEFAULT '[]',
     max_devices INTEGER NOT NULL DEFAULT 3,
     activated_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
@@ -39,10 +41,33 @@ CREATE TABLE IF NOT EXISTS job (
 """
 
 
+def _ensure_column(
+    connection: sqlite3.Connection,
+    *,
+    table: str,
+    column: str,
+    definition: str,
+) -> None:
+    existing_columns = {
+        row["name"]
+        for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    if column not in existing_columns:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 def initialize_database() -> None:
     ensure_data_dir()
     with sqlite3.connect(sqlite_path()) as connection:
+        connection.row_factory = sqlite3.Row
         connection.executescript(SCHEMA_SQL)
+        _ensure_column(connection, table="license", column="status", definition="TEXT NOT NULL DEFAULT 'active'")
+        _ensure_column(
+            connection,
+            table="license",
+            column="modules_enabled_json",
+            definition="TEXT NOT NULL DEFAULT '[]'",
+        )
         connection.commit()
 
 

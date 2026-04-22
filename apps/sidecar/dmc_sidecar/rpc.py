@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from . import __version__
 from .job_store import JobStore
+from .license_client import build_license_status_snapshot, refresh_license_status
 from .license_store import LicenseStore
 from .module_config import load_effective_config, sync_module_config
 from .modules import get_module
@@ -77,6 +78,14 @@ class RpcServer:
                     updated=state.updated,
                     last_error=state.last_error,
                 ).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "get_license_status":
+                result = build_license_status_snapshot(self.license_store.get_license()).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "refresh_license_status":
+                result = refresh_license_status(self.license_store).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "sync_module_config":

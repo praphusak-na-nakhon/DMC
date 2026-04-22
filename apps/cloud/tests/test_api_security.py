@@ -48,6 +48,12 @@ def test_license_activate_accepts_valid_bearer() -> None:
     assert response.json()["status"] == "active"
 
 
+def test_license_heartbeat_accepts_valid_bearer() -> None:
+    response = client.get("/v1/license/heartbeat", headers=auth_headers())
+    assert response.status_code == 200
+    assert response.json()["status"] == "active"
+
+
 def test_config_returns_signed_payload() -> None:
     response = client.get("/v1/config/graduation", headers=auth_headers())
     assert response.status_code == 200
