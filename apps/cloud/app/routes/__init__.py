@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from .admin import router as admin_router
 from .billing import router as billing_router
 from .config import router as config_router
 from .license import router as license_router
@@ -8,6 +9,7 @@ from .updates import router as updates_router
 
 
 api_router = APIRouter()
+api_router.include_router(admin_router, prefix="/v1/admin", tags=["admin"])
 api_router.include_router(license_router, prefix="/v1/license", tags=["license"])
 api_router.include_router(config_router, prefix="/v1/config", tags=["config"])
 api_router.include_router(telemetry_router, prefix="/v1/telemetry", tags=["telemetry"])

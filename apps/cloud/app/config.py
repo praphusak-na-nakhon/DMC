@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 
@@ -22,6 +23,14 @@ class Settings(BaseModel):
     updater_windows_x86_64_signature: str = os.getenv(
         "DMC_CLOUD_UPDATER_WINDOWS_X86_64_SIGNATURE",
         "",
+    )
+    sqlite_path: str = os.getenv(
+        "DMC_CLOUD_SQLITE_PATH",
+        str(Path(__file__).resolve().parents[3] / ".dmc-assistant-data" / "cloud" / "state.sqlite3"),
+    )
+    trial_license_keys: str = os.getenv(
+        "DMC_CLOUD_TRIAL_LICENSE_KEYS",
+        "DMC-TRIAL-0001,DMC-TEST-0001,DMC-TEST-NEW,DMC-TEST-ACTIVATE",
     )
 
 

@@ -11,6 +11,8 @@ obec-fill-review.csv
 .venv/
 *.egg-info/
 .dmc-assistant-data/
+.cloud-state.sqlite3
+apps/.cloud-state.sqlite3
 node_modules/
 dist/
 coverage/

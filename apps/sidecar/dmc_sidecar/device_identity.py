@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import uuid
 
 from .db import connect
@@ -26,3 +27,7 @@ def get_or_create_device_id() -> str:
             (DEVICE_ID_KEY, device_id),
         )
         return device_id
+
+
+def default_device_name() -> str:
+    return os.getenv("COMPUTERNAME", "dmc-desktop").strip() or "dmc-desktop"

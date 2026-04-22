@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from .config import cloud_api_bearer_token, cloud_base_url
 from .db import connect
+from .license_store import LicenseStore
 
 
 def utc_now() -> str:
@@ -163,9 +164,11 @@ class TelemetryClient:
     def __init__(
         self,
         *,
+        license_store: LicenseStore | None = None,
         store: TelemetryStore | None = None,
         max_queue_size: int = 500,
     ) -> None:
+        self.license_store = license_store
         self.store = store or TelemetryStore()
         self.max_queue_size = max_queue_size
         self._flush_lock = threading.Lock()
@@ -198,6 +201,7 @@ class TelemetryClient:
                         "Authorization": f"Bearer {cloud_api_bearer_token()}",
                         "Accept": "application/json",
                         "Content-Type": "application/json",
+                        **self._license_headers(),
                     },
                     data=json.dumps(
                         {"events": [item.payload for item in batch]},
@@ -227,6 +231,17 @@ class TelemetryClient:
 
         status = "ok" if last_error is None else "error"
         return {"status": status, "sent": sent, "queued": self.store.count(), "last_error": last_error}
+
+    def _license_headers(self) -> dict[str, str]:
+        if self.license_store is None:
+            return {}
+        record = self.license_store.get_license()
+        if record is None:
+            return {}
+        return {
+            "X-DMC-License-Key": record.license_key,
+            "X-DMC-Device-Id": record.device_id,
+        }
 
     def record_app_started(self, *, app_version: str, platform: str) -> None:
         self.record(

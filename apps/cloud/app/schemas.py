@@ -28,6 +28,35 @@ class LicenseStateResponse(BaseModel):
     offline_grace_days: int
 
 
+class CloudLicenseUpsertRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    license_key: str
+    license_tier: str
+    school_size_tier: str
+    billing_interval: str | None = None
+    student_count_total: int
+    max_devices: int
+    status: str
+    expires_at: str
+    modules_enabled: list[str]
+
+
+class CloudLicenseAdminResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    license_key: str
+    license_tier: str
+    school_size_tier: str
+    billing_interval: str | None
+    student_count_total: int
+    max_devices: int
+    status: str
+    expires_at: str
+    modules_enabled: list[str]
+    active_devices: int
+
+
 class ConfigResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

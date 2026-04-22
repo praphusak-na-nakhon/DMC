@@ -34,7 +34,7 @@ class RpcServer:
     def __init__(self, emit_notification: Callable[[dict[str, Any]], None]) -> None:
         self.job_store = JobStore()
         self.license_store = LicenseStore()
-        self.telemetry = TelemetryClient()
+        self.telemetry = TelemetryClient(license_store=self.license_store)
         self.job_manager = JobManager(
             job_store=self.job_store,
             license_store=self.license_store,

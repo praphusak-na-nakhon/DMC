@@ -6,7 +6,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .config import cloud_api_bearer_token, cloud_base_url
-from .device_identity import get_or_create_device_id
+from .device_identity import default_device_name, get_or_create_device_id
 from .license_policy import _parse_utc
 from .license_store import LicenseStore
 from .schemas import LicenseRecord, LicenseStatusSnapshot
@@ -177,6 +177,9 @@ def refresh_license_status(
         headers={
             "Authorization": f"Bearer {cloud_api_bearer_token()}",
             "Accept": "application/json",
+            "X-DMC-License-Key": record.license_key,
+            "X-DMC-Device-Id": record.device_id,
+            "X-DMC-Device-Name": default_device_name(),
         },
         method="GET",
     )
