@@ -10,7 +10,7 @@ from urllib.request import Request, urlopen
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from .config import cloud_api_bearer_token, cloud_base_url
+from .config import require_cloud_api_bearer_token, secure_cloud_base_url
 from .db import connect
 from .license_store import LicenseStore
 
@@ -180,7 +180,14 @@ class TelemetryClient:
         self.flush()
 
     def flush(self, *, batch_size: int = 20, max_batches: int = 5) -> dict[str, Any]:
-        base_url = cloud_base_url()
+        try:
+            base_url = secure_cloud_base_url()
+        except RuntimeError as exc:
+            return {"status": "error", "sent": 0, "queued": self.store.count(), "last_error": str(exc)}
+        try:
+            bearer_token = require_cloud_api_bearer_token()
+        except RuntimeError as exc:
+            return {"status": "error", "sent": 0, "queued": self.store.count(), "last_error": str(exc)}
         if not base_url:
             return {"status": "disabled", "sent": 0, "queued": self.store.count(), "last_error": None}
 
@@ -198,7 +205,7 @@ class TelemetryClient:
                 request = Request(
                     f"{base_url}/v1/telemetry",
                     headers={
-                        "Authorization": f"Bearer {cloud_api_bearer_token()}",
+                        "Authorization": f"Bearer {bearer_token}",
                         "Accept": "application/json",
                         "Content-Type": "application/json",
                         **self._license_headers(),

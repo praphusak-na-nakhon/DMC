@@ -34,8 +34,8 @@ def sign_payload(version: str, payload: dict[str, object]) -> str:
 
 def test_sync_module_config_downloads_and_caches_verified_payload(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    monkeypatch.setattr(module_config, "cloud_base_url", lambda: "https://cloud.example.test")
-    monkeypatch.setattr(module_config, "cloud_api_bearer_token", lambda: "token-1")
+    monkeypatch.setattr(module_config, "secure_cloud_base_url", lambda: "https://cloud.example.test")
+    monkeypatch.setattr(module_config, "require_cloud_api_bearer_token", lambda: "token-1")
 
     bundled = module_config.load_effective_config("graduation")
     payload = dict(bundled.config)
@@ -70,8 +70,8 @@ def test_sync_module_config_downloads_and_caches_verified_payload(monkeypatch, t
 
 def test_sync_module_config_rejects_invalid_signature_and_keeps_local_state(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    monkeypatch.setattr(module_config, "cloud_base_url", lambda: "https://cloud.example.test")
-    monkeypatch.setattr(module_config, "cloud_api_bearer_token", lambda: "token-1")
+    monkeypatch.setattr(module_config, "secure_cloud_base_url", lambda: "https://cloud.example.test")
+    monkeypatch.setattr(module_config, "require_cloud_api_bearer_token", lambda: "token-1")
 
     monkeypatch.setattr(
         module_config,
@@ -92,3 +92,17 @@ def test_sync_module_config_rejects_invalid_signature_and_keeps_local_state(monk
     assert state.signature_verified is False
     assert state.updated is False
     assert state.last_error == "CONFIG_SIGNATURE_INVALID"
+
+
+def test_sync_module_config_rejects_insecure_cloud_url(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        module_config,
+        "secure_cloud_base_url",
+        lambda: (_ for _ in ()).throw(RuntimeError("CLOUD_URL_INSECURE")),
+    )
+
+    state = module_config.sync_module_config("graduation")
+
+    assert state.updated is False
+    assert state.last_error == "CLOUD_URL_INSECURE"

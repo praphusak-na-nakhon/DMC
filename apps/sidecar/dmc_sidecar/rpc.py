@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 import threading
 from pathlib import Path
@@ -186,22 +187,24 @@ class RpcServer:
                 message=f"Unsupported method: {request.method}",
             )
         except RuntimeError as exc:
+            error_code = self._safe_runtime_error_code(exc)
             return self._error(
                 request.id,
-                code=str(exc),
-                message=str(exc),
+                code=error_code,
+                message=self._runtime_error_message(error_code),
             )
         except NotImplementedError as exc:
             return self._error(
                 request.id,
                 code="METHOD_NOT_IMPLEMENTED",
-                message=str(exc),
+                message="Requested operation is not implemented.",
             )
         except Exception as exc:  # pragma: no cover - defensive boundary
+            print(f"[sidecar] unexpected rpc error: {exc!r}", file=sys.stderr)
             return self._error(
                 request.id,
                 code="UNEXPECTED_ERROR",
-                message=str(exc),
+                message="Unexpected internal error.",
             )
 
     def _set_job_status(
@@ -282,6 +285,17 @@ class RpcServer:
                 details=details or {},
             ),
         )
+
+    def _safe_runtime_error_code(self, exc: RuntimeError) -> str:
+        raw = str(exc).strip()
+        if re.fullmatch(r"[A-Z][A-Z0-9_]*", raw):
+            return raw
+        return "RUNTIME_ERROR"
+
+    def _runtime_error_message(self, code: str) -> str:
+        if code == "RUNTIME_ERROR":
+            return "Operation failed."
+        return code
 
 
 def run_stdio_server() -> int:

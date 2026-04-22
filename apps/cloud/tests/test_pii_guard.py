@@ -39,3 +39,21 @@ def test_assert_payload_is_telemetry_safe_rejects_pii_field_names() -> None:
                 ]
             }
         )
+
+
+def test_assert_payload_is_telemetry_safe_rejects_case_and_camel_variants() -> None:
+    with pytest.raises(ValueError, match="StudentNo"):
+        assert_payload_is_telemetry_safe(
+            {
+                "events": [
+                    {
+                        "event": "job_failed",
+                        "ts": "2026-04-22T00:00:00Z",
+                        "module": "graduation",
+                        "StudentNo": "17217",
+                        "processed": 25,
+                        "error_code": "INPUT_STATUS_NOT_MAPPED",
+                    }
+                ]
+            }
+        )

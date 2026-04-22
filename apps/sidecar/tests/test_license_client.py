@@ -67,8 +67,8 @@ def test_refresh_license_status_updates_store_from_cloud(monkeypatch, tmp_path: 
     store = LicenseStore()
     seed_license(store)
 
-    monkeypatch.setattr("dmc_sidecar.license_client.cloud_base_url", lambda: "https://cloud.example.test")
-    monkeypatch.setattr("dmc_sidecar.license_client.cloud_api_bearer_token", lambda: "dev-token")
+    monkeypatch.setattr("dmc_sidecar.license_client.secure_cloud_base_url", lambda: "https://cloud.example.test")
+    monkeypatch.setattr("dmc_sidecar.license_client.require_cloud_api_bearer_token", lambda: "dev-token")
     monkeypatch.setattr(
         "dmc_sidecar.license_client.urlopen",
         lambda request, timeout=10: FakeResponse(
@@ -107,8 +107,8 @@ def test_refresh_license_status_falls_back_to_offline_mode_on_network_error(
     store = LicenseStore()
     seed_license(store)
 
-    monkeypatch.setattr("dmc_sidecar.license_client.cloud_base_url", lambda: "https://cloud.example.test")
-    monkeypatch.setattr("dmc_sidecar.license_client.cloud_api_bearer_token", lambda: "dev-token")
+    monkeypatch.setattr("dmc_sidecar.license_client.secure_cloud_base_url", lambda: "https://cloud.example.test")
+    monkeypatch.setattr("dmc_sidecar.license_client.require_cloud_api_bearer_token", lambda: "dev-token")
 
     def raise_network_error(request, timeout=10):
         raise URLError("network down")
@@ -124,8 +124,8 @@ def test_refresh_license_status_falls_back_to_offline_mode_on_network_error(
 
 def test_activate_license_saves_local_record(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    monkeypatch.setattr("dmc_sidecar.license_client.cloud_base_url", lambda: "https://cloud.example.test")
-    monkeypatch.setattr("dmc_sidecar.license_client.cloud_api_bearer_token", lambda: "dev-token")
+    monkeypatch.setattr("dmc_sidecar.license_client.secure_cloud_base_url", lambda: "https://cloud.example.test")
+    monkeypatch.setattr("dmc_sidecar.license_client.require_cloud_api_bearer_token", lambda: "dev-token")
     monkeypatch.setattr("dmc_sidecar.license_client.get_or_create_device_id", lambda: "device-activate-1")
     monkeypatch.setattr(
         "dmc_sidecar.license_client.urlopen",
@@ -159,3 +159,18 @@ def test_activate_license_saves_local_record(monkeypatch, tmp_path: Path) -> Non
     assert loaded.license_key == "DMC-TEST-NEW"
     assert loaded.device_id == "device-activate-1"
     assert loaded.student_count_total == 250
+
+
+def test_refresh_license_status_rejects_insecure_cloud_url(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    store = LicenseStore()
+    seed_license(store)
+    monkeypatch.setattr(
+        "dmc_sidecar.license_client.secure_cloud_base_url",
+        lambda: (_ for _ in ()).throw(RuntimeError("CLOUD_URL_INSECURE")),
+    )
+
+    snapshot = refresh_license_status(store)
+
+    assert snapshot.last_error == "CLOUD_URL_INSECURE"
+    assert snapshot.offline_mode is True

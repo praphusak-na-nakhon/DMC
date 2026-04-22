@@ -15,11 +15,11 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import BaseModel, ConfigDict
 
 from .config import (
-    cloud_api_bearer_token,
-    cloud_base_url,
     config_signing_keys_path,
     configs_dir,
+    require_cloud_api_bearer_token,
     repo_root,
+    secure_cloud_base_url,
 )
 
 
@@ -200,7 +200,24 @@ def _write_cached_envelope(module: str, envelope: ConfigEnvelope) -> Path:
 
 def sync_module_config(module: str, *, timeout_sec: int = 10) -> ModuleConfigState:
     local_state = load_effective_config(module)
-    base_url = cloud_base_url()
+    try:
+        base_url = secure_cloud_base_url()
+    except RuntimeError as exc:
+        return replace(
+            local_state,
+            checked_at=utc_now(),
+            updated=False,
+            last_error=str(exc),
+        )
+    try:
+        bearer_token = require_cloud_api_bearer_token()
+    except RuntimeError as exc:
+        return replace(
+            local_state,
+            checked_at=utc_now(),
+            updated=False,
+            last_error=str(exc),
+        )
     if base_url is None:
         return local_state
 
@@ -208,7 +225,7 @@ def sync_module_config(module: str, *, timeout_sec: int = 10) -> ModuleConfigSta
     request = Request(
         f"{base_url}/v1/config/{module}?{query}",
         headers={
-            "Authorization": f"Bearer {cloud_api_bearer_token()}",
+            "Authorization": f"Bearer {bearer_token}",
             "Accept": "application/json",
         },
         method="GET",

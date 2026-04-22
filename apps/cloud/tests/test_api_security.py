@@ -14,6 +14,14 @@ from app.telemetry_store import TelemetryStore
 
 
 client = TestClient(app)
+TEST_API_BEARER_TOKEN = "dmc-test-token"
+TEST_PRIVATE_KEY_SEED_HEX = "affb171844b95521a4d9a844da801d480577ca29d141eb5113da47acf182a088"
+
+
+def setup_test_security(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "api_bearer_token", TEST_API_BEARER_TOKEN)
+    monkeypatch.setattr(settings, "config_signing_private_key_hex", TEST_PRIVATE_KEY_SEED_HEX)
+    monkeypatch.setattr(settings, "config_signing_key_id", "dev-2026-01")
 
 
 def auth_headers() -> dict[str, str]:
@@ -31,6 +39,7 @@ def test_healthz_is_public() -> None:
 
 
 def test_license_activate_requires_bearer() -> None:
+    settings.api_bearer_token = TEST_API_BEARER_TOKEN
     response = client.post(
         "/v1/license/activate",
         json={
@@ -44,6 +53,7 @@ def test_license_activate_requires_bearer() -> None:
 
 
 def test_license_activate_accepts_valid_bearer(monkeypatch, tmp_path: Path) -> None:
+    setup_test_security(monkeypatch)
     use_temp_cloud_db(monkeypatch, tmp_path)
     response = client.post(
         "/v1/license/activate",
@@ -60,6 +70,7 @@ def test_license_activate_accepts_valid_bearer(monkeypatch, tmp_path: Path) -> N
 
 
 def test_license_heartbeat_accepts_valid_bearer(monkeypatch, tmp_path: Path) -> None:
+    setup_test_security(monkeypatch)
     use_temp_cloud_db(monkeypatch, tmp_path)
     activate = client.post(
         "/v1/license/activate",
@@ -87,6 +98,7 @@ def test_license_heartbeat_accepts_valid_bearer(monkeypatch, tmp_path: Path) -> 
 
 
 def test_license_activate_rejects_device_limit(monkeypatch, tmp_path: Path) -> None:
+    setup_test_security(monkeypatch)
     use_temp_cloud_db(monkeypatch, tmp_path)
     first = client.post(
         "/v1/license/activate",
@@ -120,6 +132,7 @@ def test_license_activate_rejects_device_limit(monkeypatch, tmp_path: Path) -> N
 
 
 def test_admin_can_upsert_and_list_licenses(monkeypatch, tmp_path: Path) -> None:
+    setup_test_security(monkeypatch)
     use_temp_cloud_db(monkeypatch, tmp_path)
     upsert = client.put(
         "/v1/admin/licenses/DMC-PAID-0001",
@@ -147,6 +160,7 @@ def test_admin_can_upsert_and_list_licenses(monkeypatch, tmp_path: Path) -> None
 
 
 def test_admin_upsert_rejects_mismatched_license_key(monkeypatch, tmp_path: Path) -> None:
+    setup_test_security(monkeypatch)
     use_temp_cloud_db(monkeypatch, tmp_path)
     response = client.put(
         "/v1/admin/licenses/DMC-PAID-0001",
@@ -166,7 +180,8 @@ def test_admin_upsert_rejects_mismatched_license_key(monkeypatch, tmp_path: Path
     assert response.status_code == 400
 
 
-def test_config_returns_signed_payload() -> None:
+def test_config_returns_signed_payload(monkeypatch) -> None:
+    setup_test_security(monkeypatch)
     response = client.get("/v1/config/graduation", headers=auth_headers())
     assert response.status_code == 200
     payload = response.json()
@@ -184,7 +199,8 @@ def test_config_returns_signed_payload() -> None:
     )
 
 
-def test_config_returns_204_when_current_version_matches() -> None:
+def test_config_returns_204_when_current_version_matches(monkeypatch) -> None:
+    setup_test_security(monkeypatch)
     current = client.get("/v1/config/graduation", headers=auth_headers()).json()["version"]
     response = client.get(
         f"/v1/config/graduation?current_version={current}",
@@ -195,6 +211,7 @@ def test_config_returns_204_when_current_version_matches() -> None:
 
 
 def test_telemetry_requires_bearer() -> None:
+    settings.api_bearer_token = TEST_API_BEARER_TOKEN
     response = client.post(
         "/v1/telemetry",
         json={
@@ -212,6 +229,7 @@ def test_telemetry_requires_bearer() -> None:
 
 
 def test_telemetry_accepts_allowlisted_payload(monkeypatch, tmp_path: Path) -> None:
+    setup_test_security(monkeypatch)
     use_temp_cloud_db(monkeypatch, tmp_path)
     store = TelemetryStore(settings.sqlite_path)
     response = client.post(
@@ -237,6 +255,7 @@ def test_telemetry_accepts_allowlisted_payload(monkeypatch, tmp_path: Path) -> N
 
 
 def test_telemetry_persists_license_and_device_headers(monkeypatch, tmp_path: Path) -> None:
+    setup_test_security(monkeypatch)
     use_temp_cloud_db(monkeypatch, tmp_path)
     store = TelemetryStore(settings.sqlite_path)
     response = client.post(
@@ -278,6 +297,7 @@ def test_updates_manifest_returns_204_when_not_configured() -> None:
 
 
 def test_updates_manifest_returns_payload_when_artifact_is_configured(monkeypatch) -> None:
+    setup_test_security(monkeypatch)
     monkeypatch.setattr(settings, "updater_latest_version", "0.2.0")
     monkeypatch.setattr(settings, "updater_windows_x86_64_url", "https://cdn.example.test/dmc.msi.zip")
     monkeypatch.setattr(settings, "updater_windows_x86_64_signature", "signature-1")
@@ -301,3 +321,15 @@ def test_updates_manifest_returns_payload_when_artifact_is_configured(monkeypatc
         "signature": "signature-1",
         "notes": "Bug fixes",
     }
+
+
+def test_config_rejects_invalid_module_name(monkeypatch) -> None:
+    setup_test_security(monkeypatch)
+    response = client.get("/v1/config/..-bad", headers=auth_headers())
+    assert response.status_code == 400
+
+
+def test_auth_returns_500_when_bearer_not_configured(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "api_bearer_token", "")
+    response = client.get("/v1/config/graduation")
+    assert response.status_code == 500

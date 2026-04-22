@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 APP_NAME = "dmc-assistant"
@@ -58,8 +59,29 @@ def cloud_base_url() -> str | None:
     return value.rstrip("/") or None
 
 
+def secure_cloud_base_url() -> str | None:
+    value = cloud_base_url()
+    if value is None:
+        return None
+
+    parsed = urlparse(value)
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme == "https":
+        return value
+    if parsed.scheme == "http" and hostname in {"localhost", "127.0.0.1"}:
+        return value
+    raise RuntimeError("CLOUD_URL_INSECURE")
+
+
 def cloud_api_bearer_token() -> str:
-    return os.getenv("DMC_CLOUD_API_BEARER_TOKEN", "dmc-dev-token").strip()
+    return os.getenv("DMC_CLOUD_API_BEARER_TOKEN", "").strip()
+
+
+def require_cloud_api_bearer_token() -> str:
+    token = cloud_api_bearer_token()
+    if not token:
+        raise RuntimeError("CLOUD_API_TOKEN_MISSING")
+    return token
 
 
 def config_signing_keys_path() -> Path:

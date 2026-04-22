@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .config import cloud_api_bearer_token, cloud_base_url
+from .config import cloud_base_url, require_cloud_api_bearer_token, secure_cloud_base_url
 from .device_identity import default_device_name, get_or_create_device_id
 from .license_policy import _parse_utc
 from .license_store import LicenseStore
@@ -91,7 +91,7 @@ def activate_license(
     app_version: str,
     timeout_sec: int = 10,
 ) -> LicenseStatusSnapshot:
-    base_url = cloud_base_url()
+    base_url = secure_cloud_base_url()
     if not base_url:
         raise RuntimeError("LICENSE_ACTIVATION_UNAVAILABLE")
 
@@ -99,7 +99,7 @@ def activate_license(
     request = Request(
         f"{base_url}/v1/license/activate",
         headers={
-            "Authorization": f"Bearer {cloud_api_bearer_token()}",
+            "Authorization": f"Bearer {require_cloud_api_bearer_token()}",
             "Accept": "application/json",
             "Content-Type": "application/json",
         },
@@ -163,7 +163,24 @@ def refresh_license_status(
     if record is None:
         return build_license_status_snapshot(None)
 
-    base_url = cloud_base_url()
+    try:
+        base_url = secure_cloud_base_url()
+    except RuntimeError as exc:
+        return build_license_status_snapshot(
+            record,
+            message=str(exc),
+            last_error=str(exc),
+            offline_mode=_is_within_offline_grace(record),
+        )
+    try:
+        bearer_token = require_cloud_api_bearer_token()
+    except RuntimeError as exc:
+        return build_license_status_snapshot(
+            record,
+            message=str(exc),
+            last_error=str(exc),
+            offline_mode=_is_within_offline_grace(record),
+        )
     if not base_url:
         return build_license_status_snapshot(
             record,
@@ -175,7 +192,7 @@ def refresh_license_status(
     request = Request(
         f"{base_url}/v1/license/heartbeat",
         headers={
-            "Authorization": f"Bearer {cloud_api_bearer_token()}",
+            "Authorization": f"Bearer {bearer_token}",
             "Accept": "application/json",
             "X-DMC-License-Key": record.license_key,
             "X-DMC-Device-Id": record.device_id,

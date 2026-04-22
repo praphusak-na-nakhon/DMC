@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hmac
+
 from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -14,7 +16,7 @@ def require_api_bearer(
 ) -> str:
     if not settings.api_bearer_token:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="cloud bearer token is not configured",
         )
 
@@ -24,7 +26,7 @@ def require_api_bearer(
             detail="missing bearer token",
         )
 
-    if credentials.credentials != settings.api_bearer_token:
+    if not hmac.compare_digest(credentials.credentials, settings.api_bearer_token):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="invalid bearer token",

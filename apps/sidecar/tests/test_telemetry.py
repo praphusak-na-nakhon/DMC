@@ -25,8 +25,8 @@ class FakeResponse:
 
 def test_telemetry_client_flushes_batched_events(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    monkeypatch.setattr("dmc_sidecar.telemetry.cloud_base_url", lambda: "https://cloud.example.test")
-    monkeypatch.setattr("dmc_sidecar.telemetry.cloud_api_bearer_token", lambda: "token-1")
+    monkeypatch.setattr("dmc_sidecar.telemetry.secure_cloud_base_url", lambda: "https://cloud.example.test")
+    monkeypatch.setattr("dmc_sidecar.telemetry.require_cloud_api_bearer_token", lambda: "token-1")
 
     license_store = LicenseStore()
     license_store.save_activation(

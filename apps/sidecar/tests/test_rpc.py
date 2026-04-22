@@ -302,3 +302,28 @@ def test_resume_existing_job_rejects_done_job(monkeypatch, tmp_path: Path) -> No
     response = json.loads(server.handle_text(payload))
 
     assert response["error"]["code"] == "JOB_NOT_RESUMABLE"
+
+
+def test_rpc_sanitizes_unexpected_exception_messages(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    server = RpcServer(emit_notification=lambda payload: None)
+
+    class BadModule:
+        def validate_excel(self, path):  # noqa: ANN001
+            raise ValueError("student 17217 failed to parse")
+
+    monkeypatch.setattr("dmc_sidecar.rpc.get_module", lambda module_name: BadModule())
+
+    payload = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "req-unsafe",
+            "method": "validate_excel",
+            "params": {"module": "graduation", "path": "C:\\data\\unsafe.xlsx"},
+        }
+    )
+
+    response = json.loads(server.handle_text(payload))
+
+    assert response["error"]["code"] == "UNEXPECTED_ERROR"
+    assert response["error"]["message"] == "Unexpected internal error."
