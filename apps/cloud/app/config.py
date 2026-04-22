@@ -15,6 +15,14 @@ class Settings(BaseModel):
         "DMC_CLOUD_CONFIG_SIGNING_PRIVATE_KEY_HEX",
         "affb171844b95521a4d9a844da801d480577ca29d141eb5113da47acf182a088",
     )
+    updater_latest_version: str = os.getenv("DMC_CLOUD_UPDATER_LATEST_VERSION", "0.1.0")
+    updater_pub_date: str = os.getenv("DMC_CLOUD_UPDATER_PUB_DATE", "2026-04-22T00:00:00Z")
+    updater_notes: str = os.getenv("DMC_CLOUD_UPDATER_NOTES", "No update available.")
+    updater_windows_x86_64_url: str = os.getenv("DMC_CLOUD_UPDATER_WINDOWS_X86_64_URL", "")
+    updater_windows_x86_64_signature: str = os.getenv(
+        "DMC_CLOUD_UPDATER_WINDOWS_X86_64_SIGNATURE",
+        "",
+    )
 
 
 settings = Settings()

@@ -11,7 +11,9 @@ use std::{
     time::Duration,
 };
 use tauri::{AppHandle, Emitter, State};
+use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::oneshot;
+use url::Url;
 
 type PendingMap = Arc<StdMutex<HashMap<String, oneshot::Sender<Result<Value, String>>>>>;
 
@@ -30,6 +32,59 @@ struct SidecarRuntime {
 #[derive(Default)]
 struct SidecarState {
     runtime: tauri::async_runtime::Mutex<SidecarRuntime>,
+}
+
+#[derive(Default)]
+struct PendingUpdate(StdMutex<Option<tauri_plugin_updater::Update>>);
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdaterStatus {
+    configured: bool,
+    endpoint: Option<String>,
+    current_version: String,
+    pubkey_configured: bool,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateMetadata {
+    version: String,
+    current_version: String,
+    date: Option<String>,
+    body: Option<String>,
+}
+
+fn updater_endpoint() -> Option<String> {
+    if let Ok(value) = env::var("DMC_UPDATER_ENDPOINT") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    let Ok(base_url) = env::var("DMC_CLOUD_BASE_URL") else {
+        return None;
+    };
+    let trimmed = base_url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "{trimmed}/v1/updates/manifest?current_version={{current_version}}&target={{target}}&arch={{arch}}"
+    ))
+}
+
+fn updater_pubkey() -> Option<String> {
+    let Ok(value) = env::var("DMC_UPDATER_PUBLIC_KEY") else {
+        return None;
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_string())
 }
 
 fn repo_root() -> Result<PathBuf, String> {
@@ -333,6 +388,33 @@ async fn perform_rpc_request(
         .ok_or_else(|| "JSON-RPC response is missing the result field.".to_string())
 }
 
+fn current_app_version(app: &AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+fn build_updater_status(app: &AppHandle) -> UpdaterStatus {
+    let endpoint = updater_endpoint();
+    let pubkey = updater_pubkey();
+    UpdaterStatus {
+        configured: endpoint.is_some() && pubkey.is_some(),
+        endpoint,
+        current_version: current_app_version(app),
+        pubkey_configured: pubkey.is_some(),
+    }
+}
+
+fn build_runtime_updater(
+    app: &AppHandle,
+) -> Result<tauri_plugin_updater::UpdaterBuilder, String> {
+    let endpoint = updater_endpoint().ok_or_else(|| "UPDATER_NOT_CONFIGURED".to_string())?;
+    let pubkey = updater_pubkey().ok_or_else(|| "UPDATER_NOT_CONFIGURED".to_string())?;
+    let url = Url::parse(&endpoint).map_err(|error| format!("UPDATER_ENDPOINT_INVALID: {error}"))?;
+    app.updater_builder()
+        .pubkey(pubkey)
+        .endpoints(vec![url])
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 async fn initialize_sidecar(
     app: AppHandle,
@@ -405,14 +487,113 @@ fn open_excel_dialog() -> Option<String> {
         .map(|path| path.to_string_lossy().to_string())
 }
 
+#[tauri::command]
+fn get_updater_status(app: AppHandle) -> UpdaterStatus {
+    build_updater_status(&app)
+}
+
+#[tauri::command]
+async fn check_for_app_update(
+    app: AppHandle,
+    pending_update: State<'_, PendingUpdate>,
+) -> Result<Value, String> {
+    let update = build_runtime_updater(&app)?
+        .build()
+        .map_err(|error| error.to_string())?
+        .check()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let metadata = update.as_ref().map(|item| UpdateMetadata {
+        version: item.version.clone(),
+        current_version: item.current_version.clone(),
+        date: item.date.map(|value| value.to_string()),
+        body: item.body.clone(),
+    });
+
+    *pending_update.0.lock().expect("pending update mutex poisoned") = update;
+    serde_json::to_value(metadata).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn install_app_update(
+    app: AppHandle,
+    pending_update: State<'_, PendingUpdate>,
+) -> Result<(), String> {
+    let update = pending_update
+        .0
+        .lock()
+        .expect("pending update mutex poisoned")
+        .take()
+        .ok_or_else(|| "NO_PENDING_UPDATE".to_string())?;
+
+    let app_for_progress = app.clone();
+    let mut downloaded: u64 = 0;
+    update
+        .download_and_install(
+            move |chunk_length, content_length| {
+                downloaded += chunk_length as u64;
+                let event_type = if downloaded == chunk_length as u64 {
+                    "started"
+                } else {
+                    "progress"
+                };
+                let _ = app_for_progress.emit(
+                    "updater-event",
+                    serde_json::json!({
+                        "type": event_type,
+                        "downloaded": downloaded,
+                        "contentLength": content_length,
+                    }),
+                );
+            },
+            {
+                let app_for_finish = app.clone();
+                move || {
+                    let _ = app_for_finish.emit(
+                        "updater-event",
+                        serde_json::json!({
+                            "type": "finished",
+                        }),
+                    );
+                }
+            },
+        )
+        .await
+        .map_err(|error| {
+            let message = error.to_string();
+            let _ = app.emit(
+                "updater-event",
+                serde_json::json!({
+                    "type": "error",
+                    "message": message,
+                }),
+            );
+            message
+        })?;
+
+    let _ = app.emit(
+        "updater-event",
+        serde_json::json!({
+            "type": "installed",
+        }),
+    );
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(SidecarState::default())
+        .manage(PendingUpdate::default())
         .invoke_handler(tauri::generate_handler![
             initialize_sidecar,
             rpc_request,
             shutdown_sidecar,
-            open_excel_dialog
+            open_excel_dialog,
+            get_updater_status,
+            check_for_app_update,
+            install_app_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,15 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  AvailableUpdate,
   JobStatusSnapshot,
   LicenseStatus,
   ListJobsResponse,
   ModuleConfigStatus,
   SidecarEvent,
+  UpdaterEvent,
+  UpdaterStatus,
   StartJobResponse,
   ValidateExcelResponse,
 } from "../types/contracts";
 import {
+  parseAvailableUpdate,
   parseJobActionResponse,
   parseJobStatusSnapshot,
   parseLicenseStatus,
@@ -18,6 +22,8 @@ import {
   parseResumeExistingJobResponse,
   parseSidecarEvent,
   parseStartJobResponse,
+  parseUpdaterEvent,
+  parseUpdaterStatus,
   parseValidateExcelResponse,
 } from "../types/contracts";
 
@@ -76,6 +82,20 @@ export async function shutdownSidecar(): Promise<void> {
 
 export async function openExcelDialog(): Promise<string | null> {
   return invoke<string | null>("open_excel_dialog");
+}
+
+export async function getUpdaterStatus(): Promise<UpdaterStatus> {
+  const result = await invoke<unknown>("get_updater_status");
+  return parseUpdaterStatus(result);
+}
+
+export async function checkForAppUpdate(): Promise<AvailableUpdate | null> {
+  const result = await invoke<unknown>("check_for_app_update");
+  return parseAvailableUpdate(result);
+}
+
+export async function installAppUpdate(): Promise<void> {
+  await invoke("install_app_update");
 }
 
 export async function validateExcel(
@@ -177,5 +197,13 @@ export async function listenSidecarEvents(
         message: error instanceof Error ? error.message : String(error),
       });
     }
+  });
+}
+
+export async function listenUpdaterEvents(
+  callback: (event: UpdaterEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<unknown>("updater-event", (event) => {
+    callback(parseUpdaterEvent(event.payload));
   });
 }

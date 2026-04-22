@@ -158,6 +158,42 @@ export type ListJobsResponse = {
   items: JobStatusSnapshot[];
 };
 
+export type UpdaterStatus = {
+  configured: boolean;
+  endpoint: string | null;
+  current_version: string;
+  pubkey_configured: boolean;
+};
+
+export type AvailableUpdate = {
+  version: string;
+  current_version: string;
+  date: string | null;
+  body: string | null;
+};
+
+export type UpdaterEvent =
+  | {
+      type: "started";
+      downloaded: number;
+      contentLength: number | null;
+    }
+  | {
+      type: "progress";
+      downloaded: number;
+      contentLength: number | null;
+    }
+  | {
+      type: "finished";
+    }
+  | {
+      type: "installed";
+    }
+  | {
+      type: "error";
+      message: string;
+    };
+
 export type SidecarEvent =
   | {
       type: "progress";
@@ -344,6 +380,29 @@ export function parseListJobsResponse(value: unknown): ListJobsResponse {
   };
 }
 
+export function parseUpdaterStatus(value: unknown): UpdaterStatus {
+  const record = asRecord(value, "updater_status");
+  return {
+    configured: readBoolean(record, "configured", "updater_status"),
+    endpoint: readOptionalString(record, "endpoint", "updater_status"),
+    current_version: readString(record, "current_version", "updater_status"),
+    pubkey_configured: readBoolean(record, "pubkey_configured", "updater_status"),
+  };
+}
+
+export function parseAvailableUpdate(value: unknown): AvailableUpdate | null {
+  if (value === null) {
+    return null;
+  }
+  const record = asRecord(value, "available_update");
+  return {
+    version: readString(record, "version", "available_update"),
+    current_version: readString(record, "current_version", "available_update"),
+    date: readOptionalString(record, "date", "available_update"),
+    body: readOptionalString(record, "body", "available_update"),
+  };
+}
+
 export function parseJobActionResponse(value: unknown): {
   accepted?: boolean;
   job_id: string;
@@ -372,6 +431,37 @@ export function parseResumeExistingJobResponse(value: unknown): {
     job_id: parsed.job_id,
     status: parsed.status,
   };
+}
+
+export function parseUpdaterEvent(value: unknown): UpdaterEvent {
+  const record = asRecord(value, "updater_event");
+  const eventType = readString(record, "type", "updater_event");
+
+  switch (eventType) {
+    case "started":
+      return {
+        type: "started",
+        downloaded: readNumber(record, "downloaded", "updater_event"),
+        contentLength: readOptionalNumber(record, "contentLength", "updater_event"),
+      };
+    case "progress":
+      return {
+        type: "progress",
+        downloaded: readNumber(record, "downloaded", "updater_event"),
+        contentLength: readOptionalNumber(record, "contentLength", "updater_event"),
+      };
+    case "finished":
+      return { type: "finished" };
+    case "installed":
+      return { type: "installed" };
+    case "error":
+      return {
+        type: "error",
+        message: readString(record, "message", "updater_event"),
+      };
+    default:
+      throw new Error(`Unsupported updater event type: ${eventType}`);
+  }
 }
 
 export function parseSidecarEvent(value: unknown): SidecarEvent {

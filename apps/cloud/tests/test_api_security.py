@@ -122,3 +122,42 @@ def test_telemetry_accepts_allowlisted_payload() -> None:
     )
     assert response.status_code == 200
     assert response.json() == {"accepted": 1, "rejected": 0}
+
+
+def test_updates_manifest_returns_204_when_not_configured() -> None:
+    response = client.get(
+        "/v1/updates/manifest",
+        params={
+            "current_version": settings.version,
+            "target": "windows",
+            "arch": "x86_64",
+        },
+    )
+    assert response.status_code == 204
+    assert response.text == ""
+
+
+def test_updates_manifest_returns_payload_when_artifact_is_configured(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "updater_latest_version", "0.2.0")
+    monkeypatch.setattr(settings, "updater_windows_x86_64_url", "https://cdn.example.test/dmc.msi.zip")
+    monkeypatch.setattr(settings, "updater_windows_x86_64_signature", "signature-1")
+    monkeypatch.setattr(settings, "updater_notes", "Bug fixes")
+    monkeypatch.setattr(settings, "updater_pub_date", "2026-04-22T09:00:00Z")
+
+    response = client.get(
+        "/v1/updates/manifest",
+        params={
+            "current_version": settings.version,
+            "target": "windows",
+            "arch": "x86_64",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "version": "0.2.0",
+        "pub_date": "2026-04-22T09:00:00Z",
+        "url": "https://cdn.example.test/dmc.msi.zip",
+        "signature": "signature-1",
+        "notes": "Bug fixes",
+    }

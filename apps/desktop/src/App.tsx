@@ -2,12 +2,16 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import messages from "./i18n/th.json";
 import {
   cancelJob,
+  checkForAppUpdate,
   getJobStatus,
   getLicenseStatus,
   getModuleConfigStatus,
+  getUpdaterStatus,
   initializeSidecar,
+  installAppUpdate,
   listJobs,
   listenSidecarEvents,
+  listenUpdaterEvents,
   openExcelDialog,
   pauseJob,
   resumeExistingJob,
@@ -18,7 +22,7 @@ import {
   validateExcel,
 } from "./lib/rpcClient";
 import { useJobStore } from "./stores/useJobStore";
-import type { JobStatusSnapshot, LicenseStatus } from "./types/contracts";
+import type { AvailableUpdate, JobStatusSnapshot, LicenseStatus, UpdaterStatus } from "./types/contracts";
 
 function formatSummary(template: string, accepted: number, total: number): string {
   return template.replace("{accepted}", String(accepted)).replace("{total}", String(total));
@@ -119,6 +123,14 @@ export function App() {
 
   const [minScore, setMinScore] = useState(72);
   const [stopOnReview, setStopOnReview] = useState(true);
+  const [updaterStatus, setUpdaterStatus] = useState<UpdaterStatus | null>(null);
+  const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
+  const [updateMessage, setUpdateMessage] = useState<string | null>(null);
+  const [updateProgress, setUpdateProgress] = useState<{ downloaded: number; contentLength: number | null } | null>(
+    null,
+  );
   const licenseBlocksStart = licenseStatus?.configured === true && !licenseStatus.can_start_jobs;
 
   function describeLicenseStatus(status: LicenseStatus): string {
@@ -138,6 +150,14 @@ export function App() {
     try {
       const response = await listJobs();
       setExistingJobs(response.items);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function handleLoadUpdaterStatus() {
+    try {
+      setUpdaterStatus(await getUpdaterStatus());
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
@@ -184,6 +204,7 @@ export function App() {
       setConnectionState("ready");
       await handleRefreshLicense(false);
       setModuleConfigStatus(await getModuleConfigStatus("graduation"));
+      await handleLoadUpdaterStatus();
       await handleLoadJobs();
       await handleRefreshLicense(true);
       await handleSyncConfig();
@@ -196,6 +217,7 @@ export function App() {
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
+    let unlistenUpdater: (() => void) | undefined;
 
     async function bootstrap() {
       try {
@@ -205,6 +227,29 @@ export function App() {
         }
         unlisten = await listenSidecarEvents((event) => {
           applySidecarEvent(event);
+        });
+        unlistenUpdater = await listenUpdaterEvents((event) => {
+          if (event.type === "started" || event.type === "progress") {
+            setUpdateProgress({
+              downloaded: event.downloaded,
+              contentLength: event.contentLength,
+            });
+            setUpdateMessage("กำลังดาวน์โหลดอัปเดต...");
+            return;
+          }
+          if (event.type === "finished") {
+            setUpdateMessage("ดาวน์โหลดอัปเดตเสร็จแล้ว กำลังติดตั้ง...");
+            return;
+          }
+          if (event.type === "installed") {
+            setIsInstallingUpdate(false);
+            setUpdateMessage("ติดตั้งอัปเดตเสร็จแล้ว กรุณาปิดแล้วเปิดแอปใหม่");
+            return;
+          }
+          if (event.type === "error") {
+            setIsInstallingUpdate(false);
+            setUpdateMessage(event.message);
+          }
         });
       } catch (error) {
         if (!disposed) {
@@ -221,6 +266,9 @@ export function App() {
       disposed = true;
       if (unlisten) {
         void unlisten();
+      }
+      if (unlistenUpdater) {
+        void unlistenUpdater();
       }
     };
   }, [applySidecarEvent, setConnectionState, setErrorMessage]);
@@ -402,6 +450,39 @@ export function App() {
       upsertExistingJob(status);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function handleCheckForUpdates() {
+    setUpdateMessage(null);
+    setIsCheckingUpdate(true);
+    try {
+      const status = await getUpdaterStatus();
+      setUpdaterStatus(status);
+      if (!status.configured) {
+        setAvailableUpdate(null);
+        setUpdateMessage("ยังไม่ได้ตั้งค่า updater endpoint/public key");
+        return;
+      }
+      const update = await checkForAppUpdate();
+      setAvailableUpdate(update);
+      setUpdateMessage(update ? `พบเวอร์ชันใหม่ ${update.version}` : "ยังไม่มีอัปเดตใหม่");
+    } catch (error) {
+      setUpdateMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  }
+
+  async function handleInstallUpdate() {
+    setUpdateMessage(null);
+    setUpdateProgress(null);
+    setIsInstallingUpdate(true);
+    try {
+      await installAppUpdate();
+    } catch (error) {
+      setIsInstallingUpdate(false);
+      setUpdateMessage(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -668,6 +749,59 @@ export function App() {
                 ) : null}
               </div>
             ) : null}
+            <div
+              style={{
+                borderRadius: "12px",
+                backgroundColor: "rgb(248, 250, 252)",
+                border: "1px solid rgb(226, 232, 240)",
+                padding: "12px 14px",
+                display: "grid",
+                gap: "8px",
+              }}
+            >
+              <div style={{ fontWeight: 700 }}>App Updates</div>
+              <div>
+                เวอร์ชันปัจจุบัน: {updaterStatus?.current_version ?? "-"}
+              </div>
+              <div>
+                สถานะ updater: {updaterStatus?.configured ? "พร้อมใช้งาน" : "ยังไม่ตั้งค่า"}
+              </div>
+              <div>
+                Endpoint: {updaterStatus?.endpoint ?? "-"}
+              </div>
+              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                <button
+                  style={{ ...buttonStyle, backgroundColor: "rgb(79, 70, 229)" }}
+                  disabled={isCheckingUpdate}
+                  onClick={() => void handleCheckForUpdates()}
+                >
+                  เช็กอัปเดต
+                </button>
+                <button
+                  style={{ ...buttonStyle, backgroundColor: "rgb(124, 58, 237)" }}
+                  disabled={!availableUpdate || isInstallingUpdate}
+                  onClick={() => void handleInstallUpdate()}
+                >
+                  ติดตั้งอัปเดต
+                </button>
+              </div>
+              {availableUpdate ? (
+                <div style={{ color: "rgb(51, 65, 85)", lineHeight: 1.6 }}>
+                  <div>พบเวอร์ชันใหม่: {availableUpdate.version}</div>
+                  <div>เผยแพร่เมื่อ: {formatTimestamp(availableUpdate.date)}</div>
+                  <div>รายละเอียด: {availableUpdate.body ?? "-"}</div>
+                </div>
+              ) : null}
+              {updateProgress ? (
+                <div style={{ color: "rgb(51, 65, 85)" }}>
+                  ดาวน์โหลดแล้ว {updateProgress.downloaded}
+                  {updateProgress.contentLength ? ` / ${updateProgress.contentLength}` : ""} bytes
+                </div>
+              ) : null}
+              {updateMessage ? (
+                <div style={{ color: "rgb(51, 65, 85)" }}>{updateMessage}</div>
+              ) : null}
+            </div>
             {errorMessage ? (
               <div
                 style={{
