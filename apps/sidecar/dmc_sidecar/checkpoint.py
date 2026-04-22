@@ -22,6 +22,7 @@ class JobCheckpoint(BaseModel):
     stopped_item: dict[str, Any] | None = None
     awaiting_auth: bool = False
     auth_reason: str | None = None
+    options: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def initial(cls, *, level_label: str, base_url: str) -> "JobCheckpoint":

@@ -93,6 +93,12 @@ class StartJobRequest(BaseModel):
     options: dict[str, Any] = Field(default_factory=dict)
 
 
+class JobIdRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str
+
+
 class LicenseRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

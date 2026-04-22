@@ -13,6 +13,7 @@ from .license_store import LicenseStore
 from .modules import get_module
 from .runtime import JobManager, build_event_notification
 from .schemas import (
+    JobIdRequest,
     PingResponse,
     RpcErrorData,
     RpcErrorResponse,
@@ -79,7 +80,8 @@ class RpcServer:
                 )
 
             if request.method == "get_job_status":
-                job_id = str(request.params.get("job_id", "")).strip()
+                params = JobIdRequest.model_validate(request.params)
+                job_id = params.job_id.strip()
                 status = self.job_manager.get_runtime_status(job_id) or self.job_store.get_status(job_id)
                 if status is None:
                     return self._error(
@@ -95,8 +97,15 @@ class RpcServer:
             if request.method == "resume_job":
                 return self._set_job_status(request.id, request.params, "running")
 
+            if request.method == "resume_existing_job":
+                return self._resume_existing_job(request.id, request.params)
+
             if request.method == "cancel_job":
                 return self._set_job_status(request.id, request.params, "cancelled")
+
+            if request.method == "list_jobs":
+                limit = int(request.params.get("limit", 20))
+                return RpcSuccessResponse(id=request.id, result={"items": self.job_store.list_jobs(limit=limit)})
 
             return self._error(
                 request.id,
@@ -141,6 +150,48 @@ class RpcServer:
             self.job_manager.cancel_job(job_id)
 
         return RpcSuccessResponse(id=request_id, result={"job_id": job_id, "status": status})
+
+    def _resume_existing_job(
+        self,
+        request_id: str | int | None,
+        params: dict[str, Any],
+    ) -> RpcSuccessResponse | RpcErrorResponse:
+        payload = JobIdRequest.model_validate(params)
+        job_id = payload.job_id.strip()
+
+        runtime_status = self.job_manager.get_runtime_status(job_id)
+        if runtime_status is not None:
+            return RpcSuccessResponse(
+                id=request_id,
+                result={"accepted": True, "job_id": job_id, "status": runtime_status["status"]},
+            )
+
+        record = self.job_store.get_job_record(job_id)
+        checkpoint = self.job_store.load_checkpoint(job_id)
+        if record is None or checkpoint is None:
+            return self._error(
+                request_id,
+                code="JOB_NOT_FOUND",
+                message="Job not found.",
+            )
+
+        if record["status"] in {"done", "cancelled"}:
+            return self._error(
+                request_id,
+                code="JOB_NOT_RESUMABLE",
+                message=f"Job status '{record['status']}' cannot be resumed.",
+            )
+
+        self.job_manager.start_job(
+            job_id=job_id,
+            module_name=record["module"],
+            excel_path=Path(record["source_file"]),
+            options=checkpoint.options,
+        )
+        return RpcSuccessResponse(
+            id=request_id,
+            result={"accepted": True, "job_id": job_id, "status": "running"},
+        )
 
     def _error(
         self,

@@ -129,12 +129,35 @@ class JobStore:
             return None
         return JobCheckpoint.model_validate_json(row["checkpoint_json"])
 
+    def get_job_record(self, job_id: str) -> dict[str, Any] | None:
+        with connect() as connection:
+            row = connection.execute("SELECT * FROM job WHERE id = ?", (job_id,)).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    def list_jobs(self, limit: int = 20) -> list[dict[str, Any]]:
+        with connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM job
+                ORDER BY COALESCE(started_at, finished_at, id) DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [self._status_from_row(row) for row in rows]
+
     def get_status(self, job_id: str) -> dict[str, Any] | None:
         with connect() as connection:
             row = connection.execute("SELECT * FROM job WHERE id = ?", (job_id,)).fetchone()
         if row is None:
             return None
 
+        return self._status_from_row(row)
+
+    def _status_from_row(self, row) -> dict[str, Any]:
         checkpoint = None
         if row["checkpoint_json"]:
             checkpoint = JobCheckpoint.model_validate(json.loads(row["checkpoint_json"]))
@@ -143,6 +166,7 @@ class JobStore:
             "job_id": row["id"],
             "module": row["module"],
             "status": row["status"],
+            "source_file": row["source_file"],
             "processed": row["processed"],
             "total": row["total_records"],
             "succeeded": row["succeeded"],
@@ -151,5 +175,9 @@ class JobStore:
             "needs_auth": checkpoint.awaiting_auth if checkpoint is not None else False,
             "auth_reason": checkpoint.auth_reason if checkpoint is not None else None,
             "report_path": checkpoint.report_path if checkpoint is not None else None,
+            "review_report_path": checkpoint.review_report_path if checkpoint is not None else None,
             "stopped_item": checkpoint.stopped_item if checkpoint is not None else None,
+            "started_at": row["started_at"],
+            "finished_at": row["finished_at"],
+            "level_label": checkpoint.level_label if checkpoint is not None else None,
         }

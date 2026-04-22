@@ -4,13 +4,17 @@ import {
   cancelJob,
   getJobStatus,
   initializeSidecar,
+  listJobs,
   listenSidecarEvents,
+  openExcelDialog,
   pauseJob,
+  resumeExistingJob,
   resumeJob,
   startGraduationJob,
   validateExcel,
 } from "./lib/rpcClient";
 import { useJobStore } from "./stores/useJobStore";
+import type { JobStatusSnapshot } from "./types/contracts";
 
 function formatSummary(template: string, accepted: number, total: number): string {
   return template.replace("{accepted}", String(accepted)).replace("{total}", String(total));
@@ -21,6 +25,22 @@ function buildJobId(): string {
     return crypto.randomUUID();
   }
   return `job-${Date.now()}`;
+}
+
+function formatTimestamp(value: string | null): string {
+  if (!value) {
+    return "-";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleString("th-TH", {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
 }
 
 const cardStyle: CSSProperties = {
@@ -41,10 +61,33 @@ const buttonStyle: CSSProperties = {
   color: "white",
 };
 
+function buildDraftJob(excelPath: string, previewRowsAccepted: number | null, jobId: string): JobStatusSnapshot {
+  return {
+    job_id: jobId,
+    module: "graduation",
+    status: "running",
+    source_file: excelPath,
+    processed: 0,
+    total: previewRowsAccepted,
+    succeeded: 0,
+    failed: 0,
+    current_page: 1,
+    needs_auth: false,
+    auth_reason: null,
+    report_path: null,
+    review_report_path: null,
+    stopped_item: null,
+    started_at: null,
+    finished_at: null,
+    level_label: null,
+  };
+}
+
 export function App() {
   const {
     preview,
     currentJob,
+    existingJobs,
     excelPath,
     connectionState,
     isValidating,
@@ -55,6 +98,8 @@ export function App() {
     setExcelPath,
     setPreview,
     setCurrentJob,
+    setExistingJobs,
+    upsertExistingJob,
     setConnectionState,
     setIsValidating,
     setIsStartingJob,
@@ -67,12 +112,22 @@ export function App() {
   const [minScore, setMinScore] = useState(72);
   const [stopOnReview, setStopOnReview] = useState(true);
 
+  async function handleLoadJobs() {
+    try {
+      const response = await listJobs();
+      setExistingJobs(response.items);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async function handleConnect() {
     setErrorMessage(null);
     setConnectionState("connecting");
     try {
       await initializeSidecar();
       setConnectionState("ready");
+      await handleLoadJobs();
     } catch (error) {
       setConnectionState("error");
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -120,6 +175,7 @@ export function App() {
       void getJobStatus(activeJobId)
         .then((status) => {
           setCurrentJob(status);
+          upsertExistingJob(status);
         })
         .catch((error) => {
           const message = error instanceof Error ? error.message : String(error);
@@ -128,7 +184,7 @@ export function App() {
     }, 2000);
 
     return () => window.clearInterval(timer);
-  }, [activeJobId, setCurrentJob, setErrorMessage]);
+  }, [activeJobId, setCurrentJob, setErrorMessage, upsertExistingJob]);
 
   const progressPercent = useMemo(() => {
     if (!currentJob?.total || currentJob.total <= 0) {
@@ -136,6 +192,18 @@ export function App() {
     }
     return Math.round((currentJob.processed / currentJob.total) * 100);
   }, [currentJob]);
+
+  async function handleBrowseFile() {
+    try {
+      const selected = await openExcelDialog();
+      if (selected) {
+        setExcelPath(selected);
+        setErrorMessage(null);
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
 
   async function handleValidate() {
     if (!excelPath.trim()) {
@@ -172,24 +240,12 @@ export function App() {
         stopOnReview,
         minScore,
       });
+      const draft = buildDraftJob(excelPath.trim(), preview?.rows_accepted ?? null, result.job_id);
       setActiveJobId(result.job_id);
-      setCurrentJob({
-        job_id: result.job_id,
-        module: "graduation",
-        status: "running",
-        processed: 0,
-        total: preview?.rows_accepted ?? null,
-        succeeded: 0,
-        failed: 0,
-        current_page: 1,
-        needs_auth: false,
-        auth_reason: null,
-        report_path: null,
-        stopped_item: null,
-      });
-      pushSidecarMessage(
-        `${dryRun ? "เริ่ม dry run" : "เริ่มงานจริง"} แล้ว: ${result.job_id}`,
-      );
+      setCurrentJob(draft);
+      upsertExistingJob(draft);
+      pushSidecarMessage(`${dryRun ? "เริ่ม dry run" : "เริ่มงานจริง"} แล้ว: ${result.job_id}`);
+      await handleLoadJobs();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -206,8 +262,28 @@ export function App() {
       pushSidecarMessage(`resume_job ส่งแล้ว: ${activeJobId}`);
       const status = await getJobStatus(activeJobId);
       setCurrentJob(status);
+      upsertExistingJob(status);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function handleResumeExisting(job: JobStatusSnapshot) {
+    try {
+      setErrorMessage(null);
+      setIsStartingJob(true);
+      const response = await resumeExistingJob(job.job_id);
+      if (response.accepted) {
+        setActiveJobId(job.job_id);
+        setCurrentJob(job);
+        upsertExistingJob({ ...job, status: "running" });
+        setExcelPath(job.source_file);
+        pushSidecarMessage(`กลับมาทำงาน ${job.job_id} ต่อแล้ว`);
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsStartingJob(false);
     }
   }
 
@@ -219,6 +295,7 @@ export function App() {
       await pauseJob(activeJobId);
       const status = await getJobStatus(activeJobId);
       setCurrentJob(status);
+      upsertExistingJob(status);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
@@ -232,6 +309,7 @@ export function App() {
       await cancelJob(activeJobId);
       const status = await getJobStatus(activeJobId);
       setCurrentJob(status);
+      upsertExistingJob(status);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
@@ -244,6 +322,7 @@ export function App() {
     try {
       const status = await getJobStatus(activeJobId);
       setCurrentJob(status);
+      upsertExistingJob(status);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
@@ -262,7 +341,7 @@ export function App() {
     >
       <section
         style={{
-          maxWidth: "1180px",
+          maxWidth: "1280px",
           margin: "0 auto",
           backgroundColor: "rgba(255, 255, 255, 0.9)",
           borderRadius: "24px",
@@ -314,17 +393,27 @@ export function App() {
           <div style={{ display: "grid", gap: "12px" }}>
             <label style={{ display: "grid", gap: "8px" }}>
               <span style={{ fontWeight: 600 }}>{messages.app.filePathLabel}</span>
-              <input
-                value={excelPath}
-                onChange={(event) => setExcelPath(event.target.value)}
-                placeholder={messages.app.filePathPlaceholder}
-                style={{
-                  borderRadius: "12px",
-                  border: "1px solid rgb(203, 213, 225)",
-                  padding: "12px 14px",
-                  fontSize: "15px",
-                }}
-              />
+              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                <input
+                  value={excelPath}
+                  onChange={(event) => setExcelPath(event.target.value)}
+                  placeholder={messages.app.filePathPlaceholder}
+                  style={{
+                    flex: 1,
+                    minWidth: "360px",
+                    borderRadius: "12px",
+                    border: "1px solid rgb(203, 213, 225)",
+                    padding: "12px 14px",
+                    fontSize: "15px",
+                  }}
+                />
+                <button
+                  style={{ ...buttonStyle, backgroundColor: "rgb(3, 105, 161)" }}
+                  onClick={() => void handleBrowseFile()}
+                >
+                  {messages.app.browse}
+                </button>
+              </div>
             </label>
             <div
               style={{
@@ -336,6 +425,12 @@ export function App() {
             >
               <button style={buttonStyle} onClick={() => void handleConnect()}>
                 {messages.app.connect}
+              </button>
+              <button
+                style={{ ...buttonStyle, backgroundColor: "rgb(8, 145, 178)" }}
+                onClick={() => void handleLoadJobs()}
+              >
+                {messages.app.refreshJobs}
               </button>
               <button style={buttonStyle} disabled={isValidating} onClick={() => void handleValidate()}>
                 {messages.app.validate}
@@ -430,7 +525,7 @@ export function App() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1.2fr 1fr",
+            gridTemplateColumns: "1.25fr 1fr 1fr",
             gap: "20px",
           }}
         >
@@ -503,72 +598,127 @@ export function App() {
             )}
           </section>
 
-          <div style={{ display: "grid", gap: "20px" }}>
-            <section style={cardStyle}>
-              <h2 style={{ marginTop: 0 }}>{messages.app.progress.title}</h2>
-              {currentJob ? (
-                <>
+          <section style={cardStyle}>
+            <h2 style={{ marginTop: 0 }}>{messages.app.progress.title}</h2>
+            {currentJob ? (
+              <>
+                <div
+                  style={{
+                    height: "14px",
+                    borderRadius: "999px",
+                    backgroundColor: "rgb(226, 232, 240)",
+                    overflow: "hidden",
+                    marginBottom: "14px",
+                  }}
+                >
                   <div
                     style={{
-                      height: "14px",
-                      borderRadius: "999px",
-                      backgroundColor: "rgb(226, 232, 240)",
-                      overflow: "hidden",
-                      marginBottom: "14px",
+                      width: `${progressPercent}%`,
+                      height: "100%",
+                      background:
+                        "linear-gradient(90deg, rgb(13, 148, 136), rgb(34, 197, 94))",
+                      transition: "width 200ms ease",
                     }}
-                  >
+                  />
+                </div>
+                <div style={{ display: "grid", gap: "8px", lineHeight: 1.6 }}>
+                  <div>
+                    <strong>{messages.app.progress.status}:</strong> {currentJob.status}
+                  </div>
+                  <div>
+                    <strong>{messages.app.progress.processed}:</strong> {currentJob.processed}/
+                    {currentJob.total ?? "-"}
+                  </div>
+                  <div>
+                    <strong>{messages.app.progress.currentPage}:</strong> {currentJob.current_page ?? "-"}
+                  </div>
+                  <div>
+                    <strong>{messages.app.progress.success}:</strong> {currentJob.succeeded}
+                  </div>
+                  <div>
+                    <strong>{messages.app.progress.failed}:</strong> {currentJob.failed}
+                  </div>
+                  <div>
+                    <strong>ไฟล์:</strong> {currentJob.source_file}
+                  </div>
+                  <div>
+                    <strong>Report:</strong> {currentJob.report_path ?? "-"}
+                  </div>
+                  {currentJob.needs_auth ? (
                     <div
                       style={{
-                        width: `${progressPercent}%`,
-                        height: "100%",
-                        background:
-                          "linear-gradient(90deg, rgb(13, 148, 136), rgb(34, 197, 94))",
-                        transition: "width 200ms ease",
+                        marginTop: "8px",
+                        borderRadius: "12px",
+                        backgroundColor: "rgb(255, 247, 237)",
+                        border: "1px solid rgb(253, 230, 138)",
+                        padding: "12px 14px",
+                        color: "rgb(154, 52, 18)",
                       }}
-                    />
-                  </div>
-                  <div style={{ display: "grid", gap: "8px", lineHeight: 1.6 }}>
-                    <div>
-                      <strong>{messages.app.progress.status}:</strong> {currentJob.status}
-                    </div>
-                    <div>
-                      <strong>{messages.app.progress.processed}:</strong> {currentJob.processed}/
-                      {currentJob.total ?? "-"}
-                    </div>
-                    <div>
-                      <strong>{messages.app.progress.currentPage}:</strong>{" "}
-                      {currentJob.current_page ?? "-"}
-                    </div>
-                    <div>
-                      <strong>{messages.app.progress.success}:</strong> {currentJob.succeeded}
-                    </div>
-                    <div>
-                      <strong>{messages.app.progress.failed}:</strong> {currentJob.failed}
-                    </div>
-                    <div>
-                      <strong>Report:</strong> {currentJob.report_path ?? "-"}
-                    </div>
-                    {currentJob.needs_auth ? (
-                      <div
-                        style={{
-                          marginTop: "8px",
-                          borderRadius: "12px",
-                          backgroundColor: "rgb(255, 247, 237)",
-                          border: "1px solid rgb(253, 230, 138)",
-                          padding: "12px 14px",
-                          color: "rgb(154, 52, 18)",
-                        }}
-                      >
-                        ต้องลงชื่อเข้าใช้ใหม่ก่อน resume
-                        <div style={{ marginTop: "6px" }}>
-                          reason: {currentJob.auth_reason ?? "auth_required"}
-                        </div>
+                    >
+                      ต้องลงชื่อเข้าใช้ใหม่ก่อน resume
+                      <div style={{ marginTop: "6px" }}>
+                        reason: {currentJob.auth_reason ?? "auth_required"}
                       </div>
-                    ) : null}
-                  </div>
-                </>
+                    </div>
+                  ) : null}
+                </div>
+              </>
+            ) : (
+              <p style={{ marginBottom: 0 }}>{messages.app.progress.empty}</p>
+            )}
+          </section>
+
+          <div style={{ display: "grid", gap: "20px" }}>
+            <section style={cardStyle}>
+              <h2 style={{ marginTop: 0 }}>{messages.app.existingJobs.title}</h2>
+              {existingJobs.length > 0 ? (
+                <div style={{ display: "grid", gap: "10px" }}>
+                  {existingJobs.map((job) => (
+                    <div
+                      key={job.job_id}
+                      style={{
+                        borderRadius: "14px",
+                        border: "1px solid rgb(226, 232, 240)",
+                        padding: "12px 14px",
+                        backgroundColor:
+                          activeJobId === job.job_id ? "rgb(236, 253, 245)" : "rgb(248, 250, 252)",
+                      }}
+                    >
+                      <div style={{ fontWeight: 700 }}>{job.job_id}</div>
+                      <div style={{ marginTop: "4px", color: "rgb(71, 85, 105)", fontSize: "14px" }}>
+                        {job.level_label ?? "-"} • {job.status} • {job.processed}/{job.total ?? "-"}
+                      </div>
+                      <div style={{ marginTop: "6px", fontSize: "13px", color: "rgb(51, 65, 85)" }}>
+                        <strong>{messages.app.existingJobs.sourceFile}:</strong> {job.source_file}
+                      </div>
+                      <div style={{ marginTop: "4px", fontSize: "13px", color: "rgb(51, 65, 85)" }}>
+                        <strong>{messages.app.existingJobs.updatedAt}:</strong>{" "}
+                        {formatTimestamp(job.finished_at ?? job.started_at)}
+                      </div>
+                      <div style={{ display: "flex", gap: "8px", marginTop: "10px", flexWrap: "wrap" }}>
+                        <button
+                          style={{ ...buttonStyle, padding: "8px 12px", backgroundColor: "rgb(5, 150, 105)" }}
+                          onClick={() => {
+                            setActiveJobId(job.job_id);
+                            setCurrentJob(job);
+                            setExcelPath(job.source_file);
+                          }}
+                        >
+                          ใช้งานรายการนี้
+                        </button>
+                        <button
+                          style={{ ...buttonStyle, padding: "8px 12px", backgroundColor: "rgb(59, 130, 246)" }}
+                          disabled={isStartingJob || job.status === "done" || job.status === "cancelled"}
+                          onClick={() => void handleResumeExisting(job)}
+                        >
+                          {messages.app.resumeExisting}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               ) : (
-                <p style={{ marginBottom: 0 }}>{messages.app.progress.empty}</p>
+                <p style={{ marginBottom: 0 }}>{messages.app.existingJobs.empty}</p>
               )}
             </section>
 

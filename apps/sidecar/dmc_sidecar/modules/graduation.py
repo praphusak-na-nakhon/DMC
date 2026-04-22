@@ -84,6 +84,8 @@ class GraduationModule(AutomationModule):
 
         checkpoint.level_label = level_label
         checkpoint.base_url = base_url
+        if not checkpoint.options:
+            checkpoint.options = dict(options)
 
         context.snapshot.total = len(students)
         context.snapshot.processed = checkpoint.processed

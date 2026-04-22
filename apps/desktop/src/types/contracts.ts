@@ -28,6 +28,7 @@ export type JobStatusSnapshot = {
   job_id: string;
   module: string;
   status: string;
+  source_file: string;
   processed: number;
   total: number | null;
   succeeded: number;
@@ -36,12 +37,20 @@ export type JobStatusSnapshot = {
   needs_auth: boolean;
   auth_reason: string | null;
   report_path: string | null;
+  review_report_path: string | null;
   stopped_item: Record<string, unknown> | null;
+  started_at: string | null;
+  finished_at: string | null;
+  level_label: string | null;
 };
 
 export type StartJobResponse = {
   accepted: boolean;
   job_id: string;
+};
+
+export type ListJobsResponse = {
+  items: JobStatusSnapshot[];
 };
 
 export type SidecarEvent =

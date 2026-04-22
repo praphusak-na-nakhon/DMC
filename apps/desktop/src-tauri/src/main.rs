@@ -397,13 +397,22 @@ async fn shutdown_sidecar(
     Ok(())
 }
 
+#[tauri::command]
+fn open_excel_dialog() -> Option<String> {
+    rfd::FileDialog::new()
+        .add_filter("Excel", &["xlsx", "xlsm", "xls"])
+        .pick_file()
+        .map(|path| path.to_string_lossy().to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(SidecarState::default())
         .invoke_handler(tauri::generate_handler![
             initialize_sidecar,
             rpc_request,
-            shutdown_sidecar
+            shutdown_sidecar,
+            open_excel_dialog
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
