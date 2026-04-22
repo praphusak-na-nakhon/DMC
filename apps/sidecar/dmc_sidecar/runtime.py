@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .job_store import JobStore
+from .license_policy import check_license_allows_job_start
 from .license_store import LicenseStore
 
 
@@ -150,6 +151,7 @@ class JobManager:
             if job_id in self._jobs:
                 raise RuntimeError("JOB_ALREADY_RUNNING")
 
+            check_license_allows_job_start(self.license_store.get_license())
             control = JobControl()
             snapshot = JobSnapshot(job_id=job_id, module=module_name, status="running")
             context = JobContext(

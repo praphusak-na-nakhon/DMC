@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from ..auth import require_api_bearer
 from ..schemas import LicenseActivateRequest, LicenseStateResponse
 
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_api_bearer)])
 
 
 @router.post("/activate", response_model=LicenseStateResponse)

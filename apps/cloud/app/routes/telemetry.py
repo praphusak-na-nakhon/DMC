@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from ..auth import require_api_bearer
 from ..pii_guard import assert_payload_is_telemetry_safe
 from ..schemas import TelemetryBatchRequest
 
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_api_bearer)])
 
 
 @router.post("")
