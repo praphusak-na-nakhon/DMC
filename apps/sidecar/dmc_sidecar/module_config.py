@@ -20,6 +20,7 @@ from .config import (
     module_configs_root,
     secure_cloud_base_url,
 )
+from .errors import DomainError
 
 
 def utc_now() -> str:
@@ -72,7 +73,7 @@ def _load_key_ring() -> dict[str, str]:
     key_ring = _read_json_file(config_signing_keys_path())
     raw_keys = key_ring.get("keys", [])
     if not isinstance(raw_keys, list):
-        raise RuntimeError("CONFIG_KEYRING_INVALID")
+        raise DomainError("CONFIG_KEYRING_INVALID")
 
     mapping: dict[str, str] = {}
     for item in raw_keys:
@@ -89,21 +90,21 @@ def _load_key_ring() -> dict[str, str]:
         ):
             mapping[key_id] = public_key_base64
     if not mapping:
-        raise RuntimeError("CONFIG_KEYRING_INVALID")
+        raise DomainError("CONFIG_KEYRING_INVALID")
     return mapping
 
 
 def verify_signature(version: str, payload: dict[str, Any], signature: str) -> None:
     parts = signature.split(":", 2)
     if len(parts) != 3:
-        raise RuntimeError("CONFIG_SIGNATURE_INVALID")
+        raise DomainError("CONFIG_SIGNATURE_INVALID")
     algorithm, key_id, encoded_signature = parts
     if algorithm != "ed25519":
-        raise RuntimeError("CONFIG_SIGNATURE_INVALID")
+        raise DomainError("CONFIG_SIGNATURE_INVALID")
 
     public_key_base64 = _load_key_ring().get(key_id)
     if public_key_base64 is None:
-        raise RuntimeError("CONFIG_SIGNATURE_INVALID")
+        raise DomainError("CONFIG_SIGNATURE_INVALID")
 
     try:
         public_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key_base64))
@@ -112,7 +113,7 @@ def verify_signature(version: str, payload: dict[str, Any], signature: str) -> N
             _canonical_payload(version, payload),
         )
     except Exception as exc:
-        raise RuntimeError("CONFIG_SIGNATURE_INVALID") from exc
+        raise DomainError("CONFIG_SIGNATURE_INVALID") from exc
 
 
 def _read_json_file(path: Path) -> dict[str, Any]:
@@ -122,7 +123,7 @@ def _read_json_file(path: Path) -> dict[str, Any]:
 def _read_bundled_config(path: Path) -> dict[str, Any]:
     payload = _read_json_file(path)
     if "version" not in payload:
-        raise RuntimeError("CONFIG_SIGNATURE_INVALID")
+        raise DomainError("CONFIG_SIGNATURE_INVALID")
     return payload
 
 
@@ -160,7 +161,7 @@ def load_effective_config(module: str) -> ModuleConfigState:
 
     try:
         verify_signature(cached.version, cached.config, cached.signature)
-    except RuntimeError as exc:
+    except DomainError as exc:
         return _load_bundled_state(module, last_error=str(exc))
 
     return ModuleConfigState(
@@ -201,7 +202,7 @@ def sync_module_config(module: str, *, timeout_sec: int = 10) -> ModuleConfigSta
     local_state = load_effective_config(module)
     try:
         base_url = secure_cloud_base_url()
-    except RuntimeError as exc:
+    except DomainError as exc:
         return replace(
             local_state,
             checked_at=utc_now(),
@@ -249,7 +250,7 @@ def sync_module_config(module: str, *, timeout_sec: int = 10) -> ModuleConfigSta
 
     try:
         verify_signature(version, config, signature)
-    except RuntimeError as exc:
+    except DomainError as exc:
         return replace(
             local_state,
             checked_at=utc_now(),

@@ -13,6 +13,7 @@ from .backup import create_backup_archive, restore_backup_archive
 from .browser_runtime import bootstrap_browser_runtime, get_browser_runtime_status
 from .config import sqlite_path
 from .db import get_database_metadata
+from .errors import DomainError
 from .job_store import JobStore
 from .license_client import activate_license, build_license_status_snapshot, refresh_license_status
 from .license_store import LicenseStore
@@ -219,13 +220,20 @@ class RpcServer:
                 return self._set_job_status(request.id, request.params, "cancelled")
 
             if request.method == "list_jobs":
-                limit = int(request.params.get("limit", 20))
+                params = request.params if isinstance(request.params, dict) else {}
+                limit = int(params.get("limit", 20))
                 return RpcSuccessResponse(id=request.id, result={"items": self.job_store.list_jobs(limit=limit)})
 
             return self._error(
                 request.id,
                 code="RPC_METHOD_NOT_FOUND",
                 message=f"Unsupported method: {request.method}",
+            )
+        except DomainError as exc:
+            return self._error(
+                request.id,
+                code=exc.code,
+                message=exc.user_message,
             )
         except RuntimeError as exc:
             error_code = self._safe_runtime_error_code(exc)
@@ -234,7 +242,7 @@ class RpcServer:
                 code=error_code,
                 message=self._runtime_error_message(error_code),
             )
-        except NotImplementedError as exc:
+        except NotImplementedError:
             return self._error(
                 request.id,
                 code="METHOD_NOT_IMPLEMENTED",

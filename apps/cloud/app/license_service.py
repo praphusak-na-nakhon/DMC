@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -47,8 +48,22 @@ class LicenseRecord:
 
 
 class LicenseRepository:
+    _bootstrapped_paths: set[str] = set()
+    _bootstrap_lock = threading.Lock()
+
     def __init__(self, sqlite_path: str | None = None) -> None:
         self.sqlite_path = Path(sqlite_path or settings.sqlite_path)
+        self.ensure_bootstrapped()
+
+    def ensure_bootstrapped(self) -> None:
+        target_key = str(self.sqlite_path.resolve())
+        if target_key in self._bootstrapped_paths:
+            return
+        with self._bootstrap_lock:
+            if target_key in self._bootstrapped_paths:
+                return
+            self.seed_trial_licenses()
+            self._bootstrapped_paths.add(target_key)
 
     def seed_trial_licenses(self) -> None:
         keys = [item.strip() for item in settings.trial_license_keys.split(",") if item.strip()]
@@ -74,7 +89,6 @@ class LicenseRepository:
                 )
 
     def get_license(self, license_key: str) -> LicenseRecord | None:
-        self.seed_trial_licenses()
         with connect(self.sqlite_path) as connection:
             row = connection.execute(
                 "SELECT * FROM licenses WHERE license_key = ?",
@@ -95,7 +109,6 @@ class LicenseRepository:
         )
 
     def list_licenses(self) -> list[CloudLicenseAdminResponse]:
-        self.seed_trial_licenses()
         with connect(self.sqlite_path) as connection:
             rows = connection.execute(
                 """
@@ -242,7 +255,7 @@ def _build_response(record: LicenseRecord) -> LicenseStateResponse:
         expires_at=record.expires_at,
         modules_enabled=record.modules_enabled,
         max_devices=record.max_devices,
-        offline_grace_days=7,
+        offline_grace_days=settings.offline_grace_days,
     )
 
 

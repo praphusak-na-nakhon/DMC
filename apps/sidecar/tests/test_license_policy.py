@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from dmc_sidecar.errors import DomainError
 from dmc_sidecar.license_policy import check_license_allows_job_start
 from dmc_sidecar.schemas import LicenseRecord
 
@@ -32,12 +33,12 @@ def test_check_license_allows_job_start_allows_missing_license() -> None:
 
 def test_check_license_allows_job_start_requires_activation_when_cloud_enabled(monkeypatch) -> None:
     monkeypatch.setattr("dmc_sidecar.license_policy.cloud_base_url", lambda: "https://cloud.example.test")
-    with pytest.raises(RuntimeError, match="LICENSE_REQUIRED"):
+    with pytest.raises(DomainError, match="LICENSE_REQUIRED"):
         check_license_allows_job_start(None)
 
 
 def test_check_license_allows_job_start_rejects_expired_offline_grace() -> None:
-    with pytest.raises(RuntimeError, match="LICENSE_OFFLINE_GRACE_EXPIRED"):
+    with pytest.raises(DomainError, match="LICENSE_OFFLINE_GRACE_EXPIRED"):
         check_license_allows_job_start(
             build_license("2026-04-22T00:00:00Z"),
             now=datetime(2026, 4, 30, tzinfo=UTC),

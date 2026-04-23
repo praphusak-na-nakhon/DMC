@@ -7,7 +7,8 @@ from urllib.request import Request, urlopen
 
 from .config import cloud_base_url, secure_cloud_base_url
 from .device_identity import default_device_name, get_or_create_device_id
-from .license_policy import _parse_utc
+from .errors import DomainError
+from .license_policy import parse_utc
 from .license_store import LicenseStore
 from .schemas import LicenseRecord, LicenseStatusSnapshot
 
@@ -24,7 +25,7 @@ def _is_within_offline_grace(record: LicenseRecord | None, *, now: datetime | No
     if record is None:
         return False
     current_time = now.astimezone(UTC) if now is not None else datetime.now(UTC)
-    return current_time <= _parse_utc(record.offline_grace_until)
+    return current_time <= parse_utc(record.offline_grace_until)
 
 
 def build_license_status_snapshot(
@@ -93,7 +94,7 @@ def activate_license(
 ) -> LicenseStatusSnapshot:
     base_url = secure_cloud_base_url()
     if not base_url:
-        raise RuntimeError("LICENSE_ACTIVATION_UNAVAILABLE")
+        raise DomainError("LICENSE_ACTIVATION_UNAVAILABLE")
 
     device_id = get_or_create_device_id()
     request = Request(
@@ -119,12 +120,12 @@ def activate_license(
             payload = json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         if exc.code == 402:
-            raise RuntimeError("NEED_RENEWAL") from exc
+            raise DomainError("NEED_RENEWAL") from exc
         if exc.code == 403:
-            raise RuntimeError("LICENSE_SUSPENDED") from exc
-        raise RuntimeError(f"HTTP_{exc.code}") from exc
+            raise DomainError("LICENSE_SUSPENDED") from exc
+        raise DomainError(f"HTTP_{exc.code}") from exc
     except URLError as exc:
-        raise RuntimeError("LICENSE_ACTIVATION_UNAVAILABLE") from exc
+        raise DomainError("LICENSE_ACTIVATION_UNAVAILABLE") from exc
 
     now = datetime.now(UTC)
     activated_at = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -164,11 +165,11 @@ def refresh_license_status(
 
     try:
         base_url = secure_cloud_base_url()
-    except RuntimeError as exc:
+    except DomainError as exc:
         return build_license_status_snapshot(
             record,
-            message=str(exc),
-            last_error=str(exc),
+            message=exc.code,
+            last_error=exc.code,
             offline_mode=_is_within_offline_grace(record),
         )
     if not base_url:

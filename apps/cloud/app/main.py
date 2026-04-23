@@ -1,12 +1,24 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from .config import settings
+from .db import migrate_database
+from .license_service import LicenseRepository
 from .routes import api_router
 
 
-app = FastAPI(title="DMC Assistant Cloud", version=settings.version)
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    repository = LicenseRepository()
+    migrate_database(repository.sqlite_path)
+    repository.ensure_bootstrapped()
+    yield
+
+
+app = FastAPI(title="DMC Assistant Cloud", version=settings.version, lifespan=lifespan)
 app.include_router(api_router)
 
 

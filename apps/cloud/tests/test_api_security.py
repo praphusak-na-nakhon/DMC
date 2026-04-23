@@ -280,6 +280,18 @@ def test_updates_manifest_returns_204_when_not_configured() -> None:
     assert response.text == ""
 
 
+def test_updates_manifest_rejects_unsupported_target() -> None:
+    response = client.get(
+        "/v1/updates/manifest",
+        params={
+            "current_version": settings.version,
+            "target": "linux",
+            "arch": "x86_64",
+        },
+    )
+    assert response.status_code == 400
+
+
 def test_updates_manifest_returns_payload_when_artifact_is_configured(monkeypatch) -> None:
     setup_test_security(monkeypatch)
     monkeypatch.setattr(settings, "updater_latest_version", "0.2.0")

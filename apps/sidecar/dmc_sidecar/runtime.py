@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from .errors import DomainError
 from .job_store import JobStore
 from .license_policy import check_license_allows_job_start
 from .license_store import LicenseStore
@@ -45,10 +46,10 @@ class JobControl:
 
     def wait_point(self) -> None:
         if self._cancel_event.is_set():
-            raise RuntimeError("JOB_CANCELLED")
+            raise DomainError("JOB_CANCELLED")
         self._pause_event.wait()
         if self._cancel_event.is_set():
-            raise RuntimeError("JOB_CANCELLED")
+            raise DomainError("JOB_CANCELLED")
 
     @property
     def needs_auth(self) -> bool:
@@ -152,7 +153,7 @@ class JobManager:
     ) -> None:
         with self._lock:
             if job_id in self._jobs:
-                raise RuntimeError("JOB_ALREADY_RUNNING")
+                raise DomainError("JOB_ALREADY_RUNNING")
 
             check_license_allows_job_start(self.license_store.get_license())
             control = JobControl()
@@ -280,7 +281,7 @@ class JobManager:
         with self._lock:
             active = self._jobs.get(job_id)
         if active is None:
-            raise RuntimeError("JOB_NOT_FOUND")
+            raise DomainError("JOB_NOT_FOUND")
         return active
 
 

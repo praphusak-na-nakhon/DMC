@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from ..config import settings
 
@@ -18,10 +18,13 @@ def get_update_manifest(
     artifact_url = settings.updater_windows_x86_64_url.strip()
     artifact_signature = settings.updater_windows_x86_64_signature.strip()
 
-    if current_version == latest_version:
-        return Response(status_code=204)
-
     if target != "windows" or arch != "x86_64":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="unsupported update target or architecture",
+        )
+
+    if current_version == latest_version:
         return Response(status_code=204)
 
     if not artifact_url or not artifact_signature:

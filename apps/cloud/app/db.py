@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable, Iterator
 
@@ -88,6 +89,9 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(version=2, name="add_indexes", apply=_add_indexes),
 )
 
+_MIGRATION_LOCK = threading.Lock()
+_MIGRATED_PATHS: set[str] = set()
+
 
 def default_sqlite_path() -> Path:
     return Path(__file__).resolve().parents[2] / ".cloud-state.sqlite3"
@@ -127,8 +131,20 @@ def migrate_database(path: Path) -> int:
         return applied_version
 
 
+def ensure_database_ready(path: Path) -> Path:
+    target_key = str(path.resolve())
+    if target_key in _MIGRATED_PATHS:
+        return path
+    with _MIGRATION_LOCK:
+        if target_key not in _MIGRATED_PATHS:
+            migrate_database(path)
+            _MIGRATED_PATHS.add(target_key)
+    return path
+
+
 def get_database_metadata(path: Path) -> dict[str, object]:
-    with sqlite3.connect(path) as connection:
+    target_path = ensure_database_ready(path)
+    with sqlite3.connect(target_path) as connection:
         connection.row_factory = sqlite3.Row
         version = current_schema_version(connection)
         tables = [
@@ -143,7 +159,7 @@ def get_database_metadata(path: Path) -> dict[str, object]:
             ).fetchall()
         ]
     return {
-        "path": str(path),
+        "path": str(target_path),
         "schema_version": version,
         "tables": tables,
     }
@@ -151,16 +167,11 @@ def get_database_metadata(path: Path) -> dict[str, object]:
 
 @contextmanager
 def connect(path: Path) -> Iterator[sqlite3.Connection]:
-    migrate_database(path)
-    connection = sqlite3.connect(path)
+    target_path = ensure_database_ready(path)
+    connection = sqlite3.connect(target_path)
     connection.row_factory = sqlite3.Row
     try:
         yield connection
         connection.commit()
     finally:
         connection.close()
-
-
-def seven_days_from_now() -> str:
-    return (datetime.now(UTC) + timedelta(days=7)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-

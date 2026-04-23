@@ -6,6 +6,7 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from dmc_sidecar import config, module_config
+from dmc_sidecar.errors import DomainError
 
 
 class FakeResponse:
@@ -97,7 +98,7 @@ def test_sync_module_config_rejects_insecure_cloud_url(monkeypatch, tmp_path: Pa
     monkeypatch.setattr(
         module_config,
         "secure_cloud_base_url",
-        lambda: (_ for _ in ()).throw(RuntimeError("CLOUD_URL_INSECURE")),
+        lambda: (_ for _ in ()).throw(DomainError("CLOUD_URL_INSECURE")),
     )
 
     state = module_config.sync_module_config("graduation")

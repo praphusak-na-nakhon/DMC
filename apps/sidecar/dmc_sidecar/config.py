@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from urllib.parse import urlparse
 
+from .errors import DomainError
+
 
 APP_NAME = "dmc-assistant"
 SIDECAR_VERSION = "0.1.0"
@@ -96,7 +98,7 @@ def secure_cloud_base_url() -> str | None:
         return value
     if parsed.scheme == "http" and hostname in {"localhost", "127.0.0.1"}:
         return value
-    raise RuntimeError("CLOUD_URL_INSECURE")
+    raise DomainError("CLOUD_URL_INSECURE")
 
 
 def config_signing_keys_path() -> Path:

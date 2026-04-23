@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import uuid
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 import pandas as pd
 
@@ -15,13 +16,16 @@ from ..runtime import JobContext, utc_now
 from ..schemas import PreviewRow, ValidateExcelResponse, ValidationWarning
 from .base import AutomationModule
 
+T = TypeVar("T")
+
 
 class GraduationModule(AutomationModule):
     name = "graduation"
 
     def _load_legacy_module(self) -> ModuleType:
         script_path = legacy_script_path()
-        spec = importlib.util.spec_from_file_location("legacy_fill_obec_portal", script_path)
+        module_name = f"legacy_fill_obec_portal_{uuid.uuid4().hex}"
+        spec = importlib.util.spec_from_file_location(module_name, script_path)
         if spec is None or spec.loader is None:
             raise RuntimeError(f"could not load legacy script: {script_path}")
         module = importlib.util.module_from_spec(spec)
@@ -155,53 +159,43 @@ class GraduationModule(AutomationModule):
                     checkpoint.next_page = current_page
                     context.job_store.save_checkpoint(job_id, checkpoint)
 
-                    if "/auth/" in page.url:
-                        self._authenticate_and_open(
-                            page=page,
-                            legacy=legacy,
-                            target_url=legacy.get_page_url(base_url, current_page),
-                            context=context,
-                            checkpoint=checkpoint,
-                            current_page=current_page,
-                            reason="session_expired",
-                        )
-                        legacy.wait_for_student_table(page)
+                    self._ensure_authenticated_page(
+                        page=page,
+                        legacy=legacy,
+                        target_url=legacy.get_page_url(base_url, current_page),
+                        context=context,
+                        checkpoint=checkpoint,
+                        current_page=current_page,
+                        reason="session_expired",
+                    )
 
                     baseline_processed = checkpoint.processed
                     baseline_succeeded = checkpoint.succeeded
                     baseline_failed = checkpoint.failed
 
-                    while True:
-                        context.snapshot.processed = baseline_processed
-                        context.snapshot.succeeded = baseline_succeeded
-                        context.snapshot.failed = baseline_failed
-                        try:
-                            page_results, stop_item = legacy.fill_current_page(
-                                page=page,
-                                students=students,
-                                used_orders=set(checkpoint.used_orders),
-                                min_score=int(options.get("min_score", 72)),
-                                dry_run=bool(options.get("dry_run", False)),
-                                stop_on_review=bool(options.get("stop_on_review", False)),
-                                level_label=level_label,
-                                before_row=context.control.wait_point,
-                                after_row=lambda result: self._handle_row_result(result, context),
-                            )
-                        except Exception:
-                            if "/auth/" in page.url:
-                                self._authenticate_and_open(
-                                    page=page,
-                                    legacy=legacy,
-                                    target_url=legacy.get_page_url(base_url, current_page),
-                                    context=context,
-                                    checkpoint=checkpoint,
-                                    current_page=current_page,
-                                    reason="session_expired_during_fill",
-                                )
-                                legacy.wait_for_student_table(page)
-                                continue
-                            raise
-                        break
+                    context.snapshot.processed = baseline_processed
+                    context.snapshot.succeeded = baseline_succeeded
+                    context.snapshot.failed = baseline_failed
+                    page_results, stop_item = self._run_with_auth_recovery(
+                        page=page,
+                        legacy=legacy,
+                        target_url=legacy.get_page_url(base_url, current_page),
+                        context=context,
+                        checkpoint=checkpoint,
+                        current_page=current_page,
+                        reason="session_expired_during_fill",
+                        action=lambda: legacy.fill_current_page(
+                            page=page,
+                            students=students,
+                            used_orders=set(checkpoint.used_orders),
+                            min_score=int(options.get("min_score", 72)),
+                            dry_run=bool(options.get("dry_run", False)),
+                            stop_on_review=bool(options.get("stop_on_review", False)),
+                            level_label=level_label,
+                            before_row=context.control.wait_point,
+                            after_row=lambda result: self._handle_row_result(result, context),
+                        ),
+                    )
 
                     if stop_item is not None:
                         checkpoint.stopped_item = stop_item
@@ -220,51 +214,19 @@ class GraduationModule(AutomationModule):
                         return
 
                     if not bool(options.get("dry_run", False)):
-                        try:
-                            legacy.save_current_page(page)
-                        except Exception:
-                            if "/auth/" in page.url:
-                                self._authenticate_and_open(
-                                    page=page,
-                                    legacy=legacy,
-                                    target_url=legacy.get_page_url(base_url, current_page),
-                                    context=context,
-                                    checkpoint=checkpoint,
-                                    current_page=current_page,
-                                    reason="session_expired_during_save",
-                                )
-                                legacy.wait_for_student_table(page)
-                                continue
-                            raise
-                        if "/auth/" in page.url:
-                            self._authenticate_and_open(
-                                page=page,
-                                legacy=legacy,
-                                target_url=legacy.get_page_url(base_url, current_page),
-                                context=context,
-                                checkpoint=checkpoint,
-                                current_page=current_page,
-                                reason="session_expired_after_save",
-                            )
-                            legacy.wait_for_student_table(page)
-                            continue
+                        self._run_with_auth_recovery(
+                            page=page,
+                            legacy=legacy,
+                            target_url=legacy.get_page_url(base_url, current_page),
+                            context=context,
+                            checkpoint=checkpoint,
+                            current_page=current_page,
+                            reason="session_expired_during_save",
+                            action=lambda: legacy.save_current_page(page),
+                        )
 
                     checkpoint.results.extend(page_results)
-                    checkpoint.used_orders = [
-                        int(order)
-                        for order in sorted(
-                            {
-                                *checkpoint.used_orders,
-                                *[
-                                    item["matched_order"]
-                                    for item in page_results
-                                    if item.get("matched_order") is not None
-                                    and item.get("note")
-                                    in {"filled", "dry_run"}
-                                ],
-                            }
-                        )
-                    ]
+                    checkpoint.used_orders = self._merge_used_orders(checkpoint.used_orders, page_results)
                     checkpoint.processed = context.snapshot.processed
                     checkpoint.succeeded = context.snapshot.succeeded
                     checkpoint.failed = context.snapshot.failed
@@ -299,17 +261,16 @@ class GraduationModule(AutomationModule):
                         return
 
                     current_page += 1
-                    legacy.goto_page_number(page, current_page, base_url)
-                    if "/auth/" in page.url:
-                        self._authenticate_and_open(
-                            page=page,
-                            legacy=legacy,
-                            target_url=legacy.get_page_url(base_url, current_page),
-                            context=context,
-                            checkpoint=checkpoint,
-                            current_page=current_page,
-                            reason="session_expired_during_navigation",
-                        )
+                    self._run_with_auth_recovery(
+                        page=page,
+                        legacy=legacy,
+                        target_url=legacy.get_page_url(base_url, current_page),
+                        context=context,
+                        checkpoint=checkpoint,
+                        current_page=current_page,
+                        reason="session_expired_during_navigation",
+                        action=lambda: legacy.goto_page_number(page, current_page, base_url),
+                    )
                     legacy.wait_for_student_table(page)
             finally:
                 browser_context.close()
@@ -362,6 +323,84 @@ class GraduationModule(AutomationModule):
         context.job_store.set_status(context.job_id, "running")
         legacy.open_target_page_after_login(page, target_url)
         page.wait_for_timeout(1200)
+
+    def _ensure_authenticated_page(
+        self,
+        *,
+        page,
+        legacy,
+        target_url: str,
+        context: JobContext,
+        checkpoint: JobCheckpoint,
+        current_page: int,
+        reason: str,
+    ) -> None:
+        if "/auth/" not in page.url:
+            return
+        self._authenticate_and_open(
+            page=page,
+            legacy=legacy,
+            target_url=target_url,
+            context=context,
+            checkpoint=checkpoint,
+            current_page=current_page,
+            reason=reason,
+        )
+        legacy.wait_for_student_table(page)
+
+    def _run_with_auth_recovery(
+        self,
+        *,
+        page,
+        legacy,
+        target_url: str,
+        context: JobContext,
+        checkpoint: JobCheckpoint,
+        current_page: int,
+        reason: str,
+        action: Callable[[], T],
+    ) -> T:
+        while True:
+            try:
+                result = action()
+            except Exception:
+                if "/auth/" in page.url:
+                    self._authenticate_and_open(
+                        page=page,
+                        legacy=legacy,
+                        target_url=target_url,
+                        context=context,
+                        checkpoint=checkpoint,
+                        current_page=current_page,
+                        reason=reason,
+                    )
+                    legacy.wait_for_student_table(page)
+                    continue
+                raise
+
+            if "/auth/" in page.url:
+                self._authenticate_and_open(
+                    page=page,
+                    legacy=legacy,
+                    target_url=target_url,
+                    context=context,
+                    checkpoint=checkpoint,
+                    current_page=current_page,
+                    reason=reason,
+                )
+                legacy.wait_for_student_table(page)
+                continue
+
+            return result
+
+    def _merge_used_orders(self, used_orders: list[int], page_results: list[dict[str, Any]]) -> list[int]:
+        merged = set(used_orders)
+        merged.update(
+            int(item["matched_order"])
+            for item in page_results
+            if item.get("matched_order") is not None and item.get("note") in {"filled", "dry_run"}
+        )
+        return sorted(merged)
 
     def _handle_row_result(self, result: dict, context: JobContext) -> None:
         context.snapshot.processed += 1

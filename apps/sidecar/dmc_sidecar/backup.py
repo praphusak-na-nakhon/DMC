@@ -11,6 +11,7 @@ from pathlib import Path
 from . import __version__
 from . import config
 from .db import get_database_metadata, migrate_database
+from .errors import DomainError
 
 
 def utc_now() -> str:
@@ -77,7 +78,7 @@ def create_backup_archive(output_path: Path | None = None) -> Path:
 
 def restore_backup_archive(archive_path: Path) -> dict[str, str]:
     if not archive_path.exists():
-        raise RuntimeError("BACKUP_NOT_FOUND")
+        raise DomainError("BACKUP_NOT_FOUND")
 
     current_data_dir = config.default_data_dir()
     current_data_dir.mkdir(parents=True, exist_ok=True)
@@ -90,14 +91,14 @@ def restore_backup_archive(archive_path: Path) -> dict[str, str]:
 
         manifest_path = temp_root / "manifest.json"
         if not manifest_path.exists():
-            raise RuntimeError("BACKUP_MANIFEST_INVALID")
+            raise DomainError("BACKUP_MANIFEST_INVALID")
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         if manifest.get("kind") != "dmc-sidecar-backup":
-            raise RuntimeError("BACKUP_KIND_INVALID")
+            raise DomainError("BACKUP_KIND_INVALID")
 
         restored_db = temp_root / "desktop.sqlite3"
         if not restored_db.exists():
-            raise RuntimeError("BACKUP_DATABASE_MISSING")
+            raise DomainError("BACKUP_DATABASE_MISSING")
 
         for folder in (config.configs_dir(), config.reports_dir(), config.profiles_dir()):
             if folder.exists():

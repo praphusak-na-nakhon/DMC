@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -119,6 +120,9 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(version=2, name="add_indexes", apply=_add_indexes),
 )
 
+_MIGRATION_LOCK = threading.Lock()
+_MIGRATED_PATHS: set[str] = set()
+
 
 def database_path() -> Path:
     return sqlite_path()
@@ -155,8 +159,20 @@ def migrate_database(path: Path | None = None) -> int:
         return applied_version
 
 
-def get_database_metadata(path: Path | None = None) -> dict[str, object]:
+def ensure_database_ready(path: Path | None = None) -> Path:
     target_path = path or database_path()
+    target_key = str(target_path.resolve())
+    if target_key in _MIGRATED_PATHS:
+        return target_path
+    with _MIGRATION_LOCK:
+        if target_key not in _MIGRATED_PATHS:
+            migrate_database(target_path)
+            _MIGRATED_PATHS.add(target_key)
+    return target_path
+
+
+def get_database_metadata(path: Path | None = None) -> dict[str, object]:
+    target_path = ensure_database_ready(path)
     with sqlite3.connect(target_path) as connection:
         connection.row_factory = sqlite3.Row
         version = current_schema_version(connection)
@@ -180,8 +196,7 @@ def get_database_metadata(path: Path | None = None) -> dict[str, object]:
 
 @contextmanager
 def connect(path: Path | None = None) -> Iterator[sqlite3.Connection]:
-    target_path = path or database_path()
-    migrate_database(target_path)
+    target_path = ensure_database_ready(path)
     connection = sqlite3.connect(target_path)
     connection.row_factory = sqlite3.Row
     try:
@@ -189,4 +204,3 @@ def connect(path: Path | None = None) -> Iterator[sqlite3.Connection]:
         connection.commit()
     finally:
         connection.close()
-

@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib.error import URLError
 
 from dmc_sidecar import config
+from dmc_sidecar.errors import DomainError
 from dmc_sidecar.license_client import activate_license, build_license_status_snapshot, refresh_license_status
 from dmc_sidecar.license_store import LicenseStore
 from dmc_sidecar.schemas import LicenseRecord
@@ -164,7 +165,7 @@ def test_refresh_license_status_rejects_insecure_cloud_url(monkeypatch, tmp_path
     seed_license(store)
     monkeypatch.setattr(
         "dmc_sidecar.license_client.secure_cloud_base_url",
-        lambda: (_ for _ in ()).throw(RuntimeError("CLOUD_URL_INSECURE")),
+        lambda: (_ for _ in ()).throw(DomainError("CLOUD_URL_INSECURE")),
     )
 
     snapshot = refresh_license_status(store)
