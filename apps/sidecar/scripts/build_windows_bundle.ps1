@@ -78,7 +78,6 @@ New-Item -ItemType Directory -Force -Path $resourceRoot | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $resourceRoot "shared-schemas") | Out-Null
 
 Copy-Item -LiteralPath (Join-Path $sidecarDist "dmc-sidecar.exe") -Destination $bundleExe -Force
-Copy-Item -LiteralPath (Join-Path $repoRoot "fill_obec_portal.py") -Destination (Join-Path $resourceRoot "fill_obec_portal.py") -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "packages\\module-configs") -Destination (Join-Path $resourceRoot "module-configs") -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "packages\\shared-schemas\\config-signing") -Destination (Join-Path $resourceRoot "shared-schemas\\config-signing") -Recurse -Force
 

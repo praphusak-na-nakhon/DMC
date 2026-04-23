@@ -113,10 +113,3 @@ def module_configs_root() -> Path:
     if bundled_root is not None:
         return bundled_root / "module-configs"
     return repo_root() / "packages" / "module-configs"
-
-
-def legacy_script_path() -> Path:
-    bundled_root = bundled_resources_root()
-    if bundled_root is not None:
-        return bundled_root / "fill_obec_portal.py"
-    return repo_root() / "fill_obec_portal.py"

@@ -17,4 +17,3 @@ def test_packaged_resource_paths_use_bundled_resources_dir(monkeypatch, tmp_path
 
     assert config.config_signing_keys_path() == bundled_root / "shared-schemas" / "config-signing" / "keys.json"
     assert config.module_configs_root() == bundled_root / "module-configs"
-    assert config.legacy_script_path() == bundled_root / "fill_obec_portal.py"

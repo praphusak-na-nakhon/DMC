@@ -18,7 +18,9 @@ use tokio::sync::oneshot;
 use url::Url;
 
 type PendingMap = Arc<StdMutex<HashMap<String, oneshot::Sender<Result<Value, String>>>>>;
-const SIDECAR_RPC_TIMEOUT_SECS: u64 = 600;
+const RPC_TIMEOUT_SHORT_SECS: u64 = 5;
+const RPC_TIMEOUT_STANDARD_SECS: u64 = 30;
+const RPC_TIMEOUT_LONG_SECS: u64 = 600;
 
 #[derive(Clone)]
 struct RunningSidecar {
@@ -511,12 +513,31 @@ fn extract_request_id(request_json: &str) -> Result<String, String> {
     }
 }
 
+fn extract_request_method(request_json: &str) -> Result<String, String> {
+    let payload: Value = serde_json::from_str(request_json).map_err(|error| error.to_string())?;
+    payload
+        .get("method")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "JSON-RPC request must include a string method.".to_string())
+}
+
+fn rpc_timeout_secs(method: &str) -> u64 {
+    match method {
+        "ping" => RPC_TIMEOUT_SHORT_SECS,
+        "start_job" | "resume_existing_job" | "install_browser_runtime" => RPC_TIMEOUT_LONG_SECS,
+        _ => RPC_TIMEOUT_STANDARD_SECS,
+    }
+}
+
 async fn perform_rpc_request(
     app: &AppHandle,
     state: &State<'_, SidecarState>,
     request_json: String,
 ) -> Result<Value, String> {
     let request_id = extract_request_id(&request_json)?;
+    let method = extract_request_method(&request_json)?;
+    let timeout_secs = rpc_timeout_secs(&method);
     let running = ensure_sidecar_running(app, state).await?;
 
     let (sender, receiver) = oneshot::channel::<Result<Value, String>>();
@@ -553,7 +574,7 @@ async fn perform_rpc_request(
         }
     }
 
-    let response = tokio::time::timeout(Duration::from_secs(SIDECAR_RPC_TIMEOUT_SECS), receiver)
+    let response = tokio::time::timeout(Duration::from_secs(timeout_secs), receiver)
         .await
         .map_err(|_| "Timed out waiting for sidecar response.".to_string())?
         .map_err(|_| "Sidecar response channel closed unexpectedly.".to_string())??;

@@ -1,20 +1,17 @@
 from __future__ import annotations
 
-import importlib.util
-import sys
-import uuid
 from pathlib import Path
-from types import ModuleType
 from typing import Any, Callable, TypeVar
 
 import pandas as pd
 
 from ..checkpoint import JobCheckpoint
-from ..config import legacy_script_path, profile_dir_for_license, reports_dir
+from ..config import profile_dir_for_license, reports_dir
 from ..module_config import load_effective_config, sync_module_config
 from ..runtime import JobContext, utc_now
 from ..schemas import PreviewRow, ValidateExcelResponse, ValidationWarning
 from .base import AutomationModule
+from . import graduation_legacy
 
 T = TypeVar("T")
 
@@ -22,19 +19,8 @@ T = TypeVar("T")
 class GraduationModule(AutomationModule):
     name = "graduation"
 
-    def _load_legacy_module(self) -> ModuleType:
-        script_path = legacy_script_path()
-        module_name = f"legacy_fill_obec_portal_{uuid.uuid4().hex}"
-        spec = importlib.util.spec_from_file_location(module_name, script_path)
-        if spec is None or spec.loader is None:
-            raise RuntimeError(f"could not load legacy script: {script_path}")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
-        return module
-
     def validate_excel(self, path: Path) -> ValidateExcelResponse:
-        legacy = self._load_legacy_module()
+        legacy = graduation_legacy
         self._apply_module_config(legacy, load_effective_config(self.name).config)
         dataframe = pd.read_excel(path, dtype=str).fillna("")
         students, detected_level = legacy.load_source_data(path)
@@ -80,7 +66,7 @@ class GraduationModule(AutomationModule):
         options: dict[str, object],
         context: JobContext,
     ) -> None:
-        legacy = self._load_legacy_module()
+        legacy = graduation_legacy
         module_config_state = sync_module_config(self.name)
         self._apply_module_config(legacy, module_config_state.config)
         if module_config_state.last_error:
