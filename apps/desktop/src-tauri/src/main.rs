@@ -676,6 +676,45 @@ fn open_excel_dialog() -> Option<String> {
 }
 
 #[tauri::command]
+fn open_backup_archive_dialog() -> Option<String> {
+    rfd::FileDialog::new()
+        .add_filter("Backup Archive", &["zip"])
+        .pick_file()
+        .map(|path| path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn save_backup_dialog(default_name: Option<String>) -> Option<String> {
+    let mut dialog = rfd::FileDialog::new().add_filter("Backup Archive", &["zip"]);
+    if let Some(name) = default_name.as_deref() {
+        dialog = dialog.set_file_name(name);
+    }
+    dialog
+        .save_file()
+        .map(|path| path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn save_diagnostics_dialog(default_name: Option<String>) -> Option<String> {
+    let mut dialog = rfd::FileDialog::new().add_filter("JSON", &["json"]);
+    if let Some(name) = default_name.as_deref() {
+        dialog = dialog.set_file_name(name);
+    }
+    dialog
+        .save_file()
+        .map(|path| path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn write_text_file(path: String, contents: String) -> Result<(), String> {
+    let target = PathBuf::from(path);
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::write(target, contents).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn get_updater_status(app: AppHandle) -> UpdaterStatus {
     build_updater_status(&app)
 }
@@ -779,6 +818,10 @@ fn main() {
             rpc_request,
             shutdown_sidecar,
             open_excel_dialog,
+            open_backup_archive_dialog,
+            save_backup_dialog,
+            save_diagnostics_dialog,
+            write_text_file,
             get_updater_status,
             check_for_app_update,
             install_app_update

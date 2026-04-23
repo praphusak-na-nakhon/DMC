@@ -5,7 +5,9 @@ import {
   bootstrapBrowserRuntime,
   cancelJob,
   checkForAppUpdate,
+  createBackup,
   getBrowserRuntimeStatus,
+  getDatabaseStatus,
   getJobStatus,
   getLicenseStatus,
   getModuleConfigStatus,
@@ -15,17 +17,29 @@ import {
   listJobs,
   listenSidecarEvents,
   listenUpdaterEvents,
+  openBackupArchiveDialog,
   openExcelDialog,
   pauseJob,
   resumeExistingJob,
   resumeJob,
   refreshLicenseStatus,
+  restoreBackup,
+  saveBackupDialog,
+  saveDiagnosticsDialog,
   startGraduationJob,
   syncModuleConfig,
   validateExcel,
+  writeTextFile,
 } from "./lib/rpcClient";
 import { useJobStore } from "./stores/useJobStore";
-import type { AvailableUpdate, BrowserRuntimeStatus, JobStatusSnapshot, LicenseStatus, UpdaterStatus } from "./types/contracts";
+import type {
+  AvailableUpdate,
+  BrowserRuntimeStatus,
+  DatabaseStatus,
+  JobStatusSnapshot,
+  LicenseStatus,
+  UpdaterStatus,
+} from "./types/contracts";
 
 function formatSummary(template: string, accepted: number, total: number): string {
   return template.replace("{accepted}", String(accepted)).replace("{total}", String(total));
@@ -36,6 +50,12 @@ function buildJobId(): string {
     return crypto.randomUUID();
   }
   return `job-${Date.now()}`;
+}
+
+function buildTimestampSlug(): string {
+  const now = new Date();
+  const pad = (value: number): string => String(value).padStart(2, "0");
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 }
 
 function formatTimestamp(value: string | null): string {
@@ -163,6 +183,7 @@ export function App() {
   const [deviceName, setDeviceName] = useState("dmc-desktop");
   const [isActivatingLicense, setIsActivatingLicense] = useState(false);
   const [browserRuntimeStatus, setBrowserRuntimeStatus] = useState<BrowserRuntimeStatus | null>(null);
+  const [databaseStatus, setDatabaseStatus] = useState<DatabaseStatus | null>(null);
   const [browserRuntimeProgress, setBrowserRuntimeProgress] = useState<{
     phase: "checking" | "installing" | "verifying" | "ready" | "failed";
     message: string;
@@ -170,6 +191,10 @@ export function App() {
     detail: string | null;
   } | null>(null);
   const [isBootstrappingBrowser, setIsBootstrappingBrowser] = useState(false);
+  const [isCreatingBackup, setIsCreatingBackup] = useState(false);
+  const [isRestoringBackup, setIsRestoringBackup] = useState(false);
+  const [isExportingDiagnostics, setIsExportingDiagnostics] = useState(false);
+  const [supportMessage, setSupportMessage] = useState<string | null>(null);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [updateProgress, setUpdateProgress] = useState<{ downloaded: number; contentLength: number | null } | null>(
     null,
@@ -202,6 +227,14 @@ export function App() {
   async function handleLoadUpdaterStatus() {
     try {
       setUpdaterStatus(await getUpdaterStatus());
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function handleLoadDatabaseStatus() {
+    try {
+      setDatabaseStatus(await getDatabaseStatus());
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
@@ -277,6 +310,7 @@ export function App() {
       await handleRefreshLicense(false);
       setModuleConfigStatus(await getModuleConfigStatus("graduation"));
       await handleLoadUpdaterStatus();
+      await handleLoadDatabaseStatus();
       await handleLoadJobs();
       await handleLoadBrowserRuntime();
       await handleRefreshLicense(true);
@@ -284,6 +318,85 @@ export function App() {
     } catch (error) {
       setConnectionState("error");
       setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function handleCreateBackup() {
+    try {
+      setIsCreatingBackup(true);
+      setSupportMessage(null);
+      const suggestedPath = await saveBackupDialog(`dmc-sidecar-backup-${buildTimestampSlug()}.zip`);
+      if (!suggestedPath) {
+        return;
+      }
+      const result = await createBackup(suggestedPath);
+      setSupportMessage(`backup saved: ${result.backup_path}`);
+      pushSidecarMessage(`backup saved: ${result.backup_path}`);
+      await handleLoadDatabaseStatus();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsCreatingBackup(false);
+    }
+  }
+
+  async function handleRestoreBackup() {
+    try {
+      setIsRestoringBackup(true);
+      setSupportMessage(null);
+      const archivePath = await openBackupArchiveDialog();
+      if (!archivePath) {
+        return;
+      }
+      const result = await restoreBackup(archivePath);
+      setCurrentJob(null);
+      setActiveJobId(null);
+      setPreview(null);
+      setSupportMessage(`restored from ${result.restored_from} | safety backup: ${result.safety_backup_path}`);
+      pushSidecarMessage(`restore completed from ${result.restored_from}`);
+      await handleLoadDatabaseStatus();
+      await handleLoadJobs();
+      await handleRefreshLicense(false);
+      await handleLoadBrowserRuntime();
+      await handleSyncConfig();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsRestoringBackup(false);
+    }
+  }
+
+  async function handleExportDiagnostics() {
+    try {
+      setIsExportingDiagnostics(true);
+      setSupportMessage(null);
+      const outputPath = await saveDiagnosticsDialog(`dmc-diagnostics-${buildTimestampSlug()}.json`);
+      if (!outputPath) {
+        return;
+      }
+      const diagnostics = {
+        exported_at: new Date().toISOString(),
+        app_version: updaterStatus?.current_version ?? "0.1.0",
+        platform: typeof navigator !== "undefined" ? navigator.userAgent : "unknown",
+        connection_state: connectionState,
+        database_status: databaseStatus,
+        license_status: licenseStatus,
+        module_config_status: moduleConfigStatus,
+        browser_runtime_status: browserRuntimeStatus,
+        updater_status: updaterStatus,
+        available_update: availableUpdate,
+        current_job: currentJob,
+        existing_jobs: existingJobs,
+        sidecar_messages: sidecarMessages,
+        error_message: errorMessage,
+      };
+      await writeTextFile(outputPath, JSON.stringify(diagnostics, null, 2));
+      setSupportMessage(`diagnostics exported: ${outputPath}`);
+      pushSidecarMessage(`diagnostics exported: ${outputPath}`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsExportingDiagnostics(false);
     }
   }
 
@@ -1113,6 +1226,9 @@ export function App() {
               {updateMessage ? (
                 <div style={{ color: "rgb(51, 65, 85)" }}>{updateMessage}</div>
               ) : null}
+              {supportMessage ? (
+                <div style={{ color: "rgb(15, 23, 42)" }}>{supportMessage}</div>
+              ) : null}
             </div>
             {errorMessage ? (
               <div
@@ -1351,6 +1467,60 @@ export function App() {
               ) : (
                 <p style={{ marginBottom: 0 }}>{messages.app.sidecarLog.empty}</p>
               )}
+            </section>
+
+            <section style={cardStyle}>
+              <h2 style={{ marginTop: 0 }}>Support Tools</h2>
+              <div style={{ display: "grid", gap: "10px", color: "rgb(51, 65, 85)", lineHeight: 1.6 }}>
+                <div>
+                  <strong>Database:</strong> {databaseStatus?.path ?? "-"}
+                </div>
+                <div>
+                  <strong>Schema version:</strong> {databaseStatus?.schema_version ?? "-"}
+                </div>
+                <div>
+                  <strong>Tables:</strong> {databaseStatus?.tables.join(", ") ?? "-"}
+                </div>
+                <div>
+                  <strong>License tier:</strong> {licenseStatus?.license_tier ?? "-"}
+                </div>
+                <div>
+                  <strong>Expires:</strong> {formatTimestamp(licenseStatus?.expires_at ?? null)}
+                </div>
+                <div>
+                  <strong>Offline grace:</strong> {formatTimestamp(licenseStatus?.offline_grace_until ?? null)}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: "8px", marginTop: "14px", flexWrap: "wrap" }}>
+                <button
+                  style={{ ...buttonStyle, padding: "8px 12px", backgroundColor: "rgb(8, 145, 178)" }}
+                  disabled={connectionState !== "ready"}
+                  onClick={() => void handleLoadDatabaseStatus()}
+                >
+                  Refresh DB Status
+                </button>
+                <button
+                  style={{ ...buttonStyle, padding: "8px 12px", backgroundColor: "rgb(37, 99, 235)" }}
+                  disabled={connectionState !== "ready" || isCreatingBackup}
+                  onClick={() => void handleCreateBackup()}
+                >
+                  {isCreatingBackup ? "Creating Backup..." : "Export Backup"}
+                </button>
+                <button
+                  style={{ ...buttonStyle, padding: "8px 12px", backgroundColor: "rgb(202, 138, 4)" }}
+                  disabled={connectionState !== "ready" || isRestoringBackup}
+                  onClick={() => void handleRestoreBackup()}
+                >
+                  {isRestoringBackup ? "Restoring..." : "Restore Backup"}
+                </button>
+                <button
+                  style={{ ...buttonStyle, padding: "8px 12px", backgroundColor: "rgb(99, 102, 241)" }}
+                  disabled={connectionState !== "ready" || isExportingDiagnostics}
+                  onClick={() => void handleExportDiagnostics()}
+                >
+                  {isExportingDiagnostics ? "Exporting..." : "Export Diagnostics"}
+                </button>
+              </div>
             </section>
           </div>
         </div>

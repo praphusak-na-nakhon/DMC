@@ -2,11 +2,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AvailableUpdate,
+  BackupCreateResponse,
   BrowserRuntimeStatus,
+  DatabaseStatus,
   JobStatusSnapshot,
   LicenseStatus,
   ListJobsResponse,
   ModuleConfigStatus,
+  RestoreBackupResponse,
   SidecarEvent,
   UpdaterEvent,
   UpdaterStatus,
@@ -16,11 +19,14 @@ import type {
 import {
   parseLicenseStatus,
   parseAvailableUpdate,
+  parseBackupCreateResponse,
   parseBrowserRuntimeStatus,
+  parseDatabaseStatus,
   parseJobActionResponse,
   parseJobStatusSnapshot,
   parseListJobsResponse,
   parseModuleConfigStatus,
+  parseRestoreBackupResponse,
   parseResumeExistingJobResponse,
   parseSidecarEvent,
   parseStartJobResponse,
@@ -86,6 +92,22 @@ export async function openExcelDialog(): Promise<string | null> {
   return invoke<string | null>("open_excel_dialog");
 }
 
+export async function openBackupArchiveDialog(): Promise<string | null> {
+  return invoke<string | null>("open_backup_archive_dialog");
+}
+
+export async function saveBackupDialog(defaultName?: string): Promise<string | null> {
+  return invoke<string | null>("save_backup_dialog", { defaultName });
+}
+
+export async function saveDiagnosticsDialog(defaultName?: string): Promise<string | null> {
+  return invoke<string | null>("save_diagnostics_dialog", { defaultName });
+}
+
+export async function writeTextFile(path: string, contents: string): Promise<void> {
+  await invoke("write_text_file", { path, contents });
+}
+
 export async function getUpdaterStatus(): Promise<UpdaterStatus> {
   const result = await invoke<unknown>("get_updater_status");
   return parseUpdaterStatus(result);
@@ -148,6 +170,21 @@ export async function refreshLicenseStatus(): Promise<LicenseStatus> {
 export async function getBrowserRuntimeStatus(): Promise<BrowserRuntimeStatus> {
   const result = await sidecarRequest<unknown>("get_browser_runtime_status", {});
   return parseBrowserRuntimeStatus(result);
+}
+
+export async function getDatabaseStatus(): Promise<DatabaseStatus> {
+  const result = await sidecarRequest<unknown>("get_database_status", {});
+  return parseDatabaseStatus(result);
+}
+
+export async function createBackup(path?: string): Promise<BackupCreateResponse> {
+  const result = await sidecarRequest<unknown>("create_backup", path ? { path } : {});
+  return parseBackupCreateResponse(result);
+}
+
+export async function restoreBackup(path: string): Promise<RestoreBackupResponse> {
+  const result = await sidecarRequest<unknown>("restore_backup", { path });
+  return parseRestoreBackupResponse(result);
 }
 
 export async function bootstrapBrowserRuntime(): Promise<BrowserRuntimeStatus> {

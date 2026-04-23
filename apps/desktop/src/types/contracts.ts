@@ -176,6 +176,22 @@ export type BrowserRuntimeStatus = {
   log_tail: string[];
 };
 
+export type DatabaseStatus = {
+  path: string;
+  schema_version: number;
+  tables: string[];
+};
+
+export type BackupCreateResponse = {
+  backup_path: string;
+};
+
+export type RestoreBackupResponse = {
+  restored_from: string;
+  safety_backup_path: string;
+  database_path: string;
+};
+
 export type ListJobsResponse = {
   items: JobStatusSnapshot[];
 };
@@ -436,6 +452,36 @@ export function parseBrowserRuntimeStatus(value: unknown): BrowserRuntimeStatus 
       }
       return item;
     }),
+  };
+}
+
+export function parseDatabaseStatus(value: unknown): DatabaseStatus {
+  const record = asRecord(value, "database_status");
+  return {
+    path: readString(record, "path", "database_status"),
+    schema_version: readNumber(record, "schema_version", "database_status"),
+    tables: readArray(record, "tables", "database_status").map((item, index) => {
+      if (typeof item !== "string") {
+        throw new Error(`database_status.tables[${index}] must be a string`);
+      }
+      return item;
+    }),
+  };
+}
+
+export function parseBackupCreateResponse(value: unknown): BackupCreateResponse {
+  const record = asRecord(value, "backup_create_response");
+  return {
+    backup_path: readString(record, "backup_path", "backup_create_response"),
+  };
+}
+
+export function parseRestoreBackupResponse(value: unknown): RestoreBackupResponse {
+  const record = asRecord(value, "restore_backup_response");
+  return {
+    restored_from: readString(record, "restored_from", "restore_backup_response"),
+    safety_backup_path: readString(record, "safety_backup_path", "restore_backup_response"),
+    database_path: readString(record, "database_path", "restore_backup_response"),
   };
 }
 
