@@ -1,0 +1,6 @@
+{
+  "environment": "staging",
+  "cloud_base_url": "",
+  "updater_endpoint": "",
+  "updater_public_key": ""
+}

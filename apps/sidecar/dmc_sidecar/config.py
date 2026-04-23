@@ -93,17 +93,6 @@ def secure_cloud_base_url() -> str | None:
     raise RuntimeError("CLOUD_URL_INSECURE")
 
 
-def cloud_api_bearer_token() -> str:
-    return os.getenv("DMC_CLOUD_API_BEARER_TOKEN", "").strip()
-
-
-def require_cloud_api_bearer_token() -> str:
-    token = cloud_api_bearer_token()
-    if not token:
-        raise RuntimeError("CLOUD_API_TOKEN_MISSING")
-    return token
-
-
 def config_signing_keys_path() -> Path:
     bundled_root = bundled_resources_root()
     if bundled_root is not None:

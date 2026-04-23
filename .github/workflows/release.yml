@@ -1,0 +1,132 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Release environment
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      version:
+        description: Desktop release version
+        required: true
+        type: string
+      release_notes:
+        description: Short updater notes
+        required: false
+        type: string
+
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.8.1
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install cloud and sidecar build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller
+          python -m pip install -e .\apps\cloud[dev] -e .\apps\sidecar[dev]
+
+      - name: Compute release metadata
+        shell: pwsh
+        run: |
+          $version = "${{ inputs.version }}".Trim()
+          if (-not $version) { throw "version input is required" }
+          if ("${{ inputs.environment }}" -eq "production") {
+            $tag = "v$version"
+          } else {
+            $tag = "v$version-${{ inputs.environment }}"
+          }
+          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "UPDATER_MANIFEST_URL=https://github.com/${{ github.repository }}/releases/download/$tag/latest.json" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Verify workspace
+        run: pnpm run ci:verify
+
+      - name: Write packaged release config
+        shell: pwsh
+        run: >
+          .\.venv\Scripts\python .\scripts\write_release_config.py
+          --environment "${{ inputs.environment }}"
+          --cloud-base-url "${{ vars.DMC_CLOUD_BASE_URL }}"
+          --updater-endpoint "${{ env.UPDATER_MANIFEST_URL }}"
+          --updater-public-key "${{ secrets.DMC_UPDATER_PUBLIC_KEY }}"
+
+      - name: Build bundled sidecar
+        run: pnpm run sidecar:bundle
+
+      - name: Build desktop package
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: corepack pnpm --dir apps/desktop exec tauri build
+
+      - name: Prepare code-signing certificate
+        if: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 != '' }}
+        shell: pwsh
+        run: |
+          $certDir = Join-Path $PWD ".release-signing"
+          New-Item -ItemType Directory -Force -Path $certDir | Out-Null
+          $certPath = Join-Path $certDir "codesign.pfx"
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String("${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}"))
+          "WINDOWS_CODESIGN_CERT_PATH=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Sign MSI artifacts
+        if: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 != '' }}
+        env:
+          WINDOWS_CODESIGN_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
+        run: pnpm run release:sign-msi
+
+      - name: Generate updater manifest
+        shell: pwsh
+        run: >
+          .\.venv\Scripts\python .\scripts\create_release_manifest.py
+          --bundle-dir ".\apps\desktop\src-tauri\target\release\bundle"
+          --version "${{ env.RELEASE_VERSION }}"
+          --pub-date "$(Get-Date -AsUTC -Format o)"
+          --notes "${{ inputs.release_notes }}"
+          --base-url "https://github.com/${{ github.repository }}/releases/download/${{ env.RELEASE_TAG }}"
+          --output ".\release-artifacts\latest.json"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: DMC Assistant ${{ env.RELEASE_VERSION }} (${{ inputs.environment }})
+          files: |
+            apps/desktop/src-tauri/target/release/bundle/**/*.msi
+            apps/desktop/src-tauri/target/release/bundle/**/*.zip
+            apps/desktop/src-tauri/target/release/bundle/**/*.sig
+            release-artifacts/latest.json

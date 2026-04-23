@@ -20,4 +20,7 @@ target/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/bundled-sidecar/*
 !apps/desktop/src-tauri/bundled-sidecar/.gitkeep
+apps/desktop/src-tauri/release-config/*.json
+!apps/desktop/src-tauri/release-config/.gitkeep
 apps/sidecar/build/
+release-artifacts/

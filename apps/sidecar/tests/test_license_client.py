@@ -68,7 +68,6 @@ def test_refresh_license_status_updates_store_from_cloud(monkeypatch, tmp_path: 
     seed_license(store)
 
     monkeypatch.setattr("dmc_sidecar.license_client.secure_cloud_base_url", lambda: "https://cloud.example.test")
-    monkeypatch.setattr("dmc_sidecar.license_client.require_cloud_api_bearer_token", lambda: "dev-token")
     monkeypatch.setattr(
         "dmc_sidecar.license_client.urlopen",
         lambda request, timeout=10: FakeResponse(
@@ -108,7 +107,6 @@ def test_refresh_license_status_falls_back_to_offline_mode_on_network_error(
     seed_license(store)
 
     monkeypatch.setattr("dmc_sidecar.license_client.secure_cloud_base_url", lambda: "https://cloud.example.test")
-    monkeypatch.setattr("dmc_sidecar.license_client.require_cloud_api_bearer_token", lambda: "dev-token")
 
     def raise_network_error(request, timeout=10):
         raise URLError("network down")
@@ -125,7 +123,6 @@ def test_refresh_license_status_falls_back_to_offline_mode_on_network_error(
 def test_activate_license_saves_local_record(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
     monkeypatch.setattr("dmc_sidecar.license_client.secure_cloud_base_url", lambda: "https://cloud.example.test")
-    monkeypatch.setattr("dmc_sidecar.license_client.require_cloud_api_bearer_token", lambda: "dev-token")
     monkeypatch.setattr("dmc_sidecar.license_client.get_or_create_device_id", lambda: "device-activate-1")
     monkeypatch.setattr(
         "dmc_sidecar.license_client.urlopen",

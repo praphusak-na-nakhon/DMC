@@ -4,14 +4,13 @@ import json
 import re
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Response
 
-from ..auth import require_api_bearer
 from ..config_signing import sign_config_payload
 from ..schemas import ConfigResponse
 
 
-router = APIRouter(dependencies=[Depends(require_api_bearer)])
+router = APIRouter()
 MODULE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_-]*$")
 
 

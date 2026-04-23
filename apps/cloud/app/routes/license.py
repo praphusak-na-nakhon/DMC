@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, status
 
-from ..auth import require_api_bearer
 from ..license_service import LicenseRepository, activate_license_request, heartbeat_license_request
 from ..schemas import LicenseActivateRequest, LicenseStateResponse
 
 
-router = APIRouter(dependencies=[Depends(require_api_bearer)])
+router = APIRouter()
 
 
 def get_license_repository() -> LicenseRepository:

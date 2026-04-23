@@ -1,9 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use serde::Deserialize;
 use serde_json::Value;
 use std::{
     collections::HashMap,
     env,
+    fs,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
@@ -56,6 +58,15 @@ struct UpdateMetadata {
     body: Option<String>,
 }
 
+#[derive(Clone, Default, Deserialize)]
+#[serde(default)]
+struct ReleaseConfig {
+    environment: String,
+    cloud_base_url: String,
+    updater_endpoint: String,
+    updater_public_key: String,
+}
+
 struct SidecarLaunchSpec {
     program: PathBuf,
     args: Vec<String>,
@@ -64,36 +75,78 @@ struct SidecarLaunchSpec {
     mode: &'static str,
 }
 
-fn updater_endpoint() -> Option<String> {
+fn trim_to_option(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn release_config_path(app: &AppHandle) -> Option<PathBuf> {
+    let resource_dir = app.path().resource_dir().ok()?;
+    let candidate = resource_dir.join("release-config").join("app-config.json");
+    if candidate.exists() {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
+fn load_release_config(app: &AppHandle) -> ReleaseConfig {
+    let mut config = release_config_path(app)
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|content| serde_json::from_str::<ReleaseConfig>(&content).ok())
+        .unwrap_or_default();
+
     if let Ok(value) = env::var("DMC_UPDATER_ENDPOINT") {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
+        if let Some(endpoint) = trim_to_option(&value) {
+            config.updater_endpoint = endpoint;
+        }
+    }
+    if let Ok(value) = env::var("DMC_UPDATER_PUBLIC_KEY") {
+        if let Some(pubkey) = trim_to_option(&value) {
+            config.updater_public_key = pubkey;
+        }
+    }
+    if let Ok(value) = env::var("DMC_CLOUD_BASE_URL") {
+        if let Some(base_url) = trim_to_option(&value) {
+            config.cloud_base_url = base_url;
+        }
+    }
+    if let Ok(value) = env::var("DMC_RELEASE_ENVIRONMENT") {
+        if let Some(environment) = trim_to_option(&value) {
+            config.environment = environment;
         }
     }
 
-    let Ok(base_url) = env::var("DMC_CLOUD_BASE_URL") else {
-        return None;
-    };
-    let trimmed = base_url.trim().trim_end_matches('/');
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    Some(format!(
-        "{trimmed}/v1/updates/manifest?current_version={{current_version}}&target={{target}}&arch={{arch}}"
-    ))
+    config
 }
 
-fn updater_pubkey() -> Option<String> {
-    let Ok(value) = env::var("DMC_UPDATER_PUBLIC_KEY") else {
-        return None;
-    };
-    let trimmed = value.trim();
+fn configured_cloud_base_url(app: &AppHandle) -> Option<String> {
+    let config = load_release_config(app);
+    let trimmed = config.cloud_base_url.trim().trim_end_matches('/');
     if trimmed.is_empty() {
         return None;
     }
     Some(trimmed.to_string())
+}
+
+fn updater_endpoint(app: &AppHandle) -> Option<String> {
+    let config = load_release_config(app);
+    if let Some(endpoint) = trim_to_option(&config.updater_endpoint) {
+        return Some(endpoint);
+    }
+
+    let base_url = configured_cloud_base_url(app)?;
+    Some(format!(
+        "{base_url}/v1/updates/manifest?current_version={{current_version}}&target={{target}}&arch={{arch}}"
+    ))
+}
+
+fn updater_pubkey(app: &AppHandle) -> Option<String> {
+    trim_to_option(&load_release_config(app).updater_public_key)
 }
 
 fn repo_root() -> Result<PathBuf, String> {
@@ -183,6 +236,9 @@ fn bundled_sidecar_launch_spec(app: &AppHandle) -> Result<Option<SidecarLaunchSp
             resources_dir.to_string_lossy().to_string(),
         ));
     }
+    if let Some(cloud_base_url) = configured_cloud_base_url(app) {
+        envs.push(("DMC_CLOUD_BASE_URL".to_string(), cloud_base_url));
+    }
 
     Ok(Some(SidecarLaunchSpec {
         program,
@@ -198,7 +254,7 @@ fn python_sidecar_launch_specs(app: &AppHandle) -> Result<Vec<SidecarLaunchSpec>
     let python_path = combined_python_path(&repo_root)?;
     let data_dir = app_data_sidecar_dir(app)?;
     let browser_dir = data_dir.join("ms-playwright");
-    let shared_envs = vec![
+    let mut shared_envs = vec![
         ("PYTHONPATH".to_string(), python_path),
         ("DMC_REPO_ROOT".to_string(), repo_root.to_string_lossy().to_string()),
         ("DMC_DATA_DIR".to_string(), data_dir.to_string_lossy().to_string()),
@@ -207,6 +263,9 @@ fn python_sidecar_launch_specs(app: &AppHandle) -> Result<Vec<SidecarLaunchSpec>
             browser_dir.to_string_lossy().to_string(),
         ),
     ];
+    if let Some(cloud_base_url) = configured_cloud_base_url(app) {
+        shared_envs.push(("DMC_CLOUD_BASE_URL".to_string(), cloud_base_url));
+    }
 
     let program_candidates: Vec<(String, Vec<String>)> = match env::var("DMC_PYTHON") {
         Ok(custom) => vec![
@@ -522,8 +581,8 @@ fn current_app_version(app: &AppHandle) -> String {
 }
 
 fn build_updater_status(app: &AppHandle) -> UpdaterStatus {
-    let endpoint = updater_endpoint();
-    let pubkey = updater_pubkey();
+    let endpoint = updater_endpoint(app);
+    let pubkey = updater_pubkey(app);
     UpdaterStatus {
         configured: endpoint.is_some() && pubkey.is_some(),
         endpoint,
@@ -535,8 +594,8 @@ fn build_updater_status(app: &AppHandle) -> UpdaterStatus {
 fn build_runtime_updater(
     app: &AppHandle,
 ) -> Result<tauri_plugin_updater::UpdaterBuilder, String> {
-    let endpoint = updater_endpoint().ok_or_else(|| "UPDATER_NOT_CONFIGURED".to_string())?;
-    let pubkey = updater_pubkey().ok_or_else(|| "UPDATER_NOT_CONFIGURED".to_string())?;
+    let endpoint = updater_endpoint(app).ok_or_else(|| "UPDATER_NOT_CONFIGURED".to_string())?;
+    let pubkey = updater_pubkey(app).ok_or_else(|| "UPDATER_NOT_CONFIGURED".to_string())?;
     let url = Url::parse(&endpoint).map_err(|error| format!("UPDATER_ENDPOINT_INVALID: {error}"))?;
     app.updater_builder()
         .pubkey(pubkey)

@@ -18,7 +18,6 @@ from .config import (
     config_signing_keys_path,
     configs_dir,
     module_configs_root,
-    require_cloud_api_bearer_token,
     secure_cloud_base_url,
 )
 
@@ -209,25 +208,13 @@ def sync_module_config(module: str, *, timeout_sec: int = 10) -> ModuleConfigSta
             updated=False,
             last_error=str(exc),
         )
-    try:
-        bearer_token = require_cloud_api_bearer_token()
-    except RuntimeError as exc:
-        return replace(
-            local_state,
-            checked_at=utc_now(),
-            updated=False,
-            last_error=str(exc),
-        )
     if base_url is None:
         return local_state
 
     query = urlencode({"current_version": local_state.version})
     request = Request(
         f"{base_url}/v1/config/{module}?{query}",
-        headers={
-            "Authorization": f"Bearer {bearer_token}",
-            "Accept": "application/json",
-        },
+        headers={"Accept": "application/json"},
         method="GET",
     )
 
