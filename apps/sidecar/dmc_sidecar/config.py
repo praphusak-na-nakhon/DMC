@@ -47,6 +47,12 @@ def reports_dir() -> Path:
     return path
 
 
+def backups_dir() -> Path:
+    path = ensure_data_dir() / "backups"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def configs_dir() -> Path:
     path = ensure_data_dir() / "configs"
     path.mkdir(parents=True, exist_ok=True)

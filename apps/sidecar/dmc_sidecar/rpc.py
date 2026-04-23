@@ -9,7 +9,10 @@ from typing import Any, Callable
 from pydantic import ValidationError
 
 from . import __version__
+from .backup import create_backup_archive, restore_backup_archive
 from .browser_runtime import bootstrap_browser_runtime, get_browser_runtime_status
+from .config import sqlite_path
+from .db import get_database_metadata
 from .job_store import JobStore
 from .license_client import activate_license, build_license_status_snapshot, refresh_license_status
 from .license_store import LicenseStore
@@ -18,6 +21,7 @@ from .modules import get_module
 from .runtime import JobManager, build_event_notification
 from .schemas import (
     ActivateLicenseRequest,
+    FilePathRequest,
     JobIdRequest,
     ModuleConfigRequest,
     ModuleConfigStatus,
@@ -98,6 +102,25 @@ class RpcServer:
 
             if request.method == "bootstrap_browser_runtime":
                 result = bootstrap_browser_runtime(emit_progress=self.emit_notification).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "get_database_status":
+                return RpcSuccessResponse(id=request.id, result=get_database_metadata(sqlite_path()))
+
+            if request.method == "create_backup":
+                params = FilePathRequest.model_validate(request.params) if request.params else None
+                backup_path = create_backup_archive(Path(params.path)) if params and params.path else create_backup_archive()
+                return RpcSuccessResponse(id=request.id, result={"backup_path": str(backup_path)})
+
+            if request.method == "restore_backup":
+                params = FilePathRequest.model_validate(request.params)
+                if self.job_manager.runtime_statuses():
+                    return self._error(
+                        request.id,
+                        code="RESTORE_REQUIRES_IDLE",
+                        message="Stop active jobs before restoring a backup.",
+                    )
+                result = restore_backup_archive(Path(params.path))
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "activate_license":

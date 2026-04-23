@@ -221,6 +221,11 @@ class JobManager:
             "stopped_item": snapshot.stopped_item,
         }
 
+    def runtime_statuses(self) -> list[dict[str, Any]]:
+        with self._lock:
+            job_ids = list(self._jobs.keys())
+        return [status for job_id in job_ids if (status := self.get_runtime_status(job_id)) is not None]
+
     def _run_job(self, module_name: str, excel_path: Path, context: JobContext) -> None:
         try:
             from .modules import get_module

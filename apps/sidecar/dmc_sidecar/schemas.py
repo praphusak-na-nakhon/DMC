@@ -113,6 +113,12 @@ class JobIdRequest(BaseModel):
     job_id: str
 
 
+class FilePathRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+
+
 class LicenseRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

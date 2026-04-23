@@ -207,6 +207,46 @@ def test_get_browser_runtime_status_rpc(monkeypatch, tmp_path: Path) -> None:
     assert response["result"]["bootstrap_supported"] is True
 
 
+def test_create_backup_rpc_returns_archive_path(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    server = RpcServer(emit_notification=lambda payload: None)
+    payload = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "req-backup",
+            "method": "create_backup",
+            "params": {"path": str(tmp_path / "manual-backup.zip")},
+        }
+    )
+
+    response = json.loads(server.handle_text(payload))
+
+    assert Path(response["result"]["backup_path"]).exists()
+
+
+def test_restore_backup_rpc_requires_idle(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    server = RpcServer(emit_notification=lambda payload: None)
+    monkeypatch.setattr(
+        server.job_manager,
+        "runtime_statuses",
+        lambda: [{"job_id": "job-1", "status": "running"}],
+    )
+
+    payload = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "req-restore-busy",
+            "method": "restore_backup",
+            "params": {"path": str(tmp_path / "backup.zip")},
+        }
+    )
+
+    response = json.loads(server.handle_text(payload))
+
+    assert response["error"]["code"] == "RESTORE_REQUIRES_IDLE"
+
+
 def test_start_job_rpc_requires_browser_runtime(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
     server = RpcServer(emit_notification=lambda payload: None)
