@@ -19,6 +19,7 @@ import {
   openExcelDialog,
   refreshLicenseStatus,
   restoreBackup,
+  revealPath,
   saveBackupDialog,
   saveDiagnosticsDialog,
   startGraduationJob,
@@ -320,6 +321,15 @@ export function App() {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setIsExportingDiagnostics(false);
+    }
+  }
+
+  async function handleRevealPath(path: string) {
+    try {
+      setErrorMessage(null);
+      await revealPath(path);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -778,7 +788,11 @@ export function App() {
           }}
         >
           <PreviewPanel preview={preview} />
-          <JobProgressPanel currentJob={currentJob} progressPercent={progressPercent} />
+          <JobProgressPanel
+            currentJob={currentJob}
+            progressPercent={progressPercent}
+            onRevealPath={(path) => void handleRevealPath(path)}
+          />
 
           <div style={{ display: "grid", gap: "20px", minWidth: 0 }}>
             <ExistingJobsPanel
@@ -791,6 +805,7 @@ export function App() {
                 setExcelPath(job.source_file);
               }}
               onResumeExisting={(job) => void handleResumeExisting(job)}
+              onRevealPath={(path) => void handleRevealPath(path)}
             />
             <SidecarLogPanel sidecarMessages={sidecarMessages} />
             <SupportToolsPanel

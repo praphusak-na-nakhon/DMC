@@ -1,19 +1,23 @@
 import messages from "../i18n/th.json";
-import { cardStyle } from "../lib/appUi";
+import { buttonStyle, cardStyle } from "../lib/appUi";
 import type { JobStatusSnapshot } from "../types/contracts";
 
 type JobProgressPanelProps = {
   currentJob: JobStatusSnapshot | null;
   progressPercent: number;
+  onRevealPath: (path: string) => void;
 };
 
 const pathTextStyle = { wordBreak: "break-all" as const, overflowWrap: "anywhere" as const };
 
-export function JobProgressPanel({ currentJob, progressPercent }: JobProgressPanelProps) {
+export function JobProgressPanel({ currentJob, progressPercent, onRevealPath }: JobProgressPanelProps) {
+  const reportPath = currentJob?.report_path ?? null;
+  const reviewReportPath = currentJob?.review_report_path ?? null;
   const processedLabel =
     currentJob?.total !== null && currentJob?.total !== undefined && currentJob.processed > currentJob.total
       ? `${currentJob.processed} แถวบนเว็บ (Excel validate ${currentJob.total} รายการ)`
       : `${currentJob?.processed ?? 0}/${currentJob?.total ?? "-"}`;
+  const reportDirectory = reportPath?.replace(/[\\/][^\\/]+$/, "") ?? reviewReportPath?.replace(/[\\/][^\\/]+$/, "");
 
   return (
     <section style={{ ...cardStyle, minWidth: 0 }}>
@@ -58,8 +62,31 @@ export function JobProgressPanel({ currentJob, progressPercent }: JobProgressPan
               <strong>ไฟล์:</strong> {currentJob.source_file}
             </div>
             <div style={pathTextStyle}>
-              <strong>Report:</strong> {currentJob.report_path ?? "-"}
+              <strong>Report:</strong> {reportPath ?? "-"}
             </div>
+            <div style={pathTextStyle}>
+              <strong>Review:</strong> {reviewReportPath ?? "-"}
+            </div>
+            {reportPath || reviewReportPath ? (
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "6px" }}>
+                {reportPath ? (
+                  <button
+                    style={{ ...buttonStyle, padding: "8px 12px", backgroundColor: "rgb(37, 99, 235)" }}
+                    onClick={() => onRevealPath(reportPath)}
+                  >
+                    {messages.app.progress.openReport}
+                  </button>
+                ) : null}
+                {reportDirectory ? (
+                  <button
+                    style={{ ...buttonStyle, padding: "8px 12px", backgroundColor: "rgb(8, 145, 178)" }}
+                    onClick={() => onRevealPath(reportDirectory)}
+                  >
+                    {messages.app.progress.openReportFolder}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
             {currentJob.needs_auth ? (
               <div
                 style={{

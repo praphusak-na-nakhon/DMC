@@ -33,9 +33,9 @@ def test_cloud_backup_archive_round_trip(monkeypatch, tmp_path: Path) -> None:
         license_key="DMC-CLOUD-001",
         request=CloudLicenseUpsertRequest(
             license_key="DMC-CLOUD-001",
-            license_tier="standard",
-            school_size_tier="le_1500",
-            billing_interval="yearly",
+                license_tier="school_le_500",
+                school_size_tier="le_500",
+                billing_interval="annual",
             student_count_total=500,
             max_devices=5,
             status="active",
@@ -71,7 +71,6 @@ def test_cloud_backup_archive_round_trip(monkeypatch, tmp_path: Path) -> None:
     restored = repo.get_license("DMC-CLOUD-001")
 
     assert restored is not None
-    assert restored.license_tier == "standard"
+    assert restored.license_tier == "school_le_500"
     assert restored.max_devices == 5
     assert Path(result["safety_backup_path"]).exists()
-

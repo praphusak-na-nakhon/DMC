@@ -55,13 +55,20 @@
       "status": "สถานะ",
       "currentPage": "หน้าปัจจุบัน",
       "success": "สำเร็จ",
-      "failed": "ต้องตรวจเพิ่ม"
+      "failed": "ต้องตรวจเพิ่ม",
+      "openReport": "เปิดรายงาน",
+      "openReportFolder": "เปิดโฟลเดอร์รายงาน"
     },
     "existingJobs": {
       "title": "Existing Jobs",
       "empty": "ยังไม่มีงานใน local checkpoint",
       "sourceFile": "ไฟล์",
-      "updatedAt": "เวลา"
+      "updatedAt": "เวลา",
+      "filterActive": "งานที่ต้องดู",
+      "filterDone": "เสร็จแล้ว",
+      "filterFailed": "ล้มเหลว",
+      "filterAll": "ทั้งหมด",
+      "emptyFiltered": "ไม่มีงานในตัวกรองนี้"
     },
     "sidecarLog": {
       "title": "ข้อความจาก Sidecar",

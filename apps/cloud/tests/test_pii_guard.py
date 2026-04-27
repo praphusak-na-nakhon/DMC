@@ -57,3 +57,21 @@ def test_assert_payload_is_telemetry_safe_rejects_case_and_camel_variants() -> N
                 ]
             }
         )
+
+
+def test_assert_payload_is_telemetry_safe_rejects_name_aliases() -> None:
+    with pytest.raises(ValueError, match="portalName"):
+        assert_payload_is_telemetry_safe(
+            {
+                "events": [
+                    {
+                        "event": "job_failed",
+                        "ts": "2026-04-22T00:00:00Z",
+                        "module": "graduation",
+                        "portalName": "สมชาย ใจดี",
+                        "processed": 25,
+                        "error_code": "PORTAL_SESSION_EXPIRED",
+                    }
+                ]
+            }
+        )

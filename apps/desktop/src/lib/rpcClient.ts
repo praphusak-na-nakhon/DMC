@@ -108,6 +108,10 @@ export async function writeTextFile(path: string, contents: string): Promise<voi
   await invoke("write_text_file", { path, contents });
 }
 
+export async function revealPath(path: string): Promise<void> {
+  await invoke("reveal_path", { path });
+}
+
 export async function getUpdaterStatus(): Promise<UpdaterStatus> {
   const result = await invoke<unknown>("get_updater_status");
   return parseUpdaterStatus(result);

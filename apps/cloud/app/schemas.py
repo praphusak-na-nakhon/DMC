@@ -4,6 +4,11 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+LicenseTier = Literal["trial", "school_le_500", "school_501_1500", "school_gt_1500"]
+SchoolSizeTier = Literal["le_500", "501_1500", "gt_1500"]
+BillingInterval = Literal["monthly", "annual"]
+LicenseStatus = Literal["active", "suspended", "expired"]
+
 
 class LicenseActivateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -18,9 +23,9 @@ class LicenseStateResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: str | None = None
-    license_tier: str
-    school_size_tier: str
-    billing_interval: str | None
+    license_tier: LicenseTier
+    school_size_tier: SchoolSizeTier
+    billing_interval: BillingInterval | None
     student_count_total: int
     expires_at: str
     modules_enabled: list[str]
@@ -32,12 +37,12 @@ class CloudLicenseUpsertRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     license_key: str
-    license_tier: str
-    school_size_tier: str
-    billing_interval: str | None = None
+    license_tier: LicenseTier
+    school_size_tier: SchoolSizeTier
+    billing_interval: BillingInterval | None = None
     student_count_total: int
     max_devices: int
-    status: str
+    status: LicenseStatus
     expires_at: str
     modules_enabled: list[str]
 
@@ -46,12 +51,12 @@ class CloudLicenseAdminResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     license_key: str
-    license_tier: str
-    school_size_tier: str
-    billing_interval: str | None
+    license_tier: LicenseTier
+    school_size_tier: SchoolSizeTier
+    billing_interval: BillingInterval | None
     student_count_total: int
     max_devices: int
-    status: str
+    status: LicenseStatus
     expires_at: str
     modules_enabled: list[str]
     active_devices: int

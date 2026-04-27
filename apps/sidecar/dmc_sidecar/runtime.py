@@ -160,7 +160,10 @@ class JobManager:
             if job_id in self._jobs:
                 raise DomainError("JOB_ALREADY_RUNNING")
 
-            check_license_allows_job_start(self.license_store.get_license())
+            check_license_allows_job_start(
+                self.license_store.get_license(),
+                module_name=module_name,
+            )
             control = JobControl()
             snapshot = JobSnapshot(
                 job_id=job_id,

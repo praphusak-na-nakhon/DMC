@@ -83,7 +83,7 @@ class LicenseRepository:
                     """,
                     (
                         license_key,
-                        to_utc_string(utc_now() + timedelta(days=30)),
+                        to_utc_string(utc_now() + timedelta(days=settings.trial_duration_days)),
                         json.dumps(["graduation"], ensure_ascii=False),
                     ),
                 )

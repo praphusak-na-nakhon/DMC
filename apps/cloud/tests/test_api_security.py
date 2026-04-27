@@ -174,9 +174,9 @@ def test_admin_can_upsert_and_list_licenses(monkeypatch, tmp_path: Path) -> None
         headers=auth_headers(),
         json={
             "license_key": "DMC-PAID-0001",
-            "license_tier": "standard",
-            "school_size_tier": "le_1500",
-            "billing_interval": "yearly",
+            "license_tier": "school_501_1500",
+            "school_size_tier": "501_1500",
+            "billing_interval": "annual",
             "student_count_total": 780,
             "max_devices": 5,
             "status": "active",
@@ -202,6 +202,27 @@ def test_admin_upsert_rejects_mismatched_license_key(monkeypatch, tmp_path: Path
         headers=auth_headers(),
         json={
             "license_key": "DMC-PAID-0002",
+            "license_tier": "school_501_1500",
+            "school_size_tier": "501_1500",
+            "billing_interval": "annual",
+            "student_count_total": 780,
+            "max_devices": 5,
+            "status": "active",
+            "expires_at": "2027-04-22T00:00:00Z",
+            "modules_enabled": ["graduation"],
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_admin_upsert_rejects_unknown_tier_values(monkeypatch, tmp_path: Path) -> None:
+    setup_test_security(monkeypatch)
+    use_temp_cloud_db(monkeypatch, tmp_path)
+    response = client.put(
+        "/v1/admin/licenses/DMC-PAID-0001",
+        headers=auth_headers(),
+        json={
+            "license_key": "DMC-PAID-0001",
             "license_tier": "standard",
             "school_size_tier": "le_1500",
             "billing_interval": "yearly",
@@ -212,7 +233,8 @@ def test_admin_upsert_rejects_mismatched_license_key(monkeypatch, tmp_path: Path
             "modules_enabled": ["graduation"],
         },
     )
-    assert response.status_code == 400
+
+    assert response.status_code == 422
 
 
 def test_config_returns_signed_payload(monkeypatch) -> None:

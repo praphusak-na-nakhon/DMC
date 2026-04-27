@@ -749,6 +749,44 @@ fn write_text_file(path: String, contents: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn reveal_path(path: String) -> Result<(), String> {
+    let target = PathBuf::from(path);
+    if !target.exists() {
+        return Err("PATH_NOT_FOUND".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if target.is_file() {
+            Command::new("explorer")
+                .arg(format!("/select,{}", target.to_string_lossy()))
+                .spawn()
+                .map_err(|error| error.to_string())?;
+        } else {
+            Command::new("explorer")
+                .arg(target.to_string_lossy().to_string())
+                .spawn()
+                .map_err(|error| error.to_string())?;
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let open_target = if target.is_file() {
+            target.parent().unwrap_or(&target).to_path_buf()
+        } else {
+            target
+        };
+        Command::new("xdg-open")
+            .arg(open_target)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 fn get_updater_status(app: AppHandle) -> UpdaterStatus {
     build_updater_status(&app)
 }
@@ -856,6 +894,7 @@ fn main() {
             save_backup_dialog,
             save_diagnostics_dialog,
             write_text_file,
+            reveal_path,
             get_updater_status,
             check_for_app_update,
             install_app_update

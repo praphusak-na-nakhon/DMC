@@ -4,7 +4,9 @@ import re
 from typing import Any
 
 
-PII_FIELD_PATTERN = re.compile(r"^(student(?:_|$)|first_name$|last_name$|citizen(?:_|$))")
+PII_FIELD_PATTERN = re.compile(
+    r"^(student(?:_|$)|first_name$|last_name$|full_name$|citizen(?:_|$)|name$|.*_name$)"
+)
 
 
 def _normalize_key(key: str) -> str:
