@@ -78,7 +78,7 @@ TelemetryEvent = Annotated[
     Field(discriminator="event"),
 ]
 
-TELEMETRY_EVENT_ADAPTER = TypeAdapter(TelemetryEvent)
+TELEMETRY_EVENT_ADAPTER: TypeAdapter[TelemetryEvent] = TypeAdapter(TelemetryEvent)
 
 
 @dataclass(frozen=True)
@@ -97,6 +97,8 @@ class TelemetryStore:
                 """,
                 (json.dumps(payload, ensure_ascii=False), utc_now()),
             )
+            if cursor.lastrowid is None:
+                raise RuntimeError("TELEMETRY_QUEUE_INSERT_FAILED")
             return int(cursor.lastrowid)
 
     def peek_batch(self, limit: int = 20) -> list[QueuedTelemetryEvent]:

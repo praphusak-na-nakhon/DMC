@@ -6,12 +6,17 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, TypeAlias
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import pandas as pd
-from playwright.sync_api import Error, TimeoutError, sync_playwright
+from playwright.sync_api import Error, Locator, Page, TimeoutError, sync_playwright
 from rapidfuzz import fuzz
+
+
+LevelRule: TypeAlias = dict[str, str | int | bool | None]
+RowInfo: TypeAlias = dict[str, Any]
+FillResult: TypeAlias = dict[str, Any]
 
 
 TARGET_URL_TEMPLATE = (
@@ -28,7 +33,7 @@ REPORT_JSON = Path("obec-fill-report.json")
 REPORT_CSV = Path("obec-fill-report.csv")
 REVIEW_CSV = Path("obec-fill-review.csv")
 
-LEVEL_RULES = {
+LEVEL_RULES: dict[str, LevelRule] = {
     "ม.3": {
         "level_code": "12",
         "default_missing_code": "207",
@@ -43,7 +48,7 @@ LEVEL_RULES = {
     },
 }
 
-STATUS_CODE_MAP = {
+STATUS_CODE_MAP: dict[str, str] = {
     "(ม.3) ศึกษาต่อ ม.4 โรงเรียนเดิม": "201",
     "(ม.3) ศึกษาต่อ ม.4 โรงเรียนอื่น ในจังหวัดเดิม": "202",
     "(ม.3) ศึกษาต่อ ม.4 โรงเรียนอื่น ในต่างจังหวัด": "203",
@@ -126,25 +131,24 @@ def normalize_digits(text: str) -> str:
 
 def normalize_name(text: str) -> str:
     text = normalize_text(text)
+    thai_mark_translation: dict[str, str | int | None] = {
+        "\u0E4D": "",
+        "\u0E4C": "",
+        "\u0E47": "",
+        "\u0E31": "",
+        "\u0E34": "",
+        "\u0E35": "",
+        "\u0E36": "",
+        "\u0E37": "",
+        "\u0E38": "",
+        "\u0E39": "",
+        "\u0E48": "",
+        "\u0E49": "",
+        "\u0E4A": "",
+        "\u0E4B": "",
+    }
     text = text.translate(
-        str.maketrans(
-            {
-                "\u0E4D": "",
-                "\u0E4C": "",
-                "\u0E47": "",
-                "\u0E31": "",
-                "\u0E34": "",
-                "\u0E35": "",
-                "\u0E36": "",
-                "\u0E37": "",
-                "\u0E38": "",
-                "\u0E39": "",
-                "\u0E48": "",
-                "\u0E49": "",
-                "\u0E4A": "",
-                "\u0E4B": "",
-            }
-        )
+        str.maketrans(thai_mark_translation)
     )
     return text
 
@@ -261,11 +265,11 @@ def wait_for_user_ready(level_label: str) -> None:
     input("Press Enter after login is complete: ")
 
 
-def wait_for_student_table(page) -> None:
+def wait_for_student_table(page: Page) -> None:
     page.wait_for_selector("tr[id^='tr-']", timeout=60000)
 
 
-def open_target_page_after_login(page, target_url: str) -> None:
+def open_target_page_after_login(page: Page, target_url: str) -> None:
     last_error: Error | None = None
 
     for _ in range(4):
@@ -288,7 +292,7 @@ def open_target_page_after_login(page, target_url: str) -> None:
         raise last_error
 
 
-def get_current_page_number(page) -> int:
+def get_current_page_number(page: Page) -> int:
     active = page.locator("div.pagination li.active a")
     if active.count():
         text = active.first.inner_text().strip()
@@ -303,7 +307,7 @@ def get_current_page_number(page) -> int:
     return 1
 
 
-def get_total_pages(page) -> int:
+def get_total_pages(page: Page) -> int:
     links = page.locator("div.pagination li a")
     max_page = 1
     for idx in range(links.count()):
@@ -325,11 +329,11 @@ def get_page_url(base_url: str, page_number: int) -> str:
     return set_query_param(base_url, "page.page", str(page_number))
 
 
-def find_row_select(row):
+def find_row_select(row: Locator) -> Locator:
     return row.locator("select[name$='.studyTypeCode']").first
 
 
-def extract_row_info(row) -> dict | None:
+def extract_row_info(row: Locator) -> RowInfo | None:
     row_id = row.get_attribute("id") or ""
     cells = row.locator("td")
     if not row_id.startswith("tr-") or cells.count() < 11:
@@ -363,7 +367,7 @@ def extract_row_info(row) -> dict | None:
     }
 
 
-def score_match(row_info: dict, student: SourceStudent) -> int:
+def score_match(row_info: RowInfo, student: SourceStudent) -> int:
     room_bonus = 0
     if (
         student.room is not None
@@ -394,7 +398,7 @@ def score_match(row_info: dict, student: SourceStudent) -> int:
 
 
 def choose_best_match(
-    row_info: dict,
+    row_info: RowInfo,
     students: list[SourceStudent],
     used_orders: set[int],
 ) -> tuple[SourceStudent | None, int]:
@@ -428,8 +432,8 @@ def choose_best_match(
     return scored[0][1], scored[0][0]
 
 
-def option_exists(select_locator, value: str) -> bool:
-    return select_locator.locator(f"option[value='{value}']").count() > 0
+def option_exists(select_locator: Locator, value: str) -> bool:
+    return bool(select_locator.locator(f"option[value='{value}']").count() > 0)
 
 
 def needs_review(note: str) -> bool:
@@ -441,7 +445,7 @@ def needs_review(note: str) -> bool:
 
 
 def fill_current_page(
-    page,
+    page: Page,
     students: list[SourceStudent],
     used_orders: set[int],
     min_score: int,
@@ -449,13 +453,17 @@ def fill_current_page(
     stop_on_review: bool,
     level_label: str,
     before_row: Callable[[], None] | None = None,
-    after_row: Callable[[dict], None] | None = None,
-) -> tuple[list[dict], dict | None]:
+    after_row: Callable[[FillResult], None] | None = None,
+) -> tuple[list[FillResult], FillResult | None]:
     rows = page.locator("tr[id^='tr-']")
     page_number = get_current_page_number(page)
-    results: list[dict] = []
-    stop_item: dict | None = None
+    results: list[FillResult] = []
+    stop_item: FillResult | None = None
     rules = LEVEL_RULES[level_label]
+    default_missing_code = rules["default_missing_code"]
+    require_exact_student_no = bool(rules["require_exact_student_no"])
+    ambiguity_floor_value = rules["ambiguity_floor"]
+    ambiguity_floor = ambiguity_floor_value if isinstance(ambiguity_floor_value, int) else None
 
     for idx in range(rows.count()):
         row = rows.nth(idx)
@@ -466,7 +474,7 @@ def fill_current_page(
             # Hook after row extraction so progress/cancel checks only apply to usable rows.
             before_row()
 
-        if rules["require_exact_student_no"] and row_info["student_no"]:
+        if require_exact_student_no and row_info["student_no"]:
             exact_student = next(
                 (
                     item
@@ -477,7 +485,7 @@ def fill_current_page(
                 None,
             )
             if exact_student is None:
-                result = {
+                result: FillResult = {
                     "page": page_number,
                     "level": level_label,
                     "portal_row_index": row_info["row_index"],
@@ -490,13 +498,14 @@ def fill_current_page(
                     "matched_student_no": None,
                     "matched_name": None,
                     "matched_status_text": None,
-                    "matched_status_code": rules["default_missing_code"],
+                    "matched_status_code": default_missing_code,
                     "score": 0,
                     "applied": False,
                     "note": "",
                 }
                 if not dry_run:
-                    row_info["select"].select_option(value=rules["default_missing_code"])
+                    if isinstance(default_missing_code, str):
+                        row_info["select"].select_option(value=default_missing_code)
                     page.wait_for_timeout(80)
                 result["applied"] = not dry_run
                 result["note"] = "default_missing_dry_run" if dry_run else "default_missing_filled"
@@ -526,11 +535,11 @@ def fill_current_page(
         }
 
         if not student:
-            if rules["default_missing_code"]:
+            if isinstance(default_missing_code, str) and default_missing_code:
                 if not dry_run:
-                    row_info["select"].select_option(value=rules["default_missing_code"])
+                    row_info["select"].select_option(value=default_missing_code)
                     page.wait_for_timeout(80)
-                result["matched_status_code"] = rules["default_missing_code"]
+                result["matched_status_code"] = default_missing_code
                 result["applied"] = not dry_run
                 result["note"] = "default_missing_dry_run" if dry_run else "default_missing_filled"
                 results.append(result)
@@ -548,16 +557,16 @@ def fill_current_page(
             continue
 
         if score < min_score:
-            ambiguity_floor = rules["ambiguity_floor"]
             if (
-                rules["default_missing_code"]
+                isinstance(default_missing_code, str)
+                and default_missing_code
                 and ambiguity_floor is not None
                 and score < ambiguity_floor
             ):
                 if not dry_run:
-                    row_info["select"].select_option(value=rules["default_missing_code"])
+                    row_info["select"].select_option(value=default_missing_code)
                     page.wait_for_timeout(80)
-                result["matched_status_code"] = rules["default_missing_code"]
+                result["matched_status_code"] = default_missing_code
                 result["applied"] = not dry_run
                 result["note"] = "default_missing_dry_run" if dry_run else "default_missing_filled"
                 results.append(result)
@@ -608,7 +617,7 @@ def fill_current_page(
     return results, stop_item
 
 
-def save_current_page(page) -> None:
+def save_current_page(page: Page) -> None:
     save_button = page.locator(
         "form.form-horizontal.form-condensed button[name='action'][value='confirm']"
     ).first
@@ -624,13 +633,13 @@ def save_current_page(page) -> None:
     page.wait_for_timeout(1200)
 
 
-def goto_page_number(page, page_number: int, base_url: str) -> None:
+def goto_page_number(page: Page, page_number: int, base_url: str) -> None:
     page.goto(get_page_url(base_url, page_number), wait_until="domcontentloaded", timeout=90000)
     wait_for_student_table(page)
     page.wait_for_timeout(500)
 
 
-def print_summary(results: list[dict], min_score: int) -> None:
+def print_summary(results: list[FillResult], min_score: int) -> None:
     total_rows = len(results)
     filled = sum(1 for item in results if item["note"] == "filled")
     dry_run_rows = sum(1 for item in results if item["note"] == "dry_run")
@@ -671,7 +680,7 @@ def print_summary(results: list[dict], min_score: int) -> None:
 
 
 def save_reports(
-    results: list[dict],
+    results: list[FillResult],
     report_json: Path | None = None,
     report_csv: Path | None = None,
     review_csv: Path | None = None,
@@ -694,7 +703,7 @@ def save_reports(
 
 
 def run(
-    page,
+    page: Page,
     students: list[SourceStudent],
     min_score: int,
     dry_run: bool,
@@ -702,7 +711,7 @@ def run(
     stop_on_review: bool,
     level_label: str,
     base_url: str,
-) -> tuple[list[dict], dict | None]:
+    ) -> tuple[list[FillResult], FillResult | None]:
     wait_for_student_table(page)
     if not resume_current:
         print("navigating to page 1 ...")
@@ -711,8 +720,8 @@ def run(
     start_page = get_current_page_number(page)
     total_pages = get_total_pages(page)
     used_orders: set[int] = set()
-    all_results: list[dict] = []
-    stopped_item: dict | None = None
+    all_results: list[FillResult] = []
+    stopped_item: FillResult | None = None
 
     print(f"start page: {start_page}")
     print(f"total pages: {total_pages}")
@@ -824,7 +833,7 @@ def main() -> int:
     print(f"final file: {final_file}")
     students, level_label = load_source_data(final_file)
     level_rules = LEVEL_RULES[level_label]
-    base_url = build_target_url(level_rules["level_code"])
+    base_url = build_target_url(str(level_rules["level_code"]))
     PROFILE_DIR.mkdir(exist_ok=True)
 
     with sync_playwright() as playwright:

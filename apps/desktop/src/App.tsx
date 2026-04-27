@@ -31,7 +31,7 @@ import {
   cancelJob,
   getJobStatus,
 } from "./lib/rpcClient";
-import { buildDraftJob, buildJobId, buildTimestampSlug, cardStyle } from "./lib/appUi";
+import { buildDraftJob, buildJobId, buildSupportDiagnostics, buildTimestampSlug, cardStyle } from "./lib/appUi";
 import { useJobStatusReconciliation } from "./hooks/useJobStatusReconciliation";
 import { usePeriodicLicenseHeartbeat } from "./hooks/usePeriodicLicenseHeartbeat";
 import { useJobStore } from "./stores/useJobStore";
@@ -88,6 +88,7 @@ export function App() {
   const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
   const [licenseKey, setLicenseKey] = useState("");
   const [deviceName, setDeviceName] = useState("dmc-desktop");
+  const [validatedExcelPath, setValidatedExcelPath] = useState<string | null>(null);
   const [isActivatingLicense, setIsActivatingLicense] = useState(false);
   const [browserRuntimeStatus, setBrowserRuntimeStatus] = useState<BrowserRuntimeStatus | null>(null);
   const [databaseStatus, setDatabaseStatus] = useState<DatabaseStatus | null>(null);
@@ -109,6 +110,8 @@ export function App() {
 
   const licenseBlocksStart = licenseStatus !== null && !licenseStatus.can_start_jobs;
   const browserRuntimeBlocksStart = browserRuntimeStatus !== null && !browserRuntimeStatus.installed;
+  const validationBlocksStart =
+    !preview || preview.rows_accepted <= 0 || validatedExcelPath !== excelPath.trim();
 
   const describeLicenseStatus = useCallback((status: LicenseStatus): string => {
     if (!status.configured) {
@@ -154,8 +157,8 @@ export function App() {
       setModuleConfigStatus(status);
       pushSidecarMessage(
         status.updated
-          ? `config graduation เธญเธฑเธเน€เธ”เธ•เน€เธเนเธ ${status.version} เนเธฅเนเธง`
-          : `config graduation เนเธเนเธเธฒเธเน€เธงเธญเธฃเนเธเธฑเธ ${status.version} (${status.source})`,
+          ? `config graduation อัปเดตเป็น ${status.version} แล้ว`
+          : `config graduation ใช้งานเวอร์ชัน ${status.version} (${status.source})`,
       );
       if (status.last_error) {
         pushSidecarMessage(`config fallback: ${status.last_error}`);
@@ -295,22 +298,21 @@ export function App() {
       if (!outputPath) {
         return;
       }
-      const diagnostics = {
-        exported_at: new Date().toISOString(),
-        app_version: updaterStatus?.current_version ?? "0.1.0",
+      const diagnostics = buildSupportDiagnostics({
+        appVersion: updaterStatus?.current_version ?? "0.1.0",
         platform: typeof navigator !== "undefined" ? navigator.userAgent : "unknown",
-        connection_state: connectionState,
-        database_status: databaseStatus,
-        license_status: licenseStatus,
-        module_config_status: moduleConfigStatus,
-        browser_runtime_status: browserRuntimeStatus,
-        updater_status: updaterStatus,
-        available_update: availableUpdate,
-        current_job: currentJob,
-        existing_jobs: existingJobs,
-        sidecar_messages: sidecarMessages,
-        error_message: errorMessage,
-      };
+        connectionState,
+        databaseStatus,
+        licenseStatus,
+        moduleConfigStatus,
+        browserRuntimeStatus,
+        updaterStatus,
+        availableUpdate,
+        currentJob,
+        existingJobs,
+        sidecarMessageCount: sidecarMessages.length,
+        hasErrorMessage: Boolean(errorMessage),
+      });
       await writeTextFile(outputPath, JSON.stringify(diagnostics, null, 2));
       setSupportMessage(`diagnostics exported: ${outputPath}`);
       pushSidecarMessage(`diagnostics exported: ${outputPath}`);
@@ -356,16 +358,16 @@ export function App() {
               downloaded: event.downloaded,
               contentLength: event.contentLength,
             });
-            setUpdateMessage("เธเธณเธฅเธฑเธเธ”เธฒเธงเธเนเนเธซเธฅเธ”เธญเธฑเธเน€เธ”เธ•...");
+            setUpdateMessage("กำลังดาวน์โหลดอัปเดต...");
             return;
           }
           if (event.type === "finished") {
-            setUpdateMessage("เธ”เธฒเธงเธเนเนเธซเธฅเธ”เธญเธฑเธเน€เธ”เธ•เน€เธชเธฃเนเธเนเธฅเนเธง เธเธณเธฅเธฑเธเธ•เธดเธ”เธ•เธฑเนเธ...");
+            setUpdateMessage("ดาวน์โหลดอัปเดตเสร็จแล้ว กำลังติดตั้ง...");
             return;
           }
           if (event.type === "installed") {
             setIsInstallingUpdate(false);
-            setUpdateMessage("เธ•เธดเธ”เธ•เธฑเนเธเธญเธฑเธเน€เธ”เธ•เน€เธชเธฃเนเธเนเธฅเนเธง เธเธฃเธธเธ“เธฒเธเธดเธ”เนเธฅเนเธงเน€เธเธดเธ”เนเธญเธเนเธซเธกเน");
+            setUpdateMessage("ติดตั้งอัปเดตเสร็จแล้ว กรุณาปิดแล้วเปิดแอปใหม่");
             return;
           }
           if (event.type === "error") {
@@ -436,6 +438,8 @@ export function App() {
       const selected = await openExcelDialog();
       if (selected) {
         setExcelPath(selected);
+        setPreview(null);
+        setValidatedExcelPath(null);
         setErrorMessage(null);
       }
     } catch (error) {
@@ -445,7 +449,7 @@ export function App() {
 
   async function handleValidate() {
     if (!excelPath.trim()) {
-      setErrorMessage("เธเธฃเธธเธ“เธฒเธฃเธฐเธเธธเธเธฒเธเนเธเธฅเน Excel เธเนเธญเธ");
+      setErrorMessage("กรุณาระบุพาธไฟล์ Excel ก่อน");
       return;
     }
 
@@ -454,7 +458,8 @@ export function App() {
     try {
       const response = await validateExcel(excelPath.trim());
       setPreview(response);
-      pushSidecarMessage(`validate_excel เธชเธณเน€เธฃเนเธ: ${response.rows_accepted}/${response.rows_total}`);
+      setValidatedExcelPath(excelPath.trim());
+      pushSidecarMessage(`validate_excel สำเร็จ: ${response.rows_accepted}/${response.rows_total}`);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -464,7 +469,12 @@ export function App() {
 
   async function handleStart(dryRun: boolean) {
     if (!excelPath.trim()) {
-      setErrorMessage("เธเธฃเธธเธ“เธฒเธฃเธฐเธเธธเธเธฒเธเนเธเธฅเน Excel เธเนเธญเธ");
+      setErrorMessage("กรุณาระบุพาธไฟล์ Excel ก่อน");
+      return;
+    }
+
+    if (validationBlocksStart) {
+      setErrorMessage("กรุณาตรวจไฟล์ Excel ให้ผ่านก่อนเริ่มงาน");
       return;
     }
 
@@ -493,7 +503,7 @@ export function App() {
       setActiveJobId(result.job_id);
       setCurrentJob(draft);
       upsertExistingJob(draft);
-      pushSidecarMessage(`${dryRun ? "เน€เธฃเธดเนเธก dry run" : "เน€เธฃเธดเนเธกเธเธฒเธเธเธฃเธดเธ"} เนเธฅเนเธง: ${result.job_id}`);
+      pushSidecarMessage(`${dryRun ? "เริ่ม dry run" : "เริ่มงานจริง"} แล้ว: ${result.job_id}`);
       await handleLoadJobs();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -541,7 +551,7 @@ export function App() {
     }
     try {
       await resumeJob(activeJobId);
-      pushSidecarMessage(`resume_job เธชเนเธเนเธฅเนเธง: ${activeJobId}`);
+      pushSidecarMessage(`resume_job ส่งแล้ว: ${activeJobId}`);
       const status = await getJobStatus(activeJobId);
       setCurrentJob(status);
       upsertExistingJob(status);
@@ -560,7 +570,7 @@ export function App() {
         setCurrentJob(job);
         upsertExistingJob({ ...job, status: "running" });
         setExcelPath(job.source_file);
-        pushSidecarMessage(`เธเธฅเธฑเธเธกเธฒเธ—เธณเธเธฒเธ ${job.job_id} เธ•เนเธญเนเธฅเนเธง`);
+        pushSidecarMessage(`กลับมาทำงาน ${job.job_id} ต่อแล้ว`);
       }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -585,6 +595,9 @@ export function App() {
 
   async function handleCancel() {
     if (!activeJobId) {
+      return;
+    }
+    if (typeof window !== "undefined" && !window.confirm("ยืนยันยกเลิกงานนี้?")) {
       return;
     }
     try {
@@ -612,7 +625,7 @@ export function App() {
 
   async function handleActivateLicense() {
     if (!licenseKey.trim()) {
-      setErrorMessage("เธเธฃเธธเธ“เธฒเธเธฃเธญเธ license key เธเนเธญเธ");
+      setErrorMessage("กรุณากรอก license key ก่อน");
       return;
     }
 
@@ -626,7 +639,7 @@ export function App() {
         appVersion,
       });
       setLicenseStatus(status);
-      pushSidecarMessage(`activate_license เธชเธณเน€เธฃเนเธ: ${status.status}`);
+      pushSidecarMessage(`activate_license สำเร็จ: ${status.status}`);
       await handleRefreshLicense(true);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -643,12 +656,12 @@ export function App() {
       setUpdaterStatus(status);
       if (!status.configured) {
         setAvailableUpdate(null);
-        setUpdateMessage("เธขเธฑเธเนเธกเนเนเธ”เนเธ•เธฑเนเธเธเนเธฒ updater endpoint/public key");
+        setUpdateMessage("ยังไม่ได้ตั้งค่า updater endpoint/public key");
         return;
       }
       const update = await checkForAppUpdate();
       setAvailableUpdate(update);
-      setUpdateMessage(update ? `เธเธเน€เธงเธญเธฃเนเธเธฑเธเนเธซเธกเน ${update.version}` : "เธขเธฑเธเนเธกเนเธกเธตเธญเธฑเธเน€เธ”เธ•เนเธซเธกเน");
+      setUpdateMessage(update ? `พบเวอร์ชันใหม่ ${update.version}` : "ยังไม่มีอัปเดตใหม่");
     } catch (error) {
       setUpdateMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -719,9 +732,14 @@ export function App() {
           isInstallingUpdate={isInstallingUpdate}
           licenseBlocksStart={licenseBlocksStart}
           browserRuntimeBlocksStart={browserRuntimeBlocksStart}
+          validationBlocksStart={validationBlocksStart}
           onLicenseKeyChange={setLicenseKey}
           onDeviceNameChange={setDeviceName}
-          onExcelPathChange={setExcelPath}
+          onExcelPathChange={(value) => {
+            setExcelPath(value);
+            setPreview(null);
+            setValidatedExcelPath(null);
+          }}
           onMinScoreChange={setMinScore}
           onStopOnReviewChange={setStopOnReview}
           onConnect={() => void handleConnect()}

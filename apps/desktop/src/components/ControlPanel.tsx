@@ -49,6 +49,7 @@ type ControlPanelProps = {
   isInstallingUpdate: boolean;
   licenseBlocksStart: boolean;
   browserRuntimeBlocksStart: boolean;
+  validationBlocksStart: boolean;
   onLicenseKeyChange: (value: string) => void;
   onDeviceNameChange: (value: string) => void;
   onExcelPathChange: (value: string) => void;
@@ -103,6 +104,7 @@ export function ControlPanel({
   isInstallingUpdate,
   licenseBlocksStart,
   browserRuntimeBlocksStart,
+  validationBlocksStart,
   onLicenseKeyChange,
   onDeviceNameChange,
   onExcelPathChange,
@@ -200,8 +202,8 @@ export function ControlPanel({
             <div style={{ fontWeight: 700 }}>License Activation</div>
             <div style={{ color: "rgb(51, 65, 85)" }}>
               {licenseStatus?.configured
-                ? "เน€เธเธฃเธทเนเธญเธเธเธตเน activate license เนเธฅเนเธง"
-                : "เธ–เนเธฒเธกเธต cloud เนเธฅเนเธง เธขเธฑเธเนเธกเน activate เธเธฐเน€เธฃเธดเนเธก job เนเธซเธกเนเนเธกเนเนเธ”เน"}
+                ? "เครื่องนี้ activate license แล้ว"
+                : "ถ้ามี cloud แล้ว ยังไม่ activate จะเริ่ม job ใหม่ไม่ได้"}
             </div>
             <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
               <input
@@ -299,14 +301,26 @@ export function ControlPanel({
             </button>
             <button
               style={buttonStyle}
-              disabled={isStartingJob || isBootstrappingBrowser || licenseBlocksStart || browserRuntimeBlocksStart}
+              disabled={
+                isStartingJob ||
+                isBootstrappingBrowser ||
+                licenseBlocksStart ||
+                browserRuntimeBlocksStart ||
+                validationBlocksStart
+              }
               onClick={onStartDryRun}
             >
               {messages.app.startDryRun}
             </button>
             <button
               style={{ ...buttonStyle, backgroundColor: "rgb(22, 163, 74)" }}
-              disabled={isStartingJob || isBootstrappingBrowser || licenseBlocksStart || browserRuntimeBlocksStart}
+              disabled={
+                isStartingJob ||
+                isBootstrappingBrowser ||
+                licenseBlocksStart ||
+                browserRuntimeBlocksStart ||
+                validationBlocksStart
+              }
               onClick={onStartLive}
             >
               {messages.app.startLive}
@@ -369,6 +383,11 @@ export function ControlPanel({
           </div>
 
           <p style={{ margin: 0, color: "rgb(71, 85, 105)" }}>{messages.app.dryRunHint}</p>
+          {validationBlocksStart ? (
+            <p style={{ margin: 0, color: "rgb(180, 83, 9)", fontWeight: 600 }}>
+              กรุณาตรวจไฟล์ Excel ให้ผ่านก่อนเริ่มงาน และตรวจใหม่ทุกครั้งหลังเปลี่ยนไฟล์
+            </p>
+          ) : null}
           <p style={{ margin: 0, color: "rgb(180, 83, 9)" }}>{messages.app.authHint}</p>
 
           {licenseStatus ? (
@@ -395,6 +414,11 @@ export function ControlPanel({
               {licenseStatus.last_error ? (
                 <div>
                   {messages.app.license.lastError}: {licenseStatus.last_error}
+                </div>
+              ) : null}
+              {licenseStatus.offline_mode && licenseStatus.within_offline_grace ? (
+                <div style={{ fontWeight: 700 }}>
+                  อยู่ใน offline grace mode เริ่มงานได้ถึง {formatTimestamp(licenseStatus.offline_grace_until)}
                 </div>
               ) : null}
             </div>
@@ -494,7 +518,7 @@ export function ControlPanel({
                   <div style={{ fontWeight: 700 }}>Installer plan</div>
                   {browserRuntimeStatus.required_components.map((component) => (
                     <div key={`${component.name}-${component.install_location}`}>
-                      {component.name} โ€ข {formatBytes(component.download_bytes)}
+                      {component.name} • {formatBytes(component.download_bytes)}
                     </div>
                   ))}
                 </div>
@@ -545,9 +569,9 @@ export function ControlPanel({
             }}
           >
             <div style={{ fontWeight: 700 }}>App Updates</div>
-            <div>เน€เธงเธญเธฃเนเธเธฑเธเธเธฑเธเธเธธเธเธฑเธ: {updaterStatus?.current_version ?? "-"}</div>
+            <div>เวอร์ชันปัจจุบัน: {updaterStatus?.current_version ?? "-"}</div>
             <div>
-              เธชเธ–เธฒเธเธฐ updater: {updaterStatus?.configured ? "เธเธฃเนเธญเธกเนเธเนเธเธฒเธ" : "เธขเธฑเธเนเธกเนเธ•เธฑเนเธเธเนเธฒ"}
+              สถานะ updater: {updaterStatus?.configured ? "พร้อมใช้งาน" : "ยังไม่ตั้งค่า"}
             </div>
             <div>Endpoint: {updaterStatus?.endpoint ?? "-"}</div>
             <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
@@ -556,26 +580,26 @@ export function ControlPanel({
                 disabled={isCheckingUpdate}
                 onClick={onCheckForUpdates}
               >
-                เน€เธเนเธเธญเธฑเธเน€เธ”เธ•
+                เช็กอัปเดต
               </button>
               <button
                 style={{ ...buttonStyle, backgroundColor: "rgb(124, 58, 237)" }}
                 disabled={!availableUpdate || isInstallingUpdate}
                 onClick={onInstallUpdate}
               >
-                เธ•เธดเธ”เธ•เธฑเนเธเธญเธฑเธเน€เธ”เธ•
+                ติดตั้งอัปเดต
               </button>
             </div>
             {availableUpdate ? (
               <div style={{ color: "rgb(51, 65, 85)", lineHeight: 1.6 }}>
-                <div>เธเธเน€เธงเธญเธฃเนเธเธฑเธเนเธซเธกเน: {availableUpdate.version}</div>
-                <div>เน€เธเธขเนเธเธฃเนเน€เธกเธทเนเธญ: {formatTimestamp(availableUpdate.date)}</div>
-                <div>เธฃเธฒเธขเธฅเธฐเน€เธญเธตเธขเธ”: {availableUpdate.body ?? "-"}</div>
+                <div>พบเวอร์ชันใหม่: {availableUpdate.version}</div>
+                <div>เผยแพร่เมื่อ: {formatTimestamp(availableUpdate.date)}</div>
+                <div>รายละเอียด: {availableUpdate.body ?? "-"}</div>
               </div>
             ) : null}
             {updateProgress ? (
               <div style={{ color: "rgb(51, 65, 85)" }}>
-                เธ”เธฒเธงเธเนเนเธซเธฅเธ”เนเธฅเนเธง {updateProgress.downloaded}
+                ดาวน์โหลดแล้ว {updateProgress.downloaded}
                 {updateProgress.contentLength ? ` / ${updateProgress.contentLength}` : ""} bytes
               </div>
             ) : null}

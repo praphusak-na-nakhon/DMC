@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Protocol, TypeVar, cast
 
 import pandas as pd
+from playwright.sync_api import Page, sync_playwright
 
 from ..checkpoint import JobCheckpoint
 from ..config import profile_dir_for_license, reports_dir
@@ -14,6 +15,17 @@ from .base import AutomationModule
 from . import graduation_legacy
 
 T = TypeVar("T")
+
+
+class GraduationLegacyModule(Protocol):
+    LOGIN_URL: str
+    TARGET_URL_TEMPLATE: str
+    LEVEL_RULES: dict[str, graduation_legacy.LevelRule]
+    STATUS_CODE_MAP: dict[str, str]
+
+    def open_target_page_after_login(self, page: Page, target_url: str) -> None: ...
+
+    def wait_for_student_table(self, page: Page) -> None: ...
 
 
 class GraduationModule(AutomationModule):
@@ -78,7 +90,7 @@ class GraduationModule(AutomationModule):
             )
         students, level_label = legacy.load_source_data(excel_path)
         level_rules = legacy.LEVEL_RULES[level_label]
-        base_url = legacy.build_target_url(level_rules["level_code"])
+        base_url = legacy.build_target_url(str(level_rules["level_code"]))
 
         checkpoint = context.job_store.load_checkpoint(job_id)
         if checkpoint is None:
@@ -115,10 +127,10 @@ class GraduationModule(AutomationModule):
         report_csv = report_dir / "obec-fill-report.csv"
         review_csv = report_dir / "obec-fill-review.csv"
 
-        with legacy.sync_playwright() as playwright:
+        with sync_playwright() as playwright:
             browser_context = playwright.chromium.launch_persistent_context(
                 user_data_dir=str(profile_dir.resolve()),
-                headless=False,
+                headless=bool(options.get("headless", False)),
                 viewport={"width": 1600, "height": 1000},
             )
             try:
@@ -174,7 +186,7 @@ class GraduationModule(AutomationModule):
                             page=page,
                             students=students,
                             used_orders=set(checkpoint.used_orders),
-                            min_score=int(options.get("min_score", 72)),
+                            min_score=self._int_option(options, "min_score", 72),
                             dry_run=bool(options.get("dry_run", False)),
                             stop_on_review=bool(options.get("stop_on_review", False)),
                             level_label=level_label,
@@ -261,7 +273,7 @@ class GraduationModule(AutomationModule):
             finally:
                 browser_context.close()
 
-    def _apply_module_config(self, legacy: ModuleType, module_config: dict[str, Any]) -> None:
+    def _apply_module_config(self, legacy: GraduationLegacyModule, module_config: dict[str, Any]) -> None:
         login_url = module_config.get("login_url")
         target_url_template = module_config.get("target_url_template")
         level_rules = module_config.get("level_rules")
@@ -272,7 +284,7 @@ class GraduationModule(AutomationModule):
         if isinstance(target_url_template, str) and target_url_template.strip():
             legacy.TARGET_URL_TEMPLATE = target_url_template.strip()
         if isinstance(level_rules, dict):
-            legacy.LEVEL_RULES = level_rules
+            legacy.LEVEL_RULES = cast(dict[str, graduation_legacy.LevelRule], level_rules)
         if isinstance(status_code_map, dict):
             legacy.STATUS_CODE_MAP = {
                 str(key): str(value)
@@ -282,8 +294,8 @@ class GraduationModule(AutomationModule):
     def _authenticate_and_open(
         self,
         *,
-        page,
-        legacy,
+        page: Page,
+        legacy: GraduationLegacyModule,
         target_url: str,
         context: JobContext,
         checkpoint: JobCheckpoint,
@@ -313,8 +325,8 @@ class GraduationModule(AutomationModule):
     def _ensure_authenticated_page(
         self,
         *,
-        page,
-        legacy,
+        page: Page,
+        legacy: GraduationLegacyModule,
         target_url: str,
         context: JobContext,
         checkpoint: JobCheckpoint,
@@ -337,8 +349,8 @@ class GraduationModule(AutomationModule):
     def _run_with_auth_recovery(
         self,
         *,
-        page,
-        legacy,
+        page: Page,
+        legacy: GraduationLegacyModule,
         target_url: str,
         context: JobContext,
         checkpoint: JobCheckpoint,
@@ -379,7 +391,11 @@ class GraduationModule(AutomationModule):
 
             return result
 
-    def _merge_used_orders(self, used_orders: list[int], page_results: list[dict[str, Any]]) -> list[int]:
+    def _merge_used_orders(
+        self,
+        used_orders: list[int],
+        page_results: list[dict[str, Any]],
+    ) -> list[int]:
         merged = set(used_orders)
         merged.update(
             int(item["matched_order"])
@@ -388,7 +404,7 @@ class GraduationModule(AutomationModule):
         )
         return sorted(merged)
 
-    def _handle_row_result(self, result: dict, context: JobContext) -> None:
+    def _handle_row_result(self, result: dict[str, Any], context: JobContext) -> None:
         context.snapshot.processed += 1
         status = "success"
         note = str(result.get("note", ""))
@@ -406,3 +422,13 @@ class GraduationModule(AutomationModule):
 
         context.emit_record_done(int(result["portal_row_index"]), status)
         context.emit_progress()
+
+    def _int_option(self, options: dict[str, object], key: str, default: int) -> int:
+        value = options.get(key, default)
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.strip().isdigit():
+            return int(value)
+        return default

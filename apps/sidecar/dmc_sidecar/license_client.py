@@ -119,6 +119,12 @@ def activate_license(
         with urlopen(request, timeout=timeout_sec) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
+        if exc.code == 404:
+            raise DomainError("LICENSE_NOT_FOUND") from exc
+        if exc.code == 409:
+            raise DomainError("DEVICE_LIMIT_EXCEEDED") from exc
+        if exc.code == 410:
+            raise DomainError("LICENSE_EXPIRED") from exc
         if exc.code == 402:
             raise DomainError("NEED_RENEWAL") from exc
         if exc.code == 403:

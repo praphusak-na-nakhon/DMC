@@ -38,8 +38,9 @@ jobs:
 
       - name: Install cloud and sidecar test dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e .\apps\cloud[dev] -e .\apps\sidecar[dev]
+          python -m venv .venv
+          .\.venv\Scripts\python -m pip install --upgrade pip
+          .\.venv\Scripts\python -m pip install -e .\apps\cloud[dev] -e .\apps\sidecar[dev]
 
       - name: Desktop TypeScript
         run: pnpm run desktop:typecheck
@@ -49,6 +50,9 @@ jobs:
 
       - name: Desktop Cargo Check
         run: pnpm run desktop:cargo-check
+
+      - name: Sidecar Typecheck
+        run: pnpm run sidecar:typecheck
 
       - name: Sidecar Tests
         run: pnpm run sidecar:test

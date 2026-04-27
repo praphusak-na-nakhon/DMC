@@ -1,5 +1,13 @@
 import type { CSSProperties } from "react";
-import type { JobStatusSnapshot } from "../types/contracts";
+import type {
+  AvailableUpdate,
+  BrowserRuntimeStatus,
+  DatabaseStatus,
+  JobStatusSnapshot,
+  LicenseStatus,
+  ModuleConfigStatus,
+  UpdaterStatus,
+} from "../types/contracts";
 
 export function formatSummary(template: string, accepted: number, total: number): string {
   return template.replace("{accepted}", String(accepted)).replace("{total}", String(total));
@@ -106,5 +114,89 @@ export function buildDraftJob(
     started_at: null,
     finished_at: null,
     level_label: null,
+  };
+}
+
+type DiagnosticsInput = {
+  appVersion: string;
+  platform: string;
+  connectionState: string;
+  databaseStatus: DatabaseStatus | null;
+  licenseStatus: LicenseStatus | null;
+  moduleConfigStatus: ModuleConfigStatus | null;
+  browserRuntimeStatus: BrowserRuntimeStatus | null;
+  updaterStatus: UpdaterStatus | null;
+  availableUpdate: AvailableUpdate | null;
+  currentJob: JobStatusSnapshot | null;
+  existingJobs: JobStatusSnapshot[];
+  sidecarMessageCount: number;
+  hasErrorMessage: boolean;
+};
+
+function sanitizeJobForDiagnostics(job: JobStatusSnapshot | null): Record<string, unknown> | null {
+  if (!job) {
+    return null;
+  }
+  return {
+    job_id: job.job_id,
+    module: job.module,
+    status: job.status,
+    processed: job.processed,
+    total: job.total,
+    succeeded: job.succeeded,
+    failed: job.failed,
+    current_page: job.current_page,
+    needs_auth: job.needs_auth,
+    auth_reason: job.auth_reason,
+    started_at: job.started_at,
+    finished_at: job.finished_at,
+    level_label: job.level_label,
+    has_report_path: Boolean(job.report_path),
+    has_review_report_path: Boolean(job.review_report_path),
+    has_stopped_item: Boolean(job.stopped_item),
+  };
+}
+
+function sanitizeLicenseForDiagnostics(status: LicenseStatus | null): Record<string, unknown> | null {
+  if (!status) {
+    return null;
+  }
+  return {
+    configured: status.configured,
+    status: status.status,
+    license_tier: status.license_tier,
+    school_size_tier: status.school_size_tier,
+    billing_interval: status.billing_interval,
+    student_count_total: status.student_count_total,
+    max_devices: status.max_devices,
+    modules_enabled: status.modules_enabled,
+    expires_at: status.expires_at,
+    last_checked_at: status.last_checked_at,
+    offline_grace_until: status.offline_grace_until,
+    offline_mode: status.offline_mode,
+    within_offline_grace: status.within_offline_grace,
+    can_start_jobs: status.can_start_jobs,
+    needs_attention: status.needs_attention,
+    message: status.message,
+    last_error: status.last_error,
+  };
+}
+
+export function buildSupportDiagnostics(input: DiagnosticsInput): Record<string, unknown> {
+  return {
+    exported_at: new Date().toISOString(),
+    app_version: input.appVersion,
+    platform: input.platform,
+    connection_state: input.connectionState,
+    database_status: input.databaseStatus,
+    license_status: sanitizeLicenseForDiagnostics(input.licenseStatus),
+    module_config_status: input.moduleConfigStatus,
+    browser_runtime_status: input.browserRuntimeStatus,
+    updater_status: input.updaterStatus,
+    available_update: input.availableUpdate,
+    current_job: sanitizeJobForDiagnostics(input.currentJob),
+    existing_jobs: input.existingJobs.map(sanitizeJobForDiagnostics),
+    sidecar_message_count: input.sidecarMessageCount,
+    has_error_message: input.hasErrorMessage,
   };
 }

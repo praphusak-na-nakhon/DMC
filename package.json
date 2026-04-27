@@ -25,6 +25,6 @@
     "cloud:backup": ".\\.venv\\Scripts\\python .\\apps\\cloud\\scripts\\backup_state.py",
     "cloud:restore": ".\\.venv\\Scripts\\python .\\apps\\cloud\\scripts\\restore_state.py",
     "cloud:test": ".\\.venv\\Scripts\\python -m pytest apps/cloud/tests",
-    "ci:verify": "corepack pnpm run desktop:typecheck && corepack pnpm run desktop:build && corepack pnpm run desktop:cargo-check && corepack pnpm run sidecar:test && corepack pnpm run cloud:test"
+    "ci:verify": "corepack pnpm run desktop:typecheck && corepack pnpm run desktop:build && corepack pnpm run desktop:cargo-check && corepack pnpm run sidecar:typecheck && corepack pnpm run sidecar:test && corepack pnpm run cloud:test"
   }
 }

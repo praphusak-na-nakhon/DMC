@@ -118,6 +118,54 @@ def test_license_activate_rejects_device_limit(monkeypatch, tmp_path: Path) -> N
     assert second.status_code == 409
 
 
+def test_license_activate_rejects_expired_license(monkeypatch, tmp_path: Path) -> None:
+    setup_test_security(monkeypatch)
+    use_temp_cloud_db(monkeypatch, tmp_path)
+    seed = client.post(
+        "/v1/license/activate",
+        json={
+            "license_key": "DMC-TEST-0001",
+            "device_id": "device-seed",
+            "device_name": "desktop-seed",
+            "app_version": "0.1.0",
+        },
+    )
+    assert seed.status_code == 200
+    with connect(Path(settings.sqlite_path)) as connection:
+        connection.execute(
+            "UPDATE licenses SET expires_at = ? WHERE license_key = ?",
+            ("2020-01-01T00:00:00Z", "DMC-TEST-0001"),
+        )
+
+    response = client.post(
+        "/v1/license/activate",
+        json={
+            "license_key": "DMC-TEST-0001",
+            "device_id": "device-expired",
+            "device_name": "desktop-expired",
+            "app_version": "0.1.0",
+        },
+    )
+
+    assert response.status_code == 410
+
+
+def test_license_heartbeat_rejects_unactivated_device(monkeypatch, tmp_path: Path) -> None:
+    setup_test_security(monkeypatch)
+    use_temp_cloud_db(monkeypatch, tmp_path)
+
+    response = client.get(
+        "/v1/license/heartbeat",
+        headers={
+            "X-DMC-License-Key": "DMC-TEST-0001",
+            "X-DMC-Device-Id": "device-never-activated",
+            "X-DMC-Device-Name": "desktop-02",
+        },
+    )
+
+    assert response.status_code == 403
+
+
 def test_admin_can_upsert_and_list_licenses(monkeypatch, tmp_path: Path) -> None:
     setup_test_security(monkeypatch)
     use_temp_cloud_db(monkeypatch, tmp_path)

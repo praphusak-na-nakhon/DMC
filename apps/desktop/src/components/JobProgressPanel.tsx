@@ -50,7 +50,7 @@ export function JobProgressPanel({ currentJob, progressPercent }: JobProgressPan
               <strong>{messages.app.progress.failed}:</strong> {currentJob.failed}
             </div>
             <div>
-              <strong>เนเธเธฅเน:</strong> {currentJob.source_file}
+              <strong>ไฟล์:</strong> {currentJob.source_file}
             </div>
             <div>
               <strong>Report:</strong> {currentJob.report_path ?? "-"}
@@ -66,7 +66,7 @@ export function JobProgressPanel({ currentJob, progressPercent }: JobProgressPan
                   color: "rgb(154, 52, 18)",
                 }}
               >
-                เธ•เนเธญเธเธฅเธเธเธทเนเธญเน€เธเนเธฒเนเธเน DMC เนเธซเธกเนเธเนเธญเธ resume
+                ต้องลงชื่อเข้าใช้ DMC ใหม่ก่อน resume
                 <div style={{ marginTop: "6px" }}>
                   reason: {currentJob.auth_reason ?? "auth_required"}
                 </div>

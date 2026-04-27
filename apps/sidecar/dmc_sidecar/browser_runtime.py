@@ -4,6 +4,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 import subprocess
+from typing import Callable
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -52,7 +53,7 @@ def _tail_lines(text: str) -> list[str]:
 
 
 def _emit_progress(
-    emit_progress,
+    emit_progress: Callable[[dict[str, object]], None] | None,
     *,
     phase: str,
     message: str,
@@ -307,7 +308,10 @@ def get_browser_runtime_status(
     )
 
 
-def bootstrap_browser_runtime(*, emit_progress=None) -> BrowserRuntimeStatus:
+def bootstrap_browser_runtime(
+    *,
+    emit_progress: Callable[[dict[str, object]], None] | None = None,
+) -> BrowserRuntimeStatus:
     if not _playwright_cli_available():
         return get_browser_runtime_status(
             bootstrap_performed=True,

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
+
+import pytest
 
 from dmc_sidecar import config
 from dmc_sidecar.errors import DomainError
@@ -157,6 +159,26 @@ def test_activate_license_saves_local_record(monkeypatch, tmp_path: Path) -> Non
     assert loaded.license_key == "DMC-TEST-NEW"
     assert loaded.device_id == "device-activate-1"
     assert loaded.student_count_total == 250
+
+
+def test_activate_license_maps_device_limit_to_domain_error(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("dmc_sidecar.license_client.secure_cloud_base_url", lambda: "https://cloud.example.test")
+    monkeypatch.setattr("dmc_sidecar.license_client.get_or_create_device_id", lambda: "device-activate-2")
+
+    def raise_device_limit(request, timeout=10):
+        raise HTTPError(request.full_url, 409, "Conflict", hdrs=None, fp=None)
+
+    monkeypatch.setattr("dmc_sidecar.license_client.urlopen", raise_device_limit)
+
+    store = LicenseStore()
+    with pytest.raises(DomainError, match="DEVICE_LIMIT_EXCEEDED"):
+        activate_license(
+            store,
+            license_key="DMC-TEST-LIMIT",
+            device_name="desktop-02",
+            app_version="0.1.0",
+        )
 
 
 def test_refresh_license_status_rejects_insecure_cloud_url(monkeypatch, tmp_path: Path) -> None:

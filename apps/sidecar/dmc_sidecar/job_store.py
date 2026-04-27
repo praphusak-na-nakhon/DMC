@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from typing import Any
 
 from .checkpoint import JobCheckpoint
@@ -157,7 +158,7 @@ class JobStore:
 
         return self._status_from_row(row)
 
-    def _status_from_row(self, row) -> dict[str, Any]:
+    def _status_from_row(self, row: sqlite3.Row) -> dict[str, Any]:
         checkpoint = None
         if row["checkpoint_json"]:
             checkpoint = JobCheckpoint.model_validate(json.loads(row["checkpoint_json"]))

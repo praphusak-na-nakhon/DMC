@@ -13,7 +13,7 @@ export function PreviewPanel({ preview }: PreviewPanelProps) {
       {preview ? (
         <>
           <p style={{ marginTop: 0, lineHeight: 1.6 }}>
-            {preview.detected_level} โ€ข{" "}
+            {preview.detected_level} •{" "}
             {formatSummary(
               messages.app.preview.summaryRows,
               preview.rows_accepted,
@@ -24,10 +24,10 @@ export function PreviewPanel({ preview }: PreviewPanelProps) {
             <strong>{messages.app.preview.warnings}</strong>
             <div style={{ marginTop: "8px", color: "rgb(71, 85, 105)" }}>
               {preview.warnings.length === 0
-                ? "เนเธกเนเธกเธต warning"
+                ? "ไม่มี warning"
                 : preview.warnings.map((warning) => (
                     <div key={`${warning.code}-${warning.row_index}`}>
-                      {warning.code} โ€ข row {warning.row_index} โ€ข {warning.message_th}
+                      {warning.code} • row {warning.row_index} • {warning.message_th}
                     </div>
                   ))}
             </div>
@@ -37,12 +37,12 @@ export function PreviewPanel({ preview }: PreviewPanelProps) {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
               <thead>
                 <tr style={{ textAlign: "left", backgroundColor: "rgb(241, 245, 249)" }}>
-                  <th style={{ padding: "10px" }}>เธฅเธณเธ”เธฑเธ</th>
-                  <th style={{ padding: "10px" }}>เธซเนเธญเธ</th>
-                  <th style={{ padding: "10px" }}>เน€เธฅเธเธเธฑเธเน€เธฃเธตเธขเธ</th>
-                  <th style={{ padding: "10px" }}>เธเธทเนเธญ</th>
-                  <th style={{ padding: "10px" }}>เธชเธ–เธฒเธเธฐ</th>
-                  <th style={{ padding: "10px" }}>เธฃเธซเธฑเธช</th>
+                  <th style={{ padding: "10px" }}>ลำดับ</th>
+                  <th style={{ padding: "10px" }}>ห้อง</th>
+                  <th style={{ padding: "10px" }}>เลขนักเรียน</th>
+                  <th style={{ padding: "10px" }}>ชื่อ</th>
+                  <th style={{ padding: "10px" }}>สถานะ</th>
+                  <th style={{ padding: "10px" }}>รหัส</th>
                 </tr>
               </thead>
               <tbody>

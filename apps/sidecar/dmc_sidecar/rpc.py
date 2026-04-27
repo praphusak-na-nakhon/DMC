@@ -73,16 +73,16 @@ class RpcServer:
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "validate_excel":
-                params = ValidateExcelRequest.model_validate(request.params)
-                module = get_module(params.module)
-                result = module.validate_excel(Path(params.path)).model_dump()
+                validate_params = ValidateExcelRequest.model_validate(request.params)
+                module = get_module(validate_params.module)
+                result = module.validate_excel(Path(validate_params.path)).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "get_module_config_status":
-                params = ModuleConfigRequest.model_validate(request.params)
-                state = load_effective_config(params.module)
+                config_params = ModuleConfigRequest.model_validate(request.params)
+                state = load_effective_config(config_params.module)
                 result = ModuleConfigStatus(
-                    module=params.module,
+                    module=config_params.module,
                     version=state.version,
                     source=state.source,
                     signature_verified=state.signature_verified,
@@ -109,28 +109,32 @@ class RpcServer:
                 return RpcSuccessResponse(id=request.id, result=get_database_metadata(sqlite_path()))
 
             if request.method == "create_backup":
-                params = FilePathRequest.model_validate(request.params) if request.params else None
-                backup_path = create_backup_archive(Path(params.path)) if params and params.path else create_backup_archive()
+                backup_params = FilePathRequest.model_validate(request.params) if request.params else None
+                backup_path = (
+                    create_backup_archive(Path(backup_params.path))
+                    if backup_params and backup_params.path
+                    else create_backup_archive()
+                )
                 return RpcSuccessResponse(id=request.id, result={"backup_path": str(backup_path)})
 
             if request.method == "restore_backup":
-                params = FilePathRequest.model_validate(request.params)
+                restore_params = FilePathRequest.model_validate(request.params)
                 if self.job_manager.runtime_statuses():
                     return self._error(
                         request.id,
                         code="RESTORE_REQUIRES_IDLE",
                         message="Stop active jobs before restoring a backup.",
                     )
-                result = restore_backup_archive(Path(params.path))
+                result = restore_backup_archive(Path(restore_params.path))
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "activate_license":
-                params = ActivateLicenseRequest.model_validate(request.params)
+                license_params = ActivateLicenseRequest.model_validate(request.params)
                 snapshot = activate_license(
                     self.license_store,
-                    license_key=params.license_key,
-                    device_name=params.device_name,
-                    app_version=params.app_version,
+                    license_key=license_params.license_key,
+                    device_name=license_params.device_name,
+                    app_version=license_params.app_version,
                 )
                 self.telemetry.record_license_checked(
                     result=snapshot.message or snapshot.status,
@@ -148,17 +152,17 @@ class RpcServer:
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "sync_module_config":
-                params = ModuleConfigRequest.model_validate(request.params)
-                previous_state = load_effective_config(params.module)
-                state = sync_module_config(params.module)
+                sync_params = ModuleConfigRequest.model_validate(request.params)
+                previous_state = load_effective_config(sync_params.module)
+                state = sync_module_config(sync_params.module)
                 if state.updated:
                     self.telemetry.record_config_updated(
-                        module=params.module,
+                        module=sync_params.module,
                         from_version=previous_state.version,
                         to_version=state.version,
                     )
                 result = ModuleConfigStatus(
-                    module=params.module,
+                    module=sync_params.module,
                     version=state.version,
                     source=state.source,
                     signature_verified=state.signature_verified,
@@ -170,7 +174,7 @@ class RpcServer:
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "start_job":
-                params = StartJobRequest.model_validate(request.params)
+                start_params = StartJobRequest.model_validate(request.params)
                 browser_runtime = get_browser_runtime_status()
                 if not browser_runtime.installed:
                     return self._error(
@@ -180,24 +184,24 @@ class RpcServer:
                         details=browser_runtime.model_dump(),
                     )
                 self.job_store.create_pending_job(
-                    job_id=params.job_id,
-                    module=params.module,
-                    source_file=params.excel_path,
+                    job_id=start_params.job_id,
+                    module=start_params.module,
+                    source_file=start_params.excel_path,
                 )
                 self.job_manager.start_job(
-                    job_id=params.job_id,
-                    module_name=params.module,
-                    excel_path=Path(params.excel_path),
-                    options=params.options,
+                    job_id=start_params.job_id,
+                    module_name=start_params.module,
+                    excel_path=Path(start_params.excel_path),
+                    options=start_params.options,
                 )
                 return RpcSuccessResponse(
                     id=request.id,
-                    result={"accepted": True, "job_id": params.job_id},
+                    result={"accepted": True, "job_id": start_params.job_id},
                 )
 
             if request.method == "get_job_status":
-                params = JobIdRequest.model_validate(request.params)
-                job_id = params.job_id.strip()
+                job_params = JobIdRequest.model_validate(request.params)
+                job_id = job_params.job_id.strip()
                 status = self.job_manager.get_runtime_status(job_id) or self.job_store.get_status(job_id)
                 if status is None:
                     return self._error(
@@ -220,8 +224,8 @@ class RpcServer:
                 return self._set_job_status(request.id, request.params, "cancelled")
 
             if request.method == "list_jobs":
-                params = request.params if isinstance(request.params, dict) else {}
-                limit = int(params.get("limit", 20))
+                list_params = request.params if isinstance(request.params, dict) else {}
+                limit = int(list_params.get("limit", 20))
                 return RpcSuccessResponse(id=request.id, result={"items": self.job_store.list_jobs(limit=limit)})
 
             return self._error(

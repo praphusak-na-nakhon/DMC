@@ -35,7 +35,7 @@ export function ExistingJobsPanel({
             >
               <div style={{ fontWeight: 700 }}>{job.job_id}</div>
               <div style={{ marginTop: "4px", color: "rgb(71, 85, 105)", fontSize: "14px" }}>
-                {job.level_label ?? "-"} โ€ข {job.status} โ€ข {job.processed}/{job.total ?? "-"}
+                {job.level_label ?? "-"} • {job.status} • {job.processed}/{job.total ?? "-"}
               </div>
               <div style={{ marginTop: "6px", fontSize: "13px", color: "rgb(51, 65, 85)" }}>
                 <strong>{messages.app.existingJobs.sourceFile}:</strong> {job.source_file}
@@ -49,7 +49,7 @@ export function ExistingJobsPanel({
                   style={{ ...buttonStyle, padding: "8px 12px", backgroundColor: "rgb(5, 150, 105)" }}
                   onClick={() => onSelectJob(job)}
                 >
-                  เนเธเนเธเธฒเธเธฃเธฒเธขเธเธฒเธฃเธเธตเน
+                  ใช้งานรายการนี้
                 </button>
                 <button
                   style={{ ...buttonStyle, padding: "8px 12px", backgroundColor: "rgb(59, 130, 246)" }}

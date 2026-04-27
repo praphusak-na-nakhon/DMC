@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -117,7 +117,10 @@ def verify_signature(version: str, payload: dict[str, Any], signature: str) -> N
 
 
 def _read_json_file(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise DomainError("CONFIG_JSON_INVALID")
+    return cast(dict[str, Any], payload)
 
 
 def _read_bundled_config(path: Path) -> dict[str, Any]:

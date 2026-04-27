@@ -19,6 +19,7 @@ dependencies = [
 dev = [
   "pytest>=8.3,<9",
   "mypy>=1.11,<2",
+  "pandas-stubs>=2.2,<3",
   "pyinstaller>=6.11,<7"
 ]
 
