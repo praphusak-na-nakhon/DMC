@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "info.bopp.dmcassistant",
   "build": {
-    "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "pnpm build",
+    "beforeDevCommand": "corepack pnpm dev",
+    "beforeBuildCommand": "corepack pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -26,5 +26,11 @@
       "release-config"
     ],
     "targets": "msi"
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [],
+      "pubkey": ""
+    }
   }
 }
