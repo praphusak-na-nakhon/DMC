@@ -8,7 +8,7 @@ type PreviewPanelProps = {
 
 export function PreviewPanel({ preview }: PreviewPanelProps) {
   return (
-    <section style={cardStyle}>
+    <section style={{ ...cardStyle, minWidth: 0 }}>
       <h2 style={{ marginTop: 0 }}>{messages.app.preview.title}</h2>
       {preview ? (
         <>

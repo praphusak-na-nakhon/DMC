@@ -77,7 +77,18 @@ type ControlPanelProps = {
   currentJobNeedsAuth: boolean;
 };
 
-const controlCardStyle: CSSProperties = { ...cardStyle, marginBottom: "20px" };
+const breakableTextStyle: CSSProperties = {
+  minWidth: 0,
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
+};
+
+const controlCardStyle: CSSProperties = {
+  ...cardStyle,
+  ...breakableTextStyle,
+  marginBottom: "20px",
+  boxSizing: "border-box",
+};
 
 export function ControlPanel({
   connectionState,
@@ -144,7 +155,7 @@ export function ControlPanel({
           marginBottom: "24px",
         }}
       >
-        <div style={{ maxWidth: "760px" }}>
+        <div style={{ maxWidth: "760px", minWidth: 0 }}>
           <h1 style={{ marginTop: 0, marginBottom: "14px", fontSize: "38px" }}>
             {messages.app.title}
           </h1>
@@ -153,6 +164,7 @@ export function ControlPanel({
         <div
           style={{
             ...cardStyle,
+            ...breakableTextStyle,
             minWidth: "220px",
             backgroundColor:
               connectionState === "ready" ? "rgb(240, 253, 250)" : "rgba(255, 255, 255, 0.9)",
@@ -466,6 +478,7 @@ export function ControlPanel({
                 padding: "12px 14px",
                 display: "grid",
                 gap: "8px",
+                ...breakableTextStyle,
               }}
             >
               <div style={{ fontWeight: 700 }}>Browser Runtime Setup</div>
@@ -485,6 +498,7 @@ export function ControlPanel({
                     padding: "10px 12px",
                     display: "grid",
                     gap: "6px",
+                    ...breakableTextStyle,
                   }}
                 >
                   <div style={{ fontWeight: 700 }}>{describeBrowserRuntimePhase(browserRuntimeProgress.phase)}</div>
@@ -566,6 +580,7 @@ export function ControlPanel({
               padding: "12px 14px",
               display: "grid",
               gap: "8px",
+              ...breakableTextStyle,
             }}
           >
             <div style={{ fontWeight: 700 }}>App Updates</div>
@@ -615,6 +630,7 @@ export function ControlPanel({
                 border: "1px solid rgb(254, 202, 202)",
                 color: "rgb(153, 27, 27)",
                 padding: "12px 14px",
+                ...breakableTextStyle,
               }}
             >
               {errorMessage}

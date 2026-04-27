@@ -14,6 +14,7 @@ from .schemas import BrowserRuntimePackage, BrowserRuntimeStatus
 
 CHROMIUM_EXECUTABLE_RELATIVE_PATHS = (
     Path("chrome-win") / "chrome.exe",
+    Path("chrome-win64") / "chrome.exe",
     Path("chrome-linux") / "chrome",
     Path("chrome-mac") / "Chromium.app" / "Contents" / "MacOS" / "Chromium",
 )

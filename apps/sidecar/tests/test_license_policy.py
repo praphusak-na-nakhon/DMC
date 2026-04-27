@@ -37,6 +37,13 @@ def test_check_license_allows_job_start_requires_activation_when_cloud_enabled(m
         check_license_allows_job_start(None)
 
 
+def test_check_license_allows_job_start_allows_dev_unlicensed_jobs_when_cloud_enabled(monkeypatch) -> None:
+    monkeypatch.setattr("dmc_sidecar.license_policy.cloud_base_url", lambda: "https://cloud.example.test")
+    monkeypatch.setattr("dmc_sidecar.license_policy.allow_unlicensed_jobs", lambda: True)
+
+    check_license_allows_job_start(None)
+
+
 def test_check_license_allows_job_start_rejects_expired_offline_grace() -> None:
     with pytest.raises(DomainError, match="LICENSE_OFFLINE_GRACE_EXPIRED"):
         check_license_allows_job_start(

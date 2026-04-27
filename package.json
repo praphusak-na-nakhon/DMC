@@ -17,6 +17,7 @@
     "sidecar:bundle": "powershell -ExecutionPolicy Bypass -File .\\apps\\sidecar\\scripts\\build_windows_bundle.ps1",
     "sidecar:backup": ".\\.venv\\Scripts\\python .\\apps\\sidecar\\scripts\\backup_state.py",
     "sidecar:restore": ".\\.venv\\Scripts\\python .\\apps\\sidecar\\scripts\\restore_state.py",
+    "smoke:local": ".\\.venv\\Scripts\\python .\\scripts\\smoke_local.py",
     "release:manifest": ".\\.venv\\Scripts\\python .\\scripts\\create_release_manifest.py",
     "release:sign-msi": "powershell -ExecutionPolicy Bypass -File .\\scripts\\sign_windows_artifacts.ps1",
     "sidecar:test": ".\\.venv\\Scripts\\python -m pytest apps/sidecar/tests",

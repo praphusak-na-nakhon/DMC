@@ -7,9 +7,16 @@ type JobProgressPanelProps = {
   progressPercent: number;
 };
 
+const pathTextStyle = { wordBreak: "break-all" as const, overflowWrap: "anywhere" as const };
+
 export function JobProgressPanel({ currentJob, progressPercent }: JobProgressPanelProps) {
+  const processedLabel =
+    currentJob?.total !== null && currentJob?.total !== undefined && currentJob.processed > currentJob.total
+      ? `${currentJob.processed} แถวบนเว็บ (Excel validate ${currentJob.total} รายการ)`
+      : `${currentJob?.processed ?? 0}/${currentJob?.total ?? "-"}`;
+
   return (
-    <section style={cardStyle}>
+    <section style={{ ...cardStyle, minWidth: 0 }}>
       <h2 style={{ marginTop: 0 }}>{messages.app.progress.title}</h2>
       {currentJob ? (
         <>
@@ -26,19 +33,17 @@ export function JobProgressPanel({ currentJob, progressPercent }: JobProgressPan
               style={{
                 width: `${progressPercent}%`,
                 height: "100%",
-                background:
-                  "linear-gradient(90deg, rgb(13, 148, 136), rgb(34, 197, 94))",
+                background: "linear-gradient(90deg, rgb(13, 148, 136), rgb(34, 197, 94))",
                 transition: "width 200ms ease",
               }}
             />
           </div>
-          <div style={{ display: "grid", gap: "8px", lineHeight: 1.6 }}>
+          <div style={{ display: "grid", gap: "8px", lineHeight: 1.6, minWidth: 0 }}>
             <div>
               <strong>{messages.app.progress.status}:</strong> {currentJob.status}
             </div>
             <div>
-              <strong>{messages.app.progress.processed}:</strong> {currentJob.processed}/
-              {currentJob.total ?? "-"}
+              <strong>{messages.app.progress.processed}:</strong> {processedLabel}
             </div>
             <div>
               <strong>{messages.app.progress.currentPage}:</strong> {currentJob.current_page ?? "-"}
@@ -49,10 +54,10 @@ export function JobProgressPanel({ currentJob, progressPercent }: JobProgressPan
             <div>
               <strong>{messages.app.progress.failed}:</strong> {currentJob.failed}
             </div>
-            <div>
+            <div style={pathTextStyle}>
               <strong>ไฟล์:</strong> {currentJob.source_file}
             </div>
-            <div>
+            <div style={pathTextStyle}>
               <strong>Report:</strong> {currentJob.report_path ?? "-"}
             </div>
             {currentJob.needs_auth ? (
@@ -67,9 +72,7 @@ export function JobProgressPanel({ currentJob, progressPercent }: JobProgressPan
                 }}
               >
                 ต้องลงชื่อเข้าใช้ DMC ใหม่ก่อน resume
-                <div style={{ marginTop: "6px" }}>
-                  reason: {currentJob.auth_reason ?? "auth_required"}
-                </div>
+                <div style={{ marginTop: "6px" }}>reason: {currentJob.auth_reason ?? "auth_required"}</div>
               </div>
             ) : null}
           </div>

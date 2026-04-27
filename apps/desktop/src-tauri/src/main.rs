@@ -18,7 +18,6 @@ use tokio::sync::oneshot;
 use url::Url;
 
 type PendingMap = Arc<StdMutex<HashMap<String, oneshot::Sender<Result<Value, String>>>>>;
-const RPC_TIMEOUT_SHORT_SECS: u64 = 5;
 const RPC_TIMEOUT_STANDARD_SECS: u64 = 30;
 const RPC_TIMEOUT_LONG_SECS: u64 = 600;
 
@@ -43,7 +42,6 @@ struct SidecarState {
 struct PendingUpdate(StdMutex<Option<tauri_plugin_updater::Update>>);
 
 #[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
 struct UpdaterStatus {
     configured: bool,
     endpoint: Option<String>,
@@ -52,7 +50,6 @@ struct UpdaterStatus {
 }
 
 #[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
 struct UpdateMetadata {
     version: String,
     current_version: String,
@@ -133,6 +130,20 @@ fn configured_cloud_base_url(app: &AppHandle) -> Option<String> {
         return None;
     }
     Some(trimmed.to_string())
+}
+
+fn release_config_allows_unlicensed_jobs(config: &ReleaseConfig) -> bool {
+    matches!(
+        config.environment.trim().to_ascii_lowercase().as_str(),
+        "development" | "dev" | "local" | "test"
+    )
+}
+
+fn add_development_sidecar_env(app: &AppHandle, envs: &mut Vec<(String, String)>) {
+    let config = load_release_config(app);
+    if release_config_allows_unlicensed_jobs(&config) {
+        envs.push(("DMC_ALLOW_UNLICENSED_JOBS".to_string(), "1".to_string()));
+    }
 }
 
 fn updater_endpoint(app: &AppHandle) -> Option<String> {
@@ -241,6 +252,7 @@ fn bundled_sidecar_launch_spec(app: &AppHandle) -> Result<Option<SidecarLaunchSp
     if let Some(cloud_base_url) = configured_cloud_base_url(app) {
         envs.push(("DMC_CLOUD_BASE_URL".to_string(), cloud_base_url));
     }
+    add_development_sidecar_env(app, &mut envs);
 
     Ok(Some(SidecarLaunchSpec {
         program,
@@ -268,6 +280,7 @@ fn python_sidecar_launch_specs(app: &AppHandle) -> Result<Vec<SidecarLaunchSpec>
     if let Some(cloud_base_url) = configured_cloud_base_url(app) {
         shared_envs.push(("DMC_CLOUD_BASE_URL".to_string(), cloud_base_url));
     }
+    add_development_sidecar_env(app, &mut shared_envs);
 
     let program_candidates: Vec<(String, Vec<String>)> = match env::var("DMC_PYTHON") {
         Ok(custom) => vec![
@@ -524,7 +537,7 @@ fn extract_request_method(request_json: &str) -> Result<String, String> {
 
 fn rpc_timeout_secs(method: &str) -> u64 {
     match method {
-        "ping" => RPC_TIMEOUT_SHORT_SECS,
+        "ping" => RPC_TIMEOUT_STANDARD_SECS,
         "start_job" | "resume_existing_job" | "install_browser_runtime" => RPC_TIMEOUT_LONG_SECS,
         _ => RPC_TIMEOUT_STANDARD_SECS,
     }
@@ -849,4 +862,59 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{release_config_allows_unlicensed_jobs, ReleaseConfig, UpdateMetadata, UpdaterStatus};
+
+    #[test]
+    fn updater_status_serializes_with_frontend_contract_keys() {
+        let value = serde_json::to_value(UpdaterStatus {
+            configured: false,
+            endpoint: None,
+            current_version: "0.1.0".to_string(),
+            pubkey_configured: false,
+        })
+        .expect("updater status should serialize");
+
+        assert_eq!(value["current_version"], "0.1.0");
+        assert_eq!(value["pubkey_configured"], false);
+        assert!(value.get("currentVersion").is_none());
+        assert!(value.get("pubkeyConfigured").is_none());
+    }
+
+    #[test]
+    fn update_metadata_serializes_with_frontend_contract_keys() {
+        let value = serde_json::to_value(UpdateMetadata {
+            version: "0.2.0".to_string(),
+            current_version: "0.1.0".to_string(),
+            date: None,
+            body: None,
+        })
+        .expect("update metadata should serialize");
+
+        assert_eq!(value["current_version"], "0.1.0");
+        assert!(value.get("currentVersion").is_none());
+    }
+
+    #[test]
+    fn development_release_config_allows_unlicensed_jobs_for_local_testing() {
+        let config = ReleaseConfig {
+            environment: "development".to_string(),
+            ..Default::default()
+        };
+
+        assert!(release_config_allows_unlicensed_jobs(&config));
+    }
+
+    #[test]
+    fn production_release_config_keeps_license_gate_enabled() {
+        let config = ReleaseConfig {
+            environment: "production".to_string(),
+            ..Default::default()
+        };
+
+        assert!(!release_config_allows_unlicensed_jobs(&config));
+    }
 }

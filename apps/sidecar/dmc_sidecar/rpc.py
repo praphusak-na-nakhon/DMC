@@ -64,7 +64,7 @@ class RpcServer:
                     details={"errors": exc.errors()},
                 ),
             )
-        return response.model_dump_json()
+        return response.model_dump_json(ensure_ascii=True)
 
     def dispatch(self, request: RpcRequest) -> RpcSuccessResponse | RpcErrorResponse:
         try:
@@ -75,7 +75,15 @@ class RpcServer:
             if request.method == "validate_excel":
                 validate_params = ValidateExcelRequest.model_validate(request.params)
                 module = get_module(validate_params.module)
-                result = module.validate_excel(Path(validate_params.path)).model_dump()
+                try:
+                    result = module.validate_excel(Path(validate_params.path)).model_dump()
+                except ImportError as exc:
+                    if "openpyxl" in str(exc).lower():
+                        raise DomainError(
+                            "EXCEL_READER_MISSING",
+                            "Excel reader dependency is missing. Install openpyxl and rebuild the sidecar.",
+                        ) from exc
+                    raise
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "get_module_config_status":
@@ -361,6 +369,10 @@ class RpcServer:
 
 
 def run_stdio_server() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="strict")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     write_lock = threading.Lock()
 
     def emit_notification(payload: dict[str, Any]) -> None:

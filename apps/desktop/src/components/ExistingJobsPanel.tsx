@@ -17,8 +17,10 @@ export function ExistingJobsPanel({
   onSelectJob,
   onResumeExisting,
 }: ExistingJobsPanelProps) {
+  const pathTextStyle = { wordBreak: "break-all" as const, overflowWrap: "anywhere" as const };
+
   return (
-    <section style={cardStyle}>
+    <section style={{ ...cardStyle, minWidth: 0 }}>
       <h2 style={{ marginTop: 0 }}>{messages.app.existingJobs.title}</h2>
       {existingJobs.length > 0 ? (
         <div style={{ display: "grid", gap: "10px" }}>
@@ -33,11 +35,11 @@ export function ExistingJobsPanel({
                   activeJobId === job.job_id ? "rgb(236, 253, 245)" : "rgb(248, 250, 252)",
               }}
             >
-              <div style={{ fontWeight: 700 }}>{job.job_id}</div>
+              <div style={{ fontWeight: 700, ...pathTextStyle }}>{job.job_id}</div>
               <div style={{ marginTop: "4px", color: "rgb(71, 85, 105)", fontSize: "14px" }}>
                 {job.level_label ?? "-"} • {job.status} • {job.processed}/{job.total ?? "-"}
               </div>
-              <div style={{ marginTop: "6px", fontSize: "13px", color: "rgb(51, 65, 85)" }}>
+              <div style={{ marginTop: "6px", fontSize: "13px", color: "rgb(51, 65, 85)", ...pathTextStyle }}>
                 <strong>{messages.app.existingJobs.sourceFile}:</strong> {job.source_file}
               </div>
               <div style={{ marginTop: "4px", fontSize: "13px", color: "rgb(51, 65, 85)" }}>

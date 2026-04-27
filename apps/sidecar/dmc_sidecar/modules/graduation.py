@@ -4,10 +4,11 @@ from pathlib import Path
 from typing import Any, Callable, Protocol, TypeVar, cast
 
 import pandas as pd
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import BrowserContext, Error as PlaywrightError, Page, sync_playwright
 
 from ..checkpoint import JobCheckpoint
-from ..config import profile_dir_for_license, reports_dir
+from ..config import profile_dir_for_license, profiles_dir, reports_dir
+from ..errors import DomainError
 from ..module_config import load_effective_config, sync_module_config
 from ..runtime import JobContext, utc_now
 from ..schemas import PreviewRow, ValidateExcelResponse, ValidationWarning
@@ -26,6 +27,16 @@ class GraduationLegacyModule(Protocol):
     def open_target_page_after_login(self, page: Page, target_url: str) -> None: ...
 
     def wait_for_student_table(self, page: Page) -> None: ...
+
+
+class ChromiumLauncher(Protocol):
+    def launch_persistent_context(
+        self,
+        user_data_dir: str | Path,
+        *,
+        headless: bool | None = None,
+        viewport: Any = None,
+    ) -> BrowserContext: ...
 
 
 class GraduationModule(AutomationModule):
@@ -108,6 +119,7 @@ class GraduationModule(AutomationModule):
         context.snapshot.current_page = checkpoint.next_page
         context.snapshot.needs_auth = checkpoint.awaiting_auth
         context.snapshot.auth_reason = checkpoint.auth_reason
+        context.snapshot.level_label = level_label
         context.snapshot.status = "running"
         context.job_store.mark_running(
             job_id,
@@ -128,10 +140,12 @@ class GraduationModule(AutomationModule):
         review_csv = report_dir / "obec-fill-review.csv"
 
         with sync_playwright() as playwright:
-            browser_context = playwright.chromium.launch_persistent_context(
-                user_data_dir=str(profile_dir.resolve()),
-                headless=bool(options.get("headless", False)),
-                viewport={"width": 1600, "height": 1000},
+            browser_context = self._launch_browser_context(
+                chromium=playwright.chromium,
+                primary_profile_dir=profile_dir,
+                job_id=job_id,
+                options=options,
+                context=context,
             )
             try:
                 page = browser_context.pages[0] if browser_context.pages else browser_context.new_page()
@@ -241,6 +255,7 @@ class GraduationModule(AutomationModule):
                         checkpoint.report_path = str(csv_path)
                         checkpoint.review_report_path = str(review_path)
                         context.snapshot.report_path = str(csv_path)
+                        context.snapshot.review_report_path = str(review_path)
                         context.snapshot.status = "done"
                         context.job_store.mark_done(
                             job_id,
@@ -272,6 +287,68 @@ class GraduationModule(AutomationModule):
                     legacy.wait_for_student_table(page)
             finally:
                 browser_context.close()
+
+    def _launch_browser_context(
+        self,
+        *,
+        chromium: ChromiumLauncher,
+        primary_profile_dir: Path,
+        job_id: str,
+        options: dict[str, object],
+        context: JobContext,
+    ) -> BrowserContext:
+        headless = bool(options.get("headless", False))
+        viewport = {"width": 1600, "height": 1000}
+        try:
+            return chromium.launch_persistent_context(
+                str(primary_profile_dir.resolve()),
+                headless=headless,
+                viewport=viewport,
+            )
+        except PlaywrightError as exc:
+            if not self._is_retryable_browser_launch_error(exc):
+                raise
+
+            fallback_profile_dir = self._fallback_profile_dir(job_id)
+            fallback_profile_dir.mkdir(parents=True, exist_ok=True)
+            context.emit_event(
+                {
+                    "type": "sidecar_stderr",
+                    "message": (
+                        "Chromium profile เดิมเปิดไม่ได้หรือถูก lock; "
+                        f"retry ด้วย profile สำรอง {fallback_profile_dir}"
+                    ),
+                }
+            )
+            try:
+                return chromium.launch_persistent_context(
+                    str(fallback_profile_dir.resolve()),
+                    headless=headless,
+                    viewport=viewport,
+                )
+            except PlaywrightError as fallback_exc:
+                raise DomainError(
+                    "BROWSER_PROFILE_UNAVAILABLE",
+                    (
+                        "Chromium เปิด profile สำหรับ automation ไม่ได้ "
+                        "ให้ปิดหน้าต่าง Chromium/DMC ที่ค้างอยู่ทั้งหมด แล้วลองเริ่มงานอีกครั้ง"
+                    ),
+                ) from fallback_exc
+
+    def _fallback_profile_dir(self, job_id: str) -> Path:
+        safe_job_id = "".join(ch for ch in job_id if ch.isalnum() or ch in {"-", "_"})[:64] or "job"
+        return profiles_dir() / "fallback" / safe_job_id
+
+    def _is_retryable_browser_launch_error(self, exc: Exception) -> bool:
+        message = str(exc).lower()
+        return (
+            "launch_persistent_context" in message
+            and (
+                "target page, context or browser has been closed" in message
+                or "process did exit" in message
+                or "singleton" in message
+            )
+        )
 
     def _apply_module_config(self, legacy: GraduationLegacyModule, module_config: dict[str, Any]) -> None:
         login_url = module_config.get("login_url")

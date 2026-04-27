@@ -61,6 +61,7 @@ class JobSnapshot:
     job_id: str
     module: str
     status: str
+    source_file: str = ""
     processed: int = 0
     total: int | None = None
     succeeded: int = 0
@@ -69,7 +70,11 @@ class JobSnapshot:
     needs_auth: bool = False
     auth_reason: str | None = None
     report_path: str | None = None
+    review_report_path: str | None = None
     stopped_item: dict[str, Any] | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    level_label: str | None = None
 
 
 @dataclass
@@ -157,7 +162,12 @@ class JobManager:
 
             check_license_allows_job_start(self.license_store.get_license())
             control = JobControl()
-            snapshot = JobSnapshot(job_id=job_id, module=module_name, status="running")
+            snapshot = JobSnapshot(
+                job_id=job_id,
+                module=module_name,
+                status="running",
+                source_file=str(excel_path),
+            )
             context = JobContext(
                 job_id=job_id,
                 options=options,
@@ -207,10 +217,12 @@ class JobManager:
         if active is None:
             return None
         snapshot = active.snapshot
+        persisted = self.job_store.get_status(job_id) or {}
         return {
             "job_id": snapshot.job_id,
             "module": snapshot.module,
             "status": snapshot.status,
+            "source_file": snapshot.source_file or persisted.get("source_file", ""),
             "processed": snapshot.processed,
             "total": snapshot.total,
             "succeeded": snapshot.succeeded,
@@ -218,8 +230,12 @@ class JobManager:
             "current_page": snapshot.current_page,
             "needs_auth": snapshot.needs_auth,
             "auth_reason": snapshot.auth_reason,
-            "report_path": snapshot.report_path,
+            "report_path": snapshot.report_path or persisted.get("report_path"),
+            "review_report_path": snapshot.review_report_path or persisted.get("review_report_path"),
             "stopped_item": snapshot.stopped_item,
+            "started_at": snapshot.started_at or persisted.get("started_at"),
+            "finished_at": snapshot.finished_at or persisted.get("finished_at"),
+            "level_label": snapshot.level_label or persisted.get("level_label"),
         }
 
     def runtime_statuses(self) -> list[dict[str, Any]]:
@@ -292,7 +308,7 @@ def build_event_notification(payload: dict[str, Any]) -> str:
             "method": "event",
             "params": payload,
         },
-        ensure_ascii=False,
+        ensure_ascii=True,
     )
 
 

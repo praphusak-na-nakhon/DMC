@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .config import cloud_base_url, secure_cloud_base_url
+from .config import allow_unlicensed_jobs, cloud_base_url, secure_cloud_base_url
 from .device_identity import default_device_name, get_or_create_device_id
 from .errors import DomainError
 from .license_policy import parse_utc
@@ -38,6 +38,7 @@ def build_license_status_snapshot(
     within_offline_grace = _is_within_offline_grace(record)
     effective_offline_mode = offline_mode if offline_mode is not None else False
     cloud_enabled = cloud_base_url() is not None
+    unlicensed_jobs_allowed = allow_unlicensed_jobs()
 
     if record is None:
         return LicenseStatusSnapshot(
@@ -54,9 +55,14 @@ def build_license_status_snapshot(
             offline_grace_until=None,
             offline_mode=False,
             within_offline_grace=False,
-            can_start_jobs=not cloud_enabled,
-            needs_attention=cloud_enabled or last_error is not None,
-            message=message or ("LICENSE_REQUIRED" if cloud_enabled else "LICENSE_NOT_CONFIGURED"),
+            can_start_jobs=unlicensed_jobs_allowed or not cloud_enabled,
+            needs_attention=(cloud_enabled and not unlicensed_jobs_allowed) or last_error is not None,
+            message=message
+            or (
+                "LICENSE_DEV_MODE"
+                if unlicensed_jobs_allowed
+                else ("LICENSE_REQUIRED" if cloud_enabled else "LICENSE_NOT_CONFIGURED")
+            ),
             last_error=last_error,
         )
 

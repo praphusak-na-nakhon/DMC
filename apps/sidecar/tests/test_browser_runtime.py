@@ -31,6 +31,20 @@ def test_get_browser_runtime_status_detects_installed_chromium(monkeypatch, tmp_
     assert status.state == "ready"
 
 
+def test_get_browser_runtime_status_detects_windows_64_chromium(monkeypatch, tmp_path: Path) -> None:
+    install_dir = tmp_path / "ms-playwright"
+    executable = install_dir / "chromium-1208" / "chrome-win64" / "chrome.exe"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("", encoding="utf-8")
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(install_dir))
+
+    status = browser_runtime.get_browser_runtime_status()
+
+    assert status.installed is True
+    assert status.executable_path == str(executable)
+    assert status.state == "ready"
+
+
 def test_bootstrap_browser_runtime_uses_playwright_cli_result(monkeypatch, tmp_path: Path) -> None:
     install_dir = tmp_path / "ms-playwright"
     executable = install_dir / "chromium-1208" / "chrome-win" / "chrome.exe"

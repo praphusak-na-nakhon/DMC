@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -350,6 +351,58 @@ def test_browser_runtime_bootstrap_then_retry_start_job_workflow(monkeypatch, tm
             "options": {"dry_run": True},
         }
     ]
+
+
+def test_active_job_status_matches_frontend_contract(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(sidecar_config, "default_data_dir", lambda: tmp_path)
+    started = threading.Event()
+    release = threading.Event()
+
+    class _BlockingModule:
+        def start_job(self, job_id: str, excel_path: Path, options: dict[str, object], context) -> None:  # noqa: ANN001
+            checkpoint = JobCheckpoint.initial(level_label="ม.3", base_url="https://portal.example.test")
+            checkpoint.options = dict(options)
+            context.snapshot.total = 217
+            context.snapshot.current_page = 1
+            context.snapshot.level_label = "ม.3"
+            context.job_store.mark_running(
+                job_id,
+                total_records=217,
+                checkpoint=checkpoint,
+                started_at=utc_now(),
+            )
+            started.set()
+            release.wait(timeout=5)
+
+    monkeypatch.setattr("dmc_sidecar.modules.get_module", lambda module_name: _BlockingModule())
+    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
+
+    server = RpcServer(emit_notification=lambda payload: None)
+    try:
+        started_response = _rpc_call(
+            server,
+            "start_job",
+            {
+                "job_id": "job-active-contract",
+                "module": "graduation",
+                "excel_path": "C:\\data\\m3.xlsx",
+                "options": {"dry_run": True},
+            },
+        )
+        assert started_response["result"]["accepted"] is True
+        assert started.wait(timeout=5)
+
+        status_response = _rpc_call(server, "get_job_status", {"job_id": "job-active-contract"})
+        status = status_response["result"]
+
+        assert status["job_id"] == "job-active-contract"
+        assert status["source_file"] == "C:\\data\\m3.xlsx"
+        assert status["report_path"] is None
+        assert status["review_report_path"] is None
+        assert status["started_at"] is not None
+        assert status["level_label"] == "ม.3"
+    finally:
+        release.set()
 
 
 def test_session_expiry_login_resume_workflow(monkeypatch, tmp_path: Path) -> None:

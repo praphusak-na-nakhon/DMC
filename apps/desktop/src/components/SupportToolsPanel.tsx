@@ -1,6 +1,12 @@
 import { buttonStyle, cardStyle, formatTimestamp } from "../lib/appUi";
 import type { DatabaseStatus, LicenseStatus } from "../types/contracts";
 
+const pathTextStyle = {
+  minWidth: 0,
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
+} as const;
+
 type SupportToolsPanelProps = {
   connectionState: "idle" | "connecting" | "ready" | "error";
   databaseStatus: DatabaseStatus | null;
@@ -27,16 +33,16 @@ export function SupportToolsPanel({
   onExportDiagnostics,
 }: SupportToolsPanelProps) {
   return (
-    <section style={cardStyle}>
+    <section style={{ ...cardStyle, minWidth: 0 }}>
       <h2 style={{ marginTop: 0 }}>Support Tools</h2>
       <div style={{ display: "grid", gap: "10px", color: "rgb(51, 65, 85)", lineHeight: 1.6 }}>
-        <div>
+        <div style={pathTextStyle}>
           <strong>Database:</strong> {databaseStatus?.path ?? "-"}
         </div>
         <div>
           <strong>Schema version:</strong> {databaseStatus?.schema_version ?? "-"}
         </div>
-        <div>
+        <div style={pathTextStyle}>
           <strong>Tables:</strong> {databaseStatus?.tables.join(", ") ?? "-"}
         </div>
         <div>

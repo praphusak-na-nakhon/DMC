@@ -12,6 +12,10 @@ APP_NAME = "dmc-assistant"
 SIDECAR_VERSION = "0.1.0"
 
 
+def env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def repo_root() -> Path:
     override = os.getenv("DMC_REPO_ROOT", "").strip()
     if override:
@@ -85,6 +89,10 @@ def profile_dir_for_license(license_key: str | None) -> Path:
 def cloud_base_url() -> str | None:
     value = os.getenv("DMC_CLOUD_BASE_URL", "").strip()
     return value.rstrip("/") or None
+
+
+def allow_unlicensed_jobs() -> bool:
+    return env_flag("DMC_ALLOW_UNLICENSED_JOBS")
 
 
 def secure_cloud_base_url() -> str | None:

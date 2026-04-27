@@ -9,6 +9,7 @@ from dmc_sidecar.job_store import JobStore
 from dmc_sidecar.license_client import build_license_status_snapshot
 from dmc_sidecar.license_store import LicenseStore
 from dmc_sidecar.rpc import RpcServer
+from dmc_sidecar.runtime import build_event_notification
 from dmc_sidecar.schemas import LicenseRecord
 
 
@@ -466,3 +467,94 @@ def test_rpc_sanitizes_unexpected_exception_messages(monkeypatch, tmp_path: Path
 
     assert response["error"]["code"] == "UNEXPECTED_ERROR"
     assert response["error"]["message"] == "Unexpected internal error."
+
+
+def test_validate_excel_rpc_reports_missing_openpyxl(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    server = RpcServer(emit_notification=lambda payload: None)
+
+    class MissingExcelReaderModule:
+        def validate_excel(self, path):  # noqa: ANN001
+            raise ImportError("Missing optional dependency 'openpyxl'.")
+
+    monkeypatch.setattr("dmc_sidecar.rpc.get_module", lambda module_name: MissingExcelReaderModule())
+
+    payload = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "req-openpyxl",
+            "method": "validate_excel",
+            "params": {"module": "graduation", "path": "C:\\data\\m3.xlsx"},
+        }
+    )
+
+    response = json.loads(server.handle_text(payload))
+
+    assert response["error"]["code"] == "EXCEL_READER_MISSING"
+    assert "openpyxl" in response["error"]["message"]
+
+
+def test_validate_excel_rpc_response_is_ascii_safe(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    server = RpcServer(emit_notification=lambda payload: None)
+
+    class ThaiPreviewModule:
+        def validate_excel(self, path):  # noqa: ANN001
+            return type(
+                "Result",
+                (),
+                {
+                    "model_dump": lambda self: {
+                        "module": "graduation",
+                        "detected_level": "ม.3",
+                        "rows_total": 1,
+                        "rows_accepted": 1,
+                        "warnings": [],
+                        "preview": [
+                            {
+                                "order": 1,
+                                "level_label": "ม.3",
+                                "room": None,
+                                "student_no": "18551",
+                                "first_name": "ทวีศักดิ์",
+                                "last_name": "ฝั่งขวา",
+                                "status_text": "(ม.3) ศึกษาต่อ ม.4 โรงเรียนเดิม",
+                                "status_code": "201",
+                            }
+                        ],
+                    }
+                },
+            )()
+
+    monkeypatch.setattr("dmc_sidecar.rpc.get_module", lambda module_name: ThaiPreviewModule())
+
+    payload = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "req-thai",
+            "method": "validate_excel",
+            "params": {"module": "graduation", "path": "C:\\data\\m3.xlsx"},
+        }
+    )
+
+    response_text = server.handle_text(payload)
+    response_text.encode("ascii")
+    response = json.loads(response_text)
+
+    assert response["result"]["detected_level"] == "ม.3"
+    assert response["result"]["preview"][0]["first_name"] == "ทวีศักดิ์"
+
+
+def test_sidecar_event_notification_is_ascii_safe() -> None:
+    event_text = build_event_notification(
+        {
+            "type": "record_done",
+            "job_id": "job-thai",
+            "message": "ทวีศักดิ์",
+        }
+    )
+
+    event_text.encode("ascii")
+    event = json.loads(event_text)
+
+    assert event["params"]["message"] == "ทวีศักดิ์"

@@ -5,7 +5,10 @@ from typing import Any
 
 import pandas as pd
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
+from dmc_sidecar import config as sidecar_config
+from dmc_sidecar.modules.graduation import GraduationModule
 from dmc_sidecar.modules import graduation_legacy as legacy
 
 
@@ -115,6 +118,39 @@ class FakePage:
         self.waits.append(millis)
 
 
+class FakeBrowserContext:
+    pass
+
+
+class FakeFlakyChromium:
+    def __init__(self) -> None:
+        self.profile_paths: list[str] = []
+
+    def launch_persistent_context(
+        self,
+        user_data_dir: str,
+        *,
+        headless: bool,
+        viewport: dict[str, int],
+    ) -> FakeBrowserContext:
+        self.profile_paths.append(user_data_dir)
+        assert headless is False
+        assert viewport == {"width": 1600, "height": 1000}
+        if len(self.profile_paths) == 1:
+            raise PlaywrightError(
+                "BrowserType.launch_persistent_context: Target page, context or browser has been closed"
+            )
+        return FakeBrowserContext()
+
+
+class FakeJobContext:
+    def __init__(self) -> None:
+        self.events: list[dict[str, object]] = []
+
+    def emit_event(self, payload: dict[str, object]) -> None:
+        self.events.append(payload)
+
+
 def _student(
     *,
     order: int = 1,
@@ -169,6 +205,31 @@ def test_load_source_data_rejects_missing_columns(monkeypatch: pytest.MonkeyPatc
 
     with pytest.raises(ValueError, match="expected 7 columns"):
         legacy.load_source_data(Path("bad.xlsx"))
+
+
+def test_launch_browser_context_retries_with_fallback_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sidecar_config, "default_data_dir", lambda: tmp_path)
+    chromium = FakeFlakyChromium()
+    context = FakeJobContext()
+    primary_profile = tmp_path / "profiles" / "primary"
+    primary_profile.mkdir(parents=True)
+
+    browser_context = GraduationModule()._launch_browser_context(
+        chromium=chromium,
+        primary_profile_dir=primary_profile,
+        job_id="job-live-1",
+        options={"dry_run": False},
+        context=context,  # type: ignore[arg-type]
+    )
+
+    assert isinstance(browser_context, FakeBrowserContext)
+    assert chromium.profile_paths[0] == str(primary_profile.resolve())
+    assert chromium.profile_paths[1] == str((tmp_path / "profiles" / "fallback" / "job-live-1").resolve())
+    assert context.events
+    assert "profile สำรอง" in str(context.events[0]["message"])
 
 
 def test_choose_best_match_prefers_exact_student_number() -> None:

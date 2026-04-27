@@ -65,6 +65,18 @@ def test_build_license_status_snapshot_requires_activation_when_cloud_enabled(mo
     assert snapshot.message == "LICENSE_REQUIRED"
 
 
+def test_build_license_status_snapshot_allows_dev_unlicensed_jobs_when_cloud_enabled(monkeypatch) -> None:
+    monkeypatch.setattr("dmc_sidecar.license_client.cloud_base_url", lambda: "https://cloud.example.test")
+    monkeypatch.setattr("dmc_sidecar.license_client.allow_unlicensed_jobs", lambda: True)
+
+    snapshot = build_license_status_snapshot(None)
+
+    assert snapshot.configured is False
+    assert snapshot.can_start_jobs is True
+    assert snapshot.needs_attention is False
+    assert snapshot.message == "LICENSE_DEV_MODE"
+
+
 def test_refresh_license_status_updates_store_from_cloud(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
     store = LicenseStore()

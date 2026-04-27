@@ -430,7 +430,7 @@ export function App() {
     if (!currentJob?.total || currentJob.total <= 0) {
       return 0;
     }
-    return Math.round((currentJob.processed / currentJob.total) * 100);
+    return Math.min(100, Math.max(0, Math.round((currentJob.processed / currentJob.total) * 100)));
   }, [currentJob]);
 
   async function handleBrowseFile() {
@@ -690,10 +690,13 @@ export function App() {
           "radial-gradient(circle at top left, rgb(240, 253, 250), rgb(226, 232, 240) 50%, rgb(248, 250, 252))",
         color: "rgb(15, 23, 42)",
         fontFamily: "\"Segoe UI\", Tahoma, sans-serif",
+        boxSizing: "border-box",
+        overflowX: "hidden",
       }}
     >
       <section
         style={{
+          width: "100%",
           maxWidth: "1280px",
           margin: "0 auto",
           backgroundColor: "rgba(255, 255, 255, 0.9)",
@@ -701,6 +704,8 @@ export function App() {
           padding: "28px",
           boxShadow: "0 30px 80px rgba(15, 23, 42, 0.12)",
           backdropFilter: "blur(10px)",
+          boxSizing: "border-box",
+          overflowX: "hidden",
         }}
       >
         <p style={{ margin: 0, fontSize: "13px", letterSpacing: "0.08em", textTransform: "uppercase" }}>
@@ -767,14 +772,15 @@ export function App() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1.25fr 1fr 1fr",
+            gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
             gap: "20px",
+            minWidth: 0,
           }}
         >
           <PreviewPanel preview={preview} />
           <JobProgressPanel currentJob={currentJob} progressPercent={progressPercent} />
 
-          <div style={{ display: "grid", gap: "20px" }}>
+          <div style={{ display: "grid", gap: "20px", minWidth: 0 }}>
             <ExistingJobsPanel
               existingJobs={existingJobs}
               activeJobId={activeJobId}
