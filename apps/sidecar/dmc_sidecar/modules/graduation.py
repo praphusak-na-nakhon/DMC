@@ -270,6 +270,7 @@ class GraduationModule(AutomationModule):
                             checkpoint=checkpoint,
                             finished_at=utc_now(),
                         )
+                        status = context.job_store.get_status(job_id) or {}
                         context.emit_event(
                             {
                                 "type": "job_done",
@@ -277,6 +278,7 @@ class GraduationModule(AutomationModule):
                                 "status": "done",
                                 "report_path": str(csv_path),
                                 "review_report_path": str(review_path),
+                                "run_summary": status.get("run_summary"),
                             }
                         )
                         return

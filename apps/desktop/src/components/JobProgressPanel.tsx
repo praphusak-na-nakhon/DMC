@@ -22,6 +22,7 @@ function statusBadgeClass(status: string) {
 export function JobProgressPanel({ currentJob, progressPercent, onRevealPath }: JobProgressPanelProps) {
   const reportPath = currentJob?.report_path ?? null;
   const reviewReportPath = currentJob?.review_report_path ?? null;
+  const runSummary = currentJob?.run_summary ?? null;
   const processedLabel =
     currentJob?.total !== null && currentJob?.total !== undefined && currentJob.processed > currentJob.total
       ? `${currentJob.processed} แถวบนเว็บ (Excel validate ${currentJob.total} รายการ)`
@@ -68,6 +69,40 @@ export function JobProgressPanel({ currentJob, progressPercent, onRevealPath }: 
                 <div className="mt-1 text-lg font-semibold">{currentJob.failed}</div>
               </div>
             </div>
+
+            {runSummary ? (
+              <div className="space-y-2 rounded-lg border bg-muted/25 p-3">
+                <div>
+                  <div className="font-semibold">สรุปผลรันล่าสุด</div>
+                  <div className="text-xs text-muted-foreground">
+                    เทียบแถวที่อ่านจาก DMC กับข้อมูลที่รับจาก Excel
+                  </div>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-md border bg-background p-3">
+                    <div className="text-xs text-muted-foreground">DMC rows ทั้งหมด</div>
+                    <div className="mt-1 text-xl font-semibold">{runSummary.dmc_rows_total}</div>
+                  </div>
+                  <div className="rounded-md border bg-background p-3">
+                    <div className="text-xs text-muted-foreground">matched จาก Excel</div>
+                    <div className="mt-1 text-xl font-semibold">{runSummary.matched_from_excel}</div>
+                  </div>
+                  <div className="rounded-md border bg-background p-3">
+                    <div className="text-xs text-muted-foreground">default 207</div>
+                    <div className="mt-1 text-xl font-semibold">{runSummary.default_207}</div>
+                  </div>
+                  <div className="rounded-md border bg-background p-3">
+                    <div className="text-xs text-muted-foreground">Excel ไม่พบใน DMC</div>
+                    <div className="mt-1 text-xl font-semibold">{runSummary.excel_missing}</div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                  <span>ต้อง review: {runSummary.review_rows}</span>
+                  <span>เขียนจริง: {runSummary.applied_rows}</span>
+                  <span>dry run: {runSummary.dry_run_rows}</span>
+                </div>
+              </div>
+            ) : null}
 
             <div className="grid gap-2 text-sm">
               <div className="break-words">

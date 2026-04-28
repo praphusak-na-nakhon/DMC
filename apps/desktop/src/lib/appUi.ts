@@ -120,6 +120,7 @@ export function buildDraftJob(
     started_at: null,
     finished_at: null,
     level_label: null,
+    run_summary: null,
   };
 }
 
@@ -160,6 +161,7 @@ function sanitizeJobForDiagnostics(job: JobStatusSnapshot | null): Record<string
     has_report_path: Boolean(job.report_path),
     has_review_report_path: Boolean(job.review_report_path),
     has_stopped_item: Boolean(job.stopped_item),
+    run_summary: job.run_summary,
   };
 }
 

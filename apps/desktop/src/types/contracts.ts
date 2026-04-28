@@ -98,6 +98,16 @@ export type ValidateExcelResponse = {
   preview: PreviewRow[];
 };
 
+export type JobRunSummary = {
+  dmc_rows_total: number;
+  matched_from_excel: number;
+  default_207: number;
+  excel_missing: number;
+  review_rows: number;
+  applied_rows: number;
+  dry_run_rows: number;
+};
+
 export type JobStatusSnapshot = {
   job_id: string;
   module: string;
@@ -116,6 +126,7 @@ export type JobStatusSnapshot = {
   started_at: string | null;
   finished_at: string | null;
   level_label: string | null;
+  run_summary: JobRunSummary | null;
 };
 
 export type StartJobResponse = {
@@ -261,6 +272,7 @@ export type SidecarEvent =
       status: string;
       report_path: string;
       review_report_path: string;
+      run_summary: JobRunSummary | null;
     }
   | {
       type: "job_stopped";
@@ -335,6 +347,24 @@ export function parseValidateExcelResponse(value: unknown): ValidateExcelRespons
   };
 }
 
+function parseJobRunSummary(value: unknown, context = "job_run_summary"): JobRunSummary {
+  const record = asRecord(value, context);
+  return {
+    dmc_rows_total: readNumber(record, "dmc_rows_total", context),
+    matched_from_excel: readNumber(record, "matched_from_excel", context),
+    default_207: readNumber(record, "default_207", context),
+    excel_missing: readNumber(record, "excel_missing", context),
+    review_rows: readNumber(record, "review_rows", context),
+    applied_rows: readNumber(record, "applied_rows", context),
+    dry_run_rows: readNumber(record, "dry_run_rows", context),
+  };
+}
+
+function parseOptionalJobRunSummary(record: UnknownRecord, key: string, context: string): JobRunSummary | null {
+  const value = readObjectOrNull(record, key, context);
+  return value ? parseJobRunSummary(value, `${context}.${key}`) : null;
+}
+
 export function parseJobStatusSnapshot(value: unknown): JobStatusSnapshot {
   const record = asRecord(value, "job_status_snapshot");
   return {
@@ -355,6 +385,7 @@ export function parseJobStatusSnapshot(value: unknown): JobStatusSnapshot {
     started_at: readOptionalString(record, "started_at", "job_status_snapshot"),
     finished_at: readOptionalString(record, "finished_at", "job_status_snapshot"),
     level_label: readOptionalString(record, "level_label", "job_status_snapshot"),
+    run_summary: parseOptionalJobRunSummary(record, "run_summary", "job_status_snapshot"),
   };
 }
 
@@ -613,6 +644,7 @@ export function parseSidecarEvent(value: unknown): SidecarEvent {
         status: readString(record, "status", "sidecar_event"),
         report_path: readString(record, "report_path", "sidecar_event"),
         review_report_path: readString(record, "review_report_path", "sidecar_event"),
+        run_summary: parseOptionalJobRunSummary(record, "run_summary", "sidecar_event"),
       };
     case "job_stopped":
       return {

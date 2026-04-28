@@ -25,6 +25,9 @@
       "bundled-sidecar",
       "release-config"
     ],
+    "icon": [
+      "icons/icon.ico"
+    ],
     "targets": "msi"
   },
   "plugins": {

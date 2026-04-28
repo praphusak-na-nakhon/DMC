@@ -29,16 +29,17 @@ export function ExistingJobsPanel({
   onResumeExisting,
   onRevealPath,
 }: ExistingJobsPanelProps) {
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "done" | "failed">("active");
+  const [statusFilter, setStatusFilter] = useState<"latest" | "active" | "done" | "failed" | "all">("latest");
   const visibleJobs = useMemo(() => {
-    if (statusFilter === "all") return existingJobs;
+    if (statusFilter === "latest") return existingJobs.slice(0, 20);
+    if (statusFilter === "all") return existingJobs.slice(0, 20);
     if (statusFilter === "active") {
       return existingJobs.filter((job) =>
         ["running", "paused", "stopped_on_review", "failed"].includes(job.status),
-      );
+      ).slice(0, 20);
     }
-    if (statusFilter === "done") return existingJobs.filter((job) => job.status === "done");
-    return existingJobs.filter((job) => job.status === "failed");
+    if (statusFilter === "done") return existingJobs.filter((job) => job.status === "done").slice(0, 20);
+    return existingJobs.filter((job) => job.status === "failed").slice(0, 20);
   }, [existingJobs, statusFilter]);
 
   return (
@@ -54,6 +55,7 @@ export function ExistingJobsPanel({
             onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
             className="h-9 rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           >
+            <option value="latest">ล่าสุด 20 รายการ</option>
             <option value="active">{messages.app.existingJobs.filterActive}</option>
             <option value="done">{messages.app.existingJobs.filterDone}</option>
             <option value="failed">{messages.app.existingJobs.filterFailed}</option>
@@ -88,6 +90,26 @@ export function ExistingJobsPanel({
                   <div className="mt-1 text-sm text-muted-foreground">
                     {job.level_label ?? "-"} - {job.processed}/{job.total ?? "-"}
                   </div>
+                  {job.run_summary ? (
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                      <div className="rounded-md border bg-muted/30 p-2">
+                        <div>DMC rows</div>
+                        <div className="font-semibold text-foreground">{job.run_summary.dmc_rows_total}</div>
+                      </div>
+                      <div className="rounded-md border bg-muted/30 p-2">
+                        <div>Excel ไม่พบใน DMC</div>
+                        <div className="font-semibold text-foreground">{job.run_summary.excel_missing}</div>
+                      </div>
+                      <div className="rounded-md border bg-muted/30 p-2">
+                        <div>matched</div>
+                        <div className="font-semibold text-foreground">{job.run_summary.matched_from_excel}</div>
+                      </div>
+                      <div className="rounded-md border bg-muted/30 p-2">
+                        <div>default 207</div>
+                        <div className="font-semibold text-foreground">{job.run_summary.default_207}</div>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="mt-2 grid gap-1 text-xs text-muted-foreground">
                     <div className="break-words">
                       <span className="font-semibold text-foreground">{messages.app.existingJobs.sourceFile}:</span>{" "}
@@ -115,6 +137,12 @@ export function ExistingJobsPanel({
                       <Button size="sm" variant="outline" onClick={() => onRevealPath(reportPath)}>
                         <PlayCircle className="h-4 w-4" />
                         {messages.app.progress.openReport}
+                      </Button>
+                    ) : null}
+                    {reviewReportPath ? (
+                      <Button size="sm" variant="outline" onClick={() => onRevealPath(reviewReportPath)}>
+                        <Search className="h-4 w-4" />
+                        เปิด review
                       </Button>
                     ) : null}
                     {reportDirectory ? (

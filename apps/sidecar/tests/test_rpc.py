@@ -38,9 +38,38 @@ def test_list_jobs_rpc(monkeypatch, tmp_path: Path) -> None:
     checkpoint.options = {"dry_run": True}
     store.mark_running(
         "job-1",
-        total_records=300,
+        total_records=3,
         checkpoint=checkpoint,
         started_at="2026-04-22T00:00:00Z",
+    )
+    store.append_results(
+        "job-1",
+        [
+            {
+                "page": 1,
+                "portal_row_index": 1,
+                "matched_order": 1,
+                "matched_status_code": "201",
+                "applied": False,
+                "note": "dry_run",
+            },
+            {
+                "page": 1,
+                "portal_row_index": 2,
+                "matched_order": None,
+                "matched_status_code": "207",
+                "applied": False,
+                "note": "default_missing_dry_run",
+            },
+            {
+                "page": 1,
+                "portal_row_index": 3,
+                "matched_order": 3,
+                "matched_status_code": "",
+                "applied": False,
+                "note": "option_value_not_found",
+            },
+        ],
     )
 
     server = RpcServer(emit_notification=lambda payload: None)
@@ -57,6 +86,15 @@ def test_list_jobs_rpc(monkeypatch, tmp_path: Path) -> None:
 
     assert response["result"]["items"][0]["job_id"] == "job-1"
     assert response["result"]["items"][0]["source_file"] == "C:\\data\\m3.xlsx"
+    assert response["result"]["items"][0]["run_summary"] == {
+        "dmc_rows_total": 3,
+        "matched_from_excel": 2,
+        "default_207": 1,
+        "excel_missing": 1,
+        "review_rows": 1,
+        "applied_rows": 0,
+        "dry_run_rows": 2,
+    }
 
 
 def test_get_module_config_status_rpc(monkeypatch, tmp_path: Path) -> None:

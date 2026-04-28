@@ -261,6 +261,15 @@ def test_graduation_job_runs_against_mock_obec_portal(
     assert status["processed"] == 2
     assert status["succeeded"] == 2
     assert status["failed"] == 0
+    assert status["run_summary"] == {
+        "dmc_rows_total": 2,
+        "matched_from_excel": 2,
+        "default_207": 0,
+        "excel_missing": 0,
+        "review_rows": 0,
+        "applied_rows": 2,
+        "dry_run_rows": 0,
+    }
     assert any(event.get("type") == "job_done" for event in events)
     assert [event.get("type") for event in events].count("record_done") == 2
 

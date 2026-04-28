@@ -239,6 +239,7 @@ class JobManager:
             "started_at": snapshot.started_at or persisted.get("started_at"),
             "finished_at": snapshot.finished_at or persisted.get("finished_at"),
             "level_label": snapshot.level_label or persisted.get("level_label"),
+            "run_summary": persisted.get("run_summary"),
         }
 
     def runtime_statuses(self) -> list[dict[str, Any]]:

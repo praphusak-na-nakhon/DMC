@@ -33,11 +33,9 @@ import { Progress } from "./ui/progress";
 import { Separator } from "./ui/separator";
 import { Switch } from "./ui/switch";
 import type {
-  AvailableUpdate,
   BrowserRuntimeStatus,
   LicenseStatus,
   ModuleConfigStatus,
-  UpdaterStatus,
 } from "../types/contracts";
 
 type BrowserRuntimeProgress = {
@@ -55,10 +53,6 @@ type ControlPanelProps = {
   moduleConfigStatus: ModuleConfigStatus | null;
   browserRuntimeStatus: BrowserRuntimeStatus | null;
   browserRuntimeProgress: BrowserRuntimeProgress;
-  updaterStatus: UpdaterStatus | null;
-  availableUpdate: AvailableUpdate | null;
-  updateMessage: string | null;
-  updateProgress: { downloaded: number; contentLength: number | null } | null;
   supportMessage: string | null;
   errorMessage: string | null;
   licenseKey: string;
@@ -70,8 +64,6 @@ type ControlPanelProps = {
   isStartingJob: boolean;
   isActivatingLicense: boolean;
   isBootstrappingBrowser: boolean;
-  isCheckingUpdate: boolean;
-  isInstallingUpdate: boolean;
   licenseBlocksStart: boolean;
   browserRuntimeBlocksStart: boolean;
   validationBlocksStart: boolean;
@@ -97,8 +89,6 @@ type ControlPanelProps = {
   onBrowseFile: () => void;
   onBootstrapBrowserRuntime: () => void;
   onReloadBrowserRuntime: () => void;
-  onCheckForUpdates: () => void;
-  onInstallUpdate: () => void;
   describeLicenseStatus: (status: LicenseStatus) => string;
   activeJobId: string | null;
   currentJobNeedsAuth: boolean;
@@ -161,10 +151,6 @@ export function ControlPanel({
   moduleConfigStatus,
   browserRuntimeStatus,
   browserRuntimeProgress,
-  updaterStatus,
-  availableUpdate,
-  updateMessage,
-  updateProgress,
   supportMessage,
   errorMessage,
   licenseKey,
@@ -176,8 +162,6 @@ export function ControlPanel({
   isStartingJob,
   isActivatingLicense,
   isBootstrappingBrowser,
-  isCheckingUpdate,
-  isInstallingUpdate,
   licenseBlocksStart,
   browserRuntimeBlocksStart,
   validationBlocksStart,
@@ -203,8 +187,6 @@ export function ControlPanel({
   onBrowseFile,
   onBootstrapBrowserRuntime,
   onReloadBrowserRuntime,
-  onCheckForUpdates,
-  onInstallUpdate,
   describeLicenseStatus,
   activeJobId,
   currentJobNeedsAuth,
@@ -522,43 +504,11 @@ export function ControlPanel({
             </Card>
           </div>
 
-          <Card className="shadow-none">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">App Updates</CardTitle>
-              <CardDescription>
-                เวอร์ชันปัจจุบัน: {updaterStatus?.current_version ?? "-"} · สถานะ updater:{" "}
-                {updaterStatus?.configured ? "พร้อมใช้งาน" : "ยังไม่ตั้งค่า"}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-3">
-              <div className="break-words text-sm text-muted-foreground">Endpoint: {updaterStatus?.endpoint ?? "-"}</div>
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" disabled={isCheckingUpdate} onClick={onCheckForUpdates}>
-                  {isCheckingUpdate ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                  เช็กอัปเดต
-                </Button>
-                <Button disabled={!availableUpdate || isInstallingUpdate} onClick={onInstallUpdate}>
-                  {isInstallingUpdate ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
-                  ติดตั้งอัปเดต
-                </Button>
-              </div>
-              {availableUpdate ? (
-                <div className="grid gap-1 text-sm text-muted-foreground">
-                  <div>พบเวอร์ชันใหม่: {availableUpdate.version}</div>
-                  <div>เผยแพร่เมื่อ: {formatTimestamp(availableUpdate.date)}</div>
-                  <div>รายละเอียด: {availableUpdate.body ?? "-"}</div>
-                </div>
-              ) : null}
-              {updateProgress ? (
-                <div className="text-sm text-muted-foreground">
-                  ดาวน์โหลดแล้ว {updateProgress.downloaded}
-                  {updateProgress.contentLength ? ` / ${updateProgress.contentLength}` : ""} bytes
-                </div>
-              ) : null}
-              {updateMessage ? <div className="break-words text-sm text-muted-foreground">{updateMessage}</div> : null}
-              {supportMessage ? <div className="break-words text-sm text-foreground">{supportMessage}</div> : null}
-            </CardContent>
-          </Card>
+          {supportMessage ? (
+            <Alert>
+              <AlertDescription className="break-words">{supportMessage}</AlertDescription>
+            </Alert>
+          ) : null}
 
           {errorMessage ? (
             <Alert variant="destructive">

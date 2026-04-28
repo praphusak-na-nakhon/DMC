@@ -59,6 +59,7 @@ function mergeJob(
     started_at: partial.started_at ?? base?.started_at ?? null,
     finished_at: partial.finished_at ?? base?.finished_at ?? null,
     level_label: partial.level_label ?? base?.level_label ?? null,
+    run_summary: partial.run_summary ?? base?.run_summary ?? null,
   };
 }
 
@@ -148,6 +149,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
               auth_reason: null,
               report_path: event.report_path,
               review_report_path: event.review_report_path,
+              run_summary: event.run_summary,
             })
           : null;
         return {

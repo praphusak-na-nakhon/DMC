@@ -243,17 +243,17 @@ class JobStore:
                 """,
                 (limit,),
             ).fetchall()
-        return [self._status_from_row(row) for row in rows]
+            return [self._status_from_row(row, connection) for row in rows]
 
     def get_status(self, job_id: str) -> dict[str, Any] | None:
         with connect() as connection:
             row = connection.execute("SELECT * FROM job WHERE id = ?", (job_id,)).fetchone()
-        if row is None:
-            return None
+            if row is None:
+                return None
 
-        return self._status_from_row(row)
+            return self._status_from_row(row, connection)
 
-    def _status_from_row(self, row: sqlite3.Row) -> dict[str, Any]:
+    def _status_from_row(self, row: sqlite3.Row, connection: sqlite3.Connection) -> dict[str, Any]:
         stopped_item = json.loads(row["stopped_item_json"]) if row["stopped_item_json"] else None
 
         return {
@@ -274,7 +274,70 @@ class JobStore:
             "started_at": row["started_at"],
             "finished_at": row["finished_at"],
             "level_label": row["level_label"],
+            "run_summary": self._run_summary(connection, str(row["id"]), row["total_records"]),
         }
+
+    def _run_summary(
+        self,
+        connection: sqlite3.Connection,
+        job_id: str,
+        total_records: int | None,
+    ) -> dict[str, int] | None:
+        rows = connection.execute(
+            """
+            SELECT matched_order, result_json
+            FROM job_record
+            WHERE job_id = ?
+            """,
+            (job_id,),
+        ).fetchall()
+        if not rows:
+            return None
+
+        matched_orders: set[int] = set()
+        summary = {
+            "dmc_rows_total": len(rows),
+            "matched_from_excel": 0,
+            "default_207": 0,
+            "excel_missing": 0,
+            "review_rows": 0,
+            "applied_rows": 0,
+            "dry_run_rows": 0,
+        }
+
+        for row in rows:
+            try:
+                result = json.loads(row["result_json"])
+            except (TypeError, json.JSONDecodeError):
+                result = {}
+
+            matched_order = result.get("matched_order", row["matched_order"])
+            if matched_order is not None:
+                try:
+                    matched_orders.add(int(matched_order))
+                except (TypeError, ValueError):
+                    pass
+
+            note = str(result.get("note") or "")
+            status_code = str(result.get("matched_status_code") or "")
+            if note in {"filled", "dry_run"} or matched_order is not None:
+                summary["matched_from_excel"] += 1
+            if note in {"default_missing_dry_run", "default_missing_filled"} and status_code == "207":
+                summary["default_207"] += 1
+            if note.startswith("low_confidence") or note in {
+                "no_match",
+                "status_code_not_mapped",
+                "option_value_not_found",
+            }:
+                summary["review_rows"] += 1
+            if result.get("applied") is True:
+                summary["applied_rows"] += 1
+            if note == "dry_run" or note.endswith("_dry_run"):
+                summary["dry_run_rows"] += 1
+
+        accepted_total = int(total_records or 0)
+        summary["excel_missing"] = max(accepted_total - len(matched_orders), 0)
+        return summary
 
 
 def _utc_now_for_record() -> str:
