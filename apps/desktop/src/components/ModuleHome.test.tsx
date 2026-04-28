@@ -20,6 +20,7 @@ function renderHome(onOpenModule = vi.fn()) {
     connectionState: "ready" as const,
     databaseStatus: null,
     accountStatus: null,
+    errorMessage: null,
     accountEmail: "",
     accountPassword: "",
     isSigningIn: false,
@@ -67,6 +68,7 @@ function renderHomeWithAccountWarning() {
       message: null,
       last_error: "ACCOUNT_CLOUD_UNAVAILABLE",
     },
+    errorMessage: null,
     accountEmail: "",
     accountPassword: "",
     isSigningIn: false,
@@ -114,5 +116,13 @@ describe("ModuleHome", () => {
     renderHomeWithAccountWarning();
 
     expect(screen.getByText(messages.app.account.errors.ACCOUNT_CLOUD_UNAVAILABLE)).toBeInTheDocument();
+  });
+
+  it("shows global login and cloud errors on the home screen", () => {
+    const props = renderHome();
+
+    render(<ModuleHome {...props} errorMessage={messages.app.account.errors.INVALID_CREDENTIALS} />);
+
+    expect(screen.getByText(messages.app.account.errors.INVALID_CREDENTIALS)).toBeInTheDocument();
   });
 });

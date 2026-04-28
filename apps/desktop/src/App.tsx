@@ -809,6 +809,7 @@ export function App() {
             connectionState={connectionState}
             databaseStatus={databaseStatus}
             accountStatus={accountStatus}
+            errorMessage={errorMessage}
             accountEmail={accountEmail}
             accountPassword={accountPassword}
             isSigningIn={isSigningIn}

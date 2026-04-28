@@ -6,6 +6,7 @@ import { moduleDefinitions, type ModuleId } from "../lib/moduleCatalog";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
+import { Alert, AlertDescription } from "./ui/alert";
 import { SupportToolsPanel } from "./SupportToolsPanel";
 import type { AccountStatus, AvailableUpdate, DatabaseStatus, UpdaterStatus } from "../types/contracts";
 
@@ -20,6 +21,7 @@ type ModuleHomeProps = {
   connectionState: "idle" | "connecting" | "ready" | "error";
   databaseStatus: DatabaseStatus | null;
   accountStatus: AccountStatus | null;
+  errorMessage: string | null;
   accountEmail: string;
   accountPassword: string;
   isSigningIn: boolean;
@@ -50,6 +52,7 @@ export function ModuleHome({
   connectionState,
   databaseStatus,
   accountStatus,
+  errorMessage,
   accountEmail,
   accountPassword,
   isSigningIn,
@@ -107,6 +110,11 @@ export function ModuleHome({
           </div>
         </CardHeader>
         <CardContent className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.65fr)]">
+          {errorMessage ? (
+            <Alert variant="destructive" className="lg:col-span-2">
+              <AlertDescription>{errorMessage}</AlertDescription>
+            </Alert>
+          ) : null}
           {accountWarning ? (
             <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive lg:col-span-2">
               {accountWarning}
