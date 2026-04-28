@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import hmac
 
-from fastapi import HTTPException, Security, status
+from fastapi import HTTPException, Request, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .account_service import AccountRepository, SessionRecord
@@ -13,6 +14,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def require_api_bearer(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
 ) -> str:
     if not settings.api_bearer_token:
@@ -33,7 +35,9 @@ def require_api_bearer(
             detail="invalid bearer token",
         )
 
-    return credentials.credentials
+    actor = f"admin:{hashlib.sha256(credentials.credentials.encode('utf-8')).hexdigest()[:12]}"
+    request.state.admin_actor = actor
+    return actor
 
 
 def require_account_session(

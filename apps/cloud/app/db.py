@@ -158,10 +158,50 @@ def _account_credit_schema(connection: sqlite3.Connection) -> None:
     )
 
 
+def _admin_audit_and_topup_requests(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS admin_audit_log (
+            id TEXT PRIMARY KEY,
+            actor TEXT NOT NULL,
+            action TEXT NOT NULL,
+            target_type TEXT,
+            target_id TEXT,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS credit_topup_requests (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            amount INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            note TEXT,
+            payment_reference TEXT,
+            requested_by TEXT NOT NULL,
+            decided_by TEXT,
+            topup_idempotency_key TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            decided_at TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_admin_audit_log_created
+            ON admin_audit_log(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_credit_topup_requests_status_created
+            ON credit_topup_requests(status, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_credit_topup_requests_user_created
+            ON credit_topup_requests(user_id, created_at DESC);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(version=1, name="baseline_schema", apply=_baseline_schema),
     Migration(version=2, name="add_indexes", apply=_add_indexes),
     Migration(version=3, name="account_credit_schema", apply=_account_credit_schema),
+    Migration(version=4, name="admin_audit_and_topup_requests", apply=_admin_audit_and_topup_requests),
 )
 
 _MIGRATION_LOCK = threading.Lock()

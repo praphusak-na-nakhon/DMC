@@ -80,16 +80,21 @@ def main() -> None:
     check_tauri_config()
     check_package_scripts()
     check_gitignore()
+    cloud_configured = bool(release_config["cloud_base_url"])
+    updater_configured = bool(
+        release_config["updater_endpoint"] and release_config["updater_public_key"]
+    )
+    if release_config["environment"] == "production":
+        require(cloud_configured, "Production release requires --cloud-base-url.")
+        require(updater_configured, "Production release requires updater endpoint and public key.")
 
     print(
         json.dumps(
             {
                 "status": "ok",
                 "environment": release_config["environment"],
-                "cloud_configured": bool(release_config["cloud_base_url"]),
-                "updater_configured": bool(
-                    release_config["updater_endpoint"] and release_config["updater_public_key"]
-                ),
+                "cloud_configured": cloud_configured,
+                "updater_configured": updater_configured,
             },
             ensure_ascii=False,
             sort_keys=True,

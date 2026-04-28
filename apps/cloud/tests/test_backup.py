@@ -18,9 +18,11 @@ def test_cloud_migrations_report_latest_version(monkeypatch, tmp_path: Path) -> 
     version = migrate_database(sqlite_path)
     metadata = get_database_metadata(sqlite_path)
 
-    assert version == 3
-    assert metadata["schema_version"] == 3
+    assert version == 4
+    assert metadata["schema_version"] == 4
     assert "licenses" in metadata["tables"]
+    assert "admin_audit_log" in metadata["tables"]
+    assert "credit_topup_requests" in metadata["tables"]
     assert "schema_migrations" in metadata["tables"]
 
 
@@ -50,7 +52,7 @@ def test_cloud_backup_archive_round_trip(monkeypatch, tmp_path: Path) -> None:
     with zipfile.ZipFile(archive_path, "r") as archive:
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
         assert manifest["kind"] == "dmc-cloud-backup"
-        assert manifest["schema"]["schema_version"] == 3
+        assert manifest["schema"]["schema_version"] == 4
 
     repo.upsert_license(
         license_key="DMC-CLOUD-001",

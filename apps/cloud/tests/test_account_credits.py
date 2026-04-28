@@ -160,6 +160,51 @@ def test_manual_topup_wallet_and_reservation_flow(monkeypatch, tmp_path: Path) -
     assert sorted(entry["type"] for entry in ledger.json()) == ["capture", "release", "reserve", "topup"]
 
 
+def test_admin_topup_request_approval_records_audit(monkeypatch, tmp_path: Path) -> None:
+    user_id = _create_user(monkeypatch, tmp_path)
+    created = client.post(
+        f"/v1/admin/users/{user_id}/credits/topup-requests",
+        headers=_admin_headers(),
+        json={"amount": 12, "payment_reference": "receipt-12", "note": "manual transfer verified"},
+    )
+    assert created.status_code == 200
+    topup_request = created.json()
+    assert topup_request["status"] == "pending"
+    assert topup_request["wallet"] is None
+
+    listed = client.get("/v1/admin/credits/topup-requests?status=pending", headers=_admin_headers())
+    assert listed.status_code == 200
+    assert [item["request_id"] for item in listed.json()] == [topup_request["request_id"]]
+
+    approved = client.post(
+        f"/v1/admin/credits/topup-requests/{topup_request['request_id']}/decision",
+        headers=_admin_headers(),
+        json={"decision": "approved", "idempotency_key": "approval-12"},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "approved"
+    assert approved.json()["wallet"]["balance"] == 12
+
+    repeated = client.post(
+        f"/v1/admin/credits/topup-requests/{topup_request['request_id']}/decision",
+        headers=_admin_headers(),
+        json={"decision": "approved", "idempotency_key": "approval-12"},
+    )
+    assert repeated.status_code == 200
+    assert repeated.json()["status"] == "approved"
+
+    wallet = client.get(f"/v1/admin/users/{user_id}/wallet", headers=_admin_headers())
+    assert wallet.status_code == 200
+    assert wallet.json()["balance"] == 12
+
+    audit = client.get("/v1/admin/audit", headers=_admin_headers())
+    assert audit.status_code == 200
+    actions = [entry["action"] for entry in audit.json()]
+    assert "credit_topup_request.created" in actions
+    assert "credit_topup_request.approved" in actions
+    assert all(not entry["actor"].endswith("dmc-test-token") for entry in audit.json())
+
+
 def test_admin_user_management_endpoints(monkeypatch, tmp_path: Path) -> None:
     user_id = _create_user(monkeypatch, tmp_path)
 

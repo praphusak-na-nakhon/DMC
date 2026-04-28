@@ -52,14 +52,24 @@ Invoke-RestMethod http://127.0.0.1:8000/health
 
 ## 4. เติมเครดิตแบบ manual admin
 
-หลังตรวจการชำระเงินแล้ว ให้เติมเครดิตด้วยคำสั่งนี้:
+วิธีแนะนำคือสร้าง top-up request ก่อน แล้วค่อย approve หลังตรวจการชำระเงิน:
 
 ```powershell
-.\.venv\Scripts\python.exe apps\cloud\scripts\manage_accounts.py topup `
+.\.venv\Scripts\python.exe apps\cloud\scripts\manage_accounts.py request-topup `
   --email teacher@example.test `
   --amount 500 `
-  --note "manual payment receipt #001" `
-  --idempotency-key "receipt-001"
+  --payment-reference "receipt-001" `
+  --note "manual payment pending review"
+```
+
+จากนั้นนำ `request_id` ที่ได้มา approve:
+
+```powershell
+.\.venv\Scripts\python.exe apps\cloud\scripts\manage_accounts.py decide-topup `
+  --request-id "<request_id>" `
+  --decision approved `
+  --idempotency-key "receipt-001" `
+  --note "manual payment verified"
 ```
 
 ดู ledger:
@@ -69,6 +79,8 @@ Invoke-RestMethod http://127.0.0.1:8000/health
 ```
 
 ถ้ารันคำสั่ง top-up ด้วย `--idempotency-key` เดิมซ้ำ ระบบจะไม่เติมเครดิตซ้ำ
+
+ถ้าต้องเติมแบบเร็วสำหรับ staging ยังใช้ `topup` ได้ แต่ production ควรใช้ request/approve เพื่อให้มี audit trail ชัดเจน
 
 ## 5. ทดสอบกับ desktop/sidecar
 
@@ -102,7 +114,11 @@ Endpoints:
 - `PATCH /v1/admin/users/{user_id}` แก้ display name, password หรือ status
 - `GET /v1/admin/users/{user_id}/wallet` ดู wallet
 - `POST /v1/admin/users/{user_id}/credits/topup` เติมเครดิต
+- `POST /v1/admin/users/{user_id}/credits/topup-requests` สร้างคำขอเติมเครดิต
+- `GET /v1/admin/credits/topup-requests` ดูคำขอเติมเครดิต
+- `POST /v1/admin/credits/topup-requests/{request_id}/decision` approve/reject คำขอเติมเครดิต
 - `GET /v1/admin/users/{user_id}/ledger` ดู ledger
+- `GET /v1/admin/audit` ดู audit log ของ admin actions
 
 ## 7. ข้อจำกัด staging
 

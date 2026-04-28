@@ -12,6 +12,7 @@ AccountStatus = Literal["active", "disabled"]
 CreditReservationStatus = Literal["active", "captured", "released"]
 CreditTransactionType = Literal["topup", "reserve", "capture", "release"]
 ModulePricingMode = Literal["per_billable_record"]
+CreditTopupRequestStatus = Literal["pending", "approved", "rejected"]
 
 
 class AuthLoginRequest(BaseModel):
@@ -138,6 +139,40 @@ class CloudCreditTopupRequest(BaseModel):
     idempotency_key: str | None = None
 
 
+class CloudCreditTopupRequestCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    amount: int = Field(gt=0)
+    note: str | None = None
+    payment_reference: str | None = None
+
+
+class CloudCreditTopupDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["approved", "rejected"]
+    note: str | None = None
+    idempotency_key: str | None = None
+
+
+class CloudCreditTopupRequestResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str
+    user_id: str
+    amount: int
+    status: CreditTopupRequestStatus
+    note: str | None
+    payment_reference: str | None
+    requested_by: str
+    decided_by: str | None
+    topup_idempotency_key: str | None
+    created_at: str
+    updated_at: str
+    decided_at: str | None
+    wallet: WalletResponse | None = None
+
+
 class CreditLedgerEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -148,6 +183,18 @@ class CreditLedgerEntry(BaseModel):
     job_id: str | None
     module: str | None
     note: str | None
+    created_at: str
+
+
+class AdminAuditEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    audit_id: str
+    actor: str
+    action: str
+    target_type: str | None
+    target_id: str | None
+    payload: dict[str, object]
     created_at: str
 
 

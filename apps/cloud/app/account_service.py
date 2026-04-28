@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import secrets
 import sqlite3
 import uuid
@@ -17,7 +18,12 @@ from .db import connect, utc_now
 from .schemas import (
     AccountResponse,
     AccountStatus as CloudAccountStatus,
+    AdminAuditEntry,
+    CloudCreditTopupDecisionRequest,
     CloudCreditTopupRequest,
+    CloudCreditTopupRequestCreate,
+    CloudCreditTopupRequestResponse,
+    CreditTopupRequestStatus,
     CloudUserAdminResponse,
     CloudUserCreateRequest,
     CloudUserUpdateRequest,
@@ -304,6 +310,174 @@ class AccountRepository:
             )
         return self.get_wallet(user_id)
 
+    def record_admin_audit(
+        self,
+        *,
+        actor: str,
+        action: str,
+        target_type: str | None,
+        target_id: str | None,
+        payload: dict[str, object] | None = None,
+    ) -> None:
+        with connect(self.sqlite_path) as connection:
+            self._record_admin_audit(
+                connection,
+                actor=actor,
+                action=action,
+                target_type=target_type,
+                target_id=target_id,
+                payload=payload or {},
+            )
+
+    def list_admin_audit(self, *, limit: int = 100, offset: int = 0) -> list[AdminAuditEntry]:
+        safe_limit = min(max(limit, 1), 500)
+        safe_offset = max(offset, 0)
+        with connect(self.sqlite_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM admin_audit_log
+                ORDER BY created_at DESC, id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (safe_limit, safe_offset),
+            ).fetchall()
+        return [
+            AdminAuditEntry(
+                audit_id=str(row["id"]),
+                actor=str(row["actor"]),
+                action=str(row["action"]),
+                target_type=row["target_type"],
+                target_id=row["target_id"],
+                payload=cast(dict[str, object], json.loads(str(row["payload_json"]))),
+                created_at=str(row["created_at"]),
+            )
+            for row in rows
+        ]
+
+    def create_topup_request(
+        self,
+        user_id: str,
+        request: CloudCreditTopupRequestCreate,
+        *,
+        actor: str,
+    ) -> CloudCreditTopupRequestResponse:
+        with connect(self.sqlite_path) as connection:
+            if connection.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone() is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+            request_id = str(uuid.uuid4())
+            now = utc_now()
+            connection.execute(
+                """
+                INSERT INTO credit_topup_requests (
+                    id, user_id, amount, status, note, payment_reference, requested_by,
+                    decided_by, topup_idempotency_key, created_at, updated_at, decided_at
+                )
+                VALUES (?, ?, ?, 'pending', ?, ?, ?, NULL, NULL, ?, ?, NULL)
+                """,
+                (
+                    request_id,
+                    user_id,
+                    request.amount,
+                    request.note,
+                    request.payment_reference,
+                    actor,
+                    now,
+                    now,
+                ),
+            )
+            self._record_admin_audit(
+                connection,
+                actor=actor,
+                action="credit_topup_request.created",
+                target_type="credit_topup_request",
+                target_id=request_id,
+                payload={"user_id": user_id, "amount": request.amount},
+            )
+        return self.get_topup_request(request_id)
+
+    def decide_topup_request(
+        self,
+        request_id: str,
+        request: CloudCreditTopupDecisionRequest,
+        *,
+        actor: str,
+    ) -> CloudCreditTopupRequestResponse:
+        with connect(self.sqlite_path) as connection:
+            row = self._get_topup_request_row(connection, request_id)
+            if row["status"] != "pending":
+                response = self._topup_request_response_from_row(row)
+                return response.model_copy(update={"wallet": self._wallet_from_connection(connection, str(row["user_id"]))})
+
+            now = utc_now()
+            idempotency_key = request.idempotency_key or f"topup-request:{request_id}"
+            wallet: WalletResponse | None = None
+            if request.decision == "approved":
+                wallet = self._topup_user_in_connection(
+                    connection,
+                    str(row["user_id"]),
+                    amount=int(row["amount"]),
+                    idempotency_key=idempotency_key,
+                    note=request.note or row["note"],
+                )
+            connection.execute(
+                """
+                UPDATE credit_topup_requests
+                SET status = ?, note = COALESCE(?, note), decided_by = ?,
+                    topup_idempotency_key = ?, updated_at = ?, decided_at = ?
+                WHERE id = ?
+                """,
+                (request.decision, request.note, actor, idempotency_key, now, now, request_id),
+            )
+            self._record_admin_audit(
+                connection,
+                actor=actor,
+                action=f"credit_topup_request.{request.decision}",
+                target_type="credit_topup_request",
+                target_id=request_id,
+                payload={"user_id": str(row["user_id"]), "amount": int(row["amount"])},
+            )
+        response = self.get_topup_request(request_id)
+        return response.model_copy(update={"wallet": wallet}) if wallet is not None else response
+
+    def get_topup_request(self, request_id: str) -> CloudCreditTopupRequestResponse:
+        with connect(self.sqlite_path) as connection:
+            row = self._get_topup_request_row(connection, request_id)
+        return self._topup_request_response_from_row(row)
+
+    def list_topup_requests(
+        self,
+        *,
+        status_filter: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[CloudCreditTopupRequestResponse]:
+        safe_limit = min(max(limit, 1), 500)
+        safe_offset = max(offset, 0)
+        with connect(self.sqlite_path) as connection:
+            if status_filter:
+                rows = connection.execute(
+                    """
+                    SELECT *
+                    FROM credit_topup_requests
+                    WHERE status = ?
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (status_filter, safe_limit, safe_offset),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT *
+                    FROM credit_topup_requests
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (safe_limit, safe_offset),
+                ).fetchall()
+        return [self._topup_request_response_from_row(row) for row in rows]
+
     def list_users(self, *, limit: int = 100, offset: int = 0) -> list[CloudUserAdminResponse]:
         safe_limit = min(max(limit, 1), 500)
         safe_offset = max(offset, 0)
@@ -576,6 +750,111 @@ class AccountRepository:
         if row is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="reservation not found")
         return cast(sqlite3.Row, row)
+
+    def _get_topup_request_row(self, connection: sqlite3.Connection, request_id: str) -> sqlite3.Row:
+        row = connection.execute(
+            """
+            SELECT *
+            FROM credit_topup_requests
+            WHERE id = ?
+            """,
+            (request_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="topup request not found")
+        return cast(sqlite3.Row, row)
+
+    def _topup_user_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        user_id: str,
+        *,
+        amount: int,
+        idempotency_key: str,
+        note: str | None,
+    ) -> WalletResponse:
+        existing = connection.execute(
+            """
+            SELECT 1 FROM credit_transactions
+            WHERE user_id = ? AND idempotency_key = ?
+            """,
+            (user_id, idempotency_key),
+        ).fetchone()
+        if existing is None:
+            if connection.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone() is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+            now = utc_now()
+            connection.execute(
+                "UPDATE wallets SET balance = balance + ?, updated_at = ? WHERE user_id = ?",
+                (amount, now, user_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO credit_transactions (
+                    id, user_id, type, amount, reservation_id, job_id, module,
+                    idempotency_key, note, created_at
+                )
+                VALUES (?, ?, 'topup', ?, NULL, NULL, NULL, ?, ?, ?)
+                """,
+                (str(uuid.uuid4()), user_id, amount, idempotency_key, note, now),
+            )
+        return self._wallet_from_connection(connection, user_id)
+
+    def _wallet_from_connection(self, connection: sqlite3.Connection, user_id: str) -> WalletResponse:
+        row = connection.execute("SELECT balance FROM wallets WHERE user_id = ?", (user_id,)).fetchone()
+        reserved_row = connection.execute(
+            """
+            SELECT COALESCE(SUM(units_reserved - units_captured - units_released), 0) AS reserved
+            FROM credit_reservations
+            WHERE user_id = ? AND status = 'active'
+            """,
+            (user_id,),
+        ).fetchone()
+        balance = int(row["balance"]) if row is not None else 0
+        reserved = int(reserved_row["reserved"]) if reserved_row is not None else 0
+        return WalletResponse(user_id=user_id, balance=balance, reserved=reserved, available=max(balance - reserved, 0))
+
+    def _record_admin_audit(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        actor: str,
+        action: str,
+        target_type: str | None,
+        target_id: str | None,
+        payload: dict[str, object],
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO admin_audit_log (id, actor, action, target_type, target_id, payload_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid.uuid4()),
+                actor,
+                action,
+                target_type,
+                target_id,
+                json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                utc_now(),
+            ),
+        )
+
+    def _topup_request_response_from_row(self, row: sqlite3.Row) -> CloudCreditTopupRequestResponse:
+        return CloudCreditTopupRequestResponse(
+            request_id=str(row["id"]),
+            user_id=str(row["user_id"]),
+            amount=int(row["amount"]),
+            status=cast(CreditTopupRequestStatus, row["status"]),
+            note=row["note"],
+            payment_reference=row["payment_reference"],
+            requested_by=str(row["requested_by"]),
+            decided_by=row["decided_by"],
+            topup_idempotency_key=row["topup_idempotency_key"],
+            created_at=str(row["created_at"]),
+            updated_at=str(row["updated_at"]),
+            decided_at=row["decided_at"],
+        )
 
     def _sync_reservation_status(
         self,
