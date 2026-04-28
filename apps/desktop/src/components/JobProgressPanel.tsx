@@ -1,5 +1,9 @@
+import { AlertCircle, CheckCircle2, ExternalLink, FileText, FolderOpen, Loader2 } from "lucide-react";
 import messages from "../i18n/th.json";
-import { buttonStyle, cardStyle } from "../lib/appUi";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
+import { Progress } from "./ui/progress";
 import type { JobStatusSnapshot } from "../types/contracts";
 
 type JobProgressPanelProps = {
@@ -8,7 +12,12 @@ type JobProgressPanelProps = {
   onRevealPath: (path: string) => void;
 };
 
-const pathTextStyle = { wordBreak: "break-all" as const, overflowWrap: "anywhere" as const };
+const activeStatuses = new Set(["running", "paused", "stopped_on_review"]);
+
+function statusBadgeClass(status: string) {
+  if (status === "failed" || status === "cancelled") return "border-destructive/30 bg-destructive/15 text-destructive";
+  return "border-border bg-secondary text-secondary-foreground";
+}
 
 export function JobProgressPanel({ currentJob, progressPercent, onRevealPath }: JobProgressPanelProps) {
   const reportPath = currentJob?.report_path ?? null;
@@ -20,93 +29,111 @@ export function JobProgressPanel({ currentJob, progressPercent, onRevealPath }: 
   const reportDirectory = reportPath?.replace(/[\\/][^\\/]+$/, "") ?? reviewReportPath?.replace(/[\\/][^\\/]+$/, "");
 
   return (
-    <section style={{ ...cardStyle, minWidth: 0 }}>
-      <h2 style={{ marginTop: 0 }}>{messages.app.progress.title}</h2>
-      {currentJob ? (
-        <>
-          <div
-            style={{
-              height: "14px",
-              borderRadius: "999px",
-              backgroundColor: "rgb(226, 232, 240)",
-              overflow: "hidden",
-              marginBottom: "14px",
-            }}
-          >
-            <div
-              style={{
-                width: `${progressPercent}%`,
-                height: "100%",
-                background: "linear-gradient(90deg, rgb(13, 148, 136), rgb(34, 197, 94))",
-                transition: "width 200ms ease",
-              }}
-            />
+    <Card className="min-w-0">
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle>{messages.app.progress.title}</CardTitle>
+            <CardDescription>สถานะงานล่าสุดและไฟล์รายงานหลังจบงาน</CardDescription>
           </div>
-          <div style={{ display: "grid", gap: "8px", lineHeight: 1.6, minWidth: 0 }}>
-            <div>
-              <strong>{messages.app.progress.status}:</strong> {currentJob.status}
+          {currentJob ? (
+            <Badge variant="outline" className={statusBadgeClass(currentJob.status)}>
+              {currentJob.status}
+            </Badge>
+          ) : null}
+        </div>
+      </CardHeader>
+      <CardContent className="min-w-0">
+        {currentJob ? (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Progress value={progressPercent} className="h-3" />
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>{messages.app.progress.processed}: {processedLabel}</span>
+                <span>{Math.round(progressPercent)}%</span>
+              </div>
             </div>
-            <div>
-              <strong>{messages.app.progress.processed}:</strong> {processedLabel}
+
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div className="rounded-lg border bg-muted/40 p-3">
+                <div className="text-xs text-muted-foreground">{messages.app.progress.currentPage}</div>
+                <div className="mt-1 text-lg font-semibold">{currentJob.current_page ?? "-"}</div>
+              </div>
+              <div className="rounded-lg border bg-muted/40 p-3">
+                <div className="text-xs">{messages.app.progress.success}</div>
+                <div className="mt-1 text-lg font-semibold">{currentJob.succeeded}</div>
+              </div>
+              <div className="rounded-lg border bg-muted/40 p-3">
+                <div className="text-xs">{messages.app.progress.failed}</div>
+                <div className="mt-1 text-lg font-semibold">{currentJob.failed}</div>
+              </div>
             </div>
-            <div>
-              <strong>{messages.app.progress.currentPage}:</strong> {currentJob.current_page ?? "-"}
+
+            <div className="grid gap-2 text-sm">
+              <div className="break-words">
+                <span className="font-semibold">ไฟล์:</span> {currentJob.source_file}
+              </div>
+              <div className="break-words">
+                <span className="font-semibold">Report:</span> {reportPath ?? "-"}
+              </div>
+              <div className="break-words">
+                <span className="font-semibold">Review:</span> {reviewReportPath ?? "-"}
+              </div>
             </div>
-            <div>
-              <strong>{messages.app.progress.success}:</strong> {currentJob.succeeded}
-            </div>
-            <div>
-              <strong>{messages.app.progress.failed}:</strong> {currentJob.failed}
-            </div>
-            <div style={pathTextStyle}>
-              <strong>ไฟล์:</strong> {currentJob.source_file}
-            </div>
-            <div style={pathTextStyle}>
-              <strong>Report:</strong> {reportPath ?? "-"}
-            </div>
-            <div style={pathTextStyle}>
-              <strong>Review:</strong> {reviewReportPath ?? "-"}
-            </div>
+
             {reportPath || reviewReportPath ? (
-              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "6px" }}>
+              <div className="flex flex-wrap gap-2">
                 {reportPath ? (
-                  <button
-                    style={{ ...buttonStyle, padding: "8px 12px", backgroundColor: "rgb(37, 99, 235)" }}
-                    onClick={() => onRevealPath(reportPath)}
-                  >
+                  <Button size="sm" onClick={() => onRevealPath(reportPath)}>
+                    <FileText className="h-4 w-4" />
                     {messages.app.progress.openReport}
-                  </button>
+                  </Button>
                 ) : null}
                 {reportDirectory ? (
-                  <button
-                    style={{ ...buttonStyle, padding: "8px 12px", backgroundColor: "rgb(8, 145, 178)" }}
-                    onClick={() => onRevealPath(reportDirectory)}
-                  >
+                  <Button size="sm" variant="outline" onClick={() => onRevealPath(reportDirectory)}>
+                    <FolderOpen className="h-4 w-4" />
                     {messages.app.progress.openReportFolder}
-                  </button>
+                  </Button>
+                ) : null}
+                {reviewReportPath ? (
+                  <Button size="sm" variant="outline" onClick={() => onRevealPath(reviewReportPath)}>
+                    <ExternalLink className="h-4 w-4" />
+                    เปิด review
+                  </Button>
                 ) : null}
               </div>
             ) : null}
+
             {currentJob.needs_auth ? (
-              <div
-                style={{
-                  marginTop: "8px",
-                  borderRadius: "12px",
-                  backgroundColor: "rgb(255, 247, 237)",
-                  border: "1px solid rgb(253, 230, 138)",
-                  padding: "12px 14px",
-                  color: "rgb(154, 52, 18)",
-                }}
-              >
-                ต้องลงชื่อเข้าใช้ DMC ใหม่ก่อน resume
-                <div style={{ marginTop: "6px" }}>reason: {currentJob.auth_reason ?? "auth_required"}</div>
+              <div className="rounded-lg border bg-muted/40 p-3 text-sm">
+                <div className="flex items-center gap-2 font-semibold">
+                  <AlertCircle className="h-4 w-4" />
+                  ต้อง login DMC แล้วกด Resume
+                </div>
+                <div className="mt-1 text-muted-foreground">reason: {currentJob.auth_reason ?? "auth_required"}</div>
+              </div>
+            ) : currentJob.status === "done" ? (
+              <div className="rounded-lg border bg-muted/40 p-3 text-sm">
+                <div className="flex items-center gap-2 font-semibold">
+                  <CheckCircle2 className="h-4 w-4" />
+                  งานเสร็จแล้ว ตรวจ report เพื่อปิดรอบงาน
+                </div>
+              </div>
+            ) : activeStatuses.has(currentJob.status) ? (
+              <div className="rounded-lg border bg-muted/35 p-3 text-sm text-muted-foreground">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  กำลังติดตามสถานะจาก sidecar
+                </div>
               </div>
             ) : null}
           </div>
-        </>
-      ) : (
-        <p style={{ marginBottom: 0 }}>{messages.app.progress.empty}</p>
-      )}
-    </section>
+        ) : (
+          <div className="rounded-lg border border-dashed bg-muted/30 p-6 text-center text-sm text-muted-foreground">
+            {messages.app.progress.empty}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

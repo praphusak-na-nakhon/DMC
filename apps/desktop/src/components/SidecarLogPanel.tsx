@@ -1,11 +1,6 @@
+import { MessageSquareText } from "lucide-react";
 import messages from "../i18n/th.json";
-import { cardStyle } from "../lib/appUi";
-
-const logTextStyle = {
-  minWidth: 0,
-  overflowWrap: "anywhere",
-  wordBreak: "break-word",
-} as const;
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 
 type SidecarLogPanelProps = {
   sidecarMessages: string[];
@@ -13,28 +8,34 @@ type SidecarLogPanelProps = {
 
 export function SidecarLogPanel({ sidecarMessages }: SidecarLogPanelProps) {
   return (
-    <section style={{ ...cardStyle, minWidth: 0 }}>
-      <h2 style={{ marginTop: 0 }}>{messages.app.sidecarLog.title}</h2>
-      {sidecarMessages.length > 0 ? (
-        <div style={{ display: "grid", gap: "8px", minWidth: 0 }}>
-          {sidecarMessages.map((message, index) => (
-            <div
-              key={`${message}-${index}`}
-              style={{
-                borderRadius: "12px",
-                backgroundColor: "rgb(248, 250, 252)",
-                padding: "10px 12px",
-                color: "rgb(51, 65, 85)",
-                ...logTextStyle,
-              }}
-            >
-              {message}
-            </div>
-          ))}
+    <Card className="min-w-0">
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle>{messages.app.sidecarLog.title}</CardTitle>
+            <CardDescription>ข้อความล่าสุดจาก automation runtime</CardDescription>
+          </div>
+          <MessageSquareText className="h-5 w-5 shrink-0 text-primary" />
         </div>
-      ) : (
-        <p style={{ marginBottom: 0 }}>{messages.app.sidecarLog.empty}</p>
-      )}
-    </section>
+      </CardHeader>
+      <CardContent>
+        {sidecarMessages.length > 0 ? (
+          <div className="panel-scroll grid max-h-[360px] gap-2 overflow-auto pr-1">
+            {sidecarMessages.map((message, index) => (
+              <div
+                key={`${message}-${index}`}
+                className="min-w-0 break-words rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground"
+              >
+                {message}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed bg-muted/30 p-5 text-center text-sm text-muted-foreground">
+            {messages.app.sidecarLog.empty}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

@@ -32,7 +32,7 @@ import {
   cancelJob,
   getJobStatus,
 } from "./lib/rpcClient";
-import { buildDraftJob, buildJobId, buildSupportDiagnostics, buildTimestampSlug, cardStyle } from "./lib/appUi";
+import { buildDraftJob, buildJobId, buildSupportDiagnostics, buildTimestampSlug } from "./lib/appUi";
 import { useJobStatusReconciliation } from "./hooks/useJobStatusReconciliation";
 import { usePeriodicLicenseHeartbeat } from "./hooks/usePeriodicLicenseHeartbeat";
 import { useJobStore } from "./stores/useJobStore";
@@ -42,6 +42,7 @@ import { JobProgressPanel } from "./components/JobProgressPanel";
 import { PreviewPanel } from "./components/PreviewPanel";
 import { SidecarLogPanel } from "./components/SidecarLogPanel";
 import { SupportToolsPanel } from "./components/SupportToolsPanel";
+import { Card } from "./components/ui/card";
 import type {
   AvailableUpdate,
   BrowserRuntimeStatus,
@@ -715,36 +716,8 @@ export function App() {
   }
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        padding: "clamp(12px, 3vw, 28px)",
-        background:
-          "radial-gradient(circle at top left, rgb(240, 253, 250), rgb(226, 232, 240) 50%, rgb(248, 250, 252))",
-        color: "rgb(15, 23, 42)",
-        fontFamily: "\"Segoe UI\", Tahoma, sans-serif",
-        boxSizing: "border-box",
-        overflowX: "hidden",
-      }}
-    >
-      <section
-        style={{
-          width: "100%",
-          maxWidth: "1280px",
-          margin: "0 auto",
-          backgroundColor: "rgba(255, 255, 255, 0.9)",
-          borderRadius: "24px",
-          padding: "clamp(16px, 3vw, 28px)",
-          boxShadow: "0 30px 80px rgba(15, 23, 42, 0.12)",
-          backdropFilter: "blur(10px)",
-          boxSizing: "border-box",
-          overflowX: "hidden",
-        }}
-      >
-        <p style={{ margin: 0, fontSize: "13px", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-          {messages.app.tagline}
-        </p>
-
+    <main className="min-h-screen overflow-x-hidden bg-background text-foreground">
+      <section className="mx-auto w-full max-w-[1440px] px-3 py-4 sm:px-5 lg:px-6">
         <ControlPanel
           connectionState={connectionState}
           licenseStatus={licenseStatus}
@@ -804,12 +777,7 @@ export function App() {
           currentJobNeedsAuth={Boolean(currentJob?.needs_auth)}
         />
 
-        <div
-          className="app-dashboard-grid"
-          style={{
-            minWidth: 0,
-          }}
-        >
+        <div className="app-dashboard-grid mt-4">
           <PreviewPanel preview={preview} />
           <JobProgressPanel
             currentJob={currentJob}
@@ -817,7 +785,7 @@ export function App() {
             onRevealPath={(path) => void handleRevealPath(path)}
           />
 
-          <div className="responsive-stack" style={{ display: "grid", gap: "20px" }}>
+          <div className="responsive-stack grid gap-4">
             <ExistingJobsPanel
               existingJobs={existingJobs}
               activeJobId={activeJobId}
@@ -846,9 +814,9 @@ export function App() {
           </div>
         </div>
 
-        <div style={{ ...cardStyle, marginTop: "20px", fontSize: "13px", color: "rgb(71, 85, 105)" }}>
+        <Card className="mt-4 px-4 py-3 text-xs text-muted-foreground">
           Event-driven sidecar updates are primary. Background reconciliation now runs every 15s only while a job is active, reducing duplicate polling load.
-        </div>
+        </Card>
       </section>
     </main>
   );

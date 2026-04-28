@@ -1,6 +1,10 @@
 import { useMemo, useState } from "react";
+import { FolderOpen, PlayCircle, RotateCcw, Search } from "lucide-react";
 import messages from "../i18n/th.json";
-import { buttonStyle, cardStyle, formatTimestamp } from "../lib/appUi";
+import { formatTimestamp } from "../lib/appUi";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import type { JobStatusSnapshot } from "../types/contracts";
 
 type ExistingJobsPanelProps = {
@@ -12,6 +16,11 @@ type ExistingJobsPanelProps = {
   onRevealPath: (path: string) => void;
 };
 
+function jobBadgeClass(status: string) {
+  if (status === "failed" || status === "cancelled") return "border-destructive/30 bg-destructive/15 text-destructive";
+  return "border-border bg-secondary text-secondary-foreground";
+}
+
 export function ExistingJobsPanel({
   existingJobs,
   activeJobId,
@@ -21,112 +30,110 @@ export function ExistingJobsPanel({
   onRevealPath,
 }: ExistingJobsPanelProps) {
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "done" | "failed">("active");
-  const pathTextStyle = { wordBreak: "break-all" as const, overflowWrap: "anywhere" as const };
   const visibleJobs = useMemo(() => {
-    if (statusFilter === "all") {
-      return existingJobs;
-    }
+    if (statusFilter === "all") return existingJobs;
     if (statusFilter === "active") {
       return existingJobs.filter((job) =>
         ["running", "paused", "stopped_on_review", "failed"].includes(job.status),
       );
     }
-    if (statusFilter === "done") {
-      return existingJobs.filter((job) => job.status === "done");
-    }
+    if (statusFilter === "done") return existingJobs.filter((job) => job.status === "done");
     return existingJobs.filter((job) => job.status === "failed");
   }, [existingJobs, statusFilter]);
 
   return (
-    <section style={{ ...cardStyle, minWidth: 0 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
-        <h2 style={{ marginTop: 0, marginBottom: "12px" }}>{messages.app.existingJobs.title}</h2>
-        <select
-          value={statusFilter}
-          onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
-          style={{
-            height: "34px",
-            borderRadius: "10px",
-            border: "1px solid rgb(203, 213, 225)",
-            padding: "0 10px",
-            backgroundColor: "white",
-          }}
-        >
-          <option value="active">{messages.app.existingJobs.filterActive}</option>
-          <option value="done">{messages.app.existingJobs.filterDone}</option>
-          <option value="failed">{messages.app.existingJobs.filterFailed}</option>
-          <option value="all">{messages.app.existingJobs.filterAll}</option>
-        </select>
-      </div>
-      {existingJobs.length > 0 ? (
-        <div style={{ display: "grid", gap: "10px" }}>
-          {visibleJobs.length === 0 ? (
-            <p style={{ margin: 0, color: "rgb(71, 85, 105)" }}>{messages.app.existingJobs.emptyFiltered}</p>
-          ) : null}
-          {visibleJobs.map((job) => {
-            const reportPath = job.report_path;
-            const reviewReportPath = job.review_report_path;
-            const reportDirectory = reportPath?.replace(/[\\/][^\\/]+$/, "") ?? reviewReportPath?.replace(/[\\/][^\\/]+$/, "");
-            return (
-              <div
-                key={job.job_id}
-                style={{
-                  borderRadius: "14px",
-                  border: "1px solid rgb(226, 232, 240)",
-                  padding: "12px 14px",
-                  backgroundColor:
-                    activeJobId === job.job_id ? "rgb(236, 253, 245)" : "rgb(248, 250, 252)",
-                }}
-              >
-                <div style={{ fontWeight: 700, ...pathTextStyle }}>{job.job_id}</div>
-                <div style={{ marginTop: "4px", color: "rgb(71, 85, 105)", fontSize: "14px" }}>
-                  {job.level_label ?? "-"} • {job.status} • {job.processed}/{job.total ?? "-"}
-                </div>
-                <div style={{ marginTop: "6px", fontSize: "13px", color: "rgb(51, 65, 85)", ...pathTextStyle }}>
-                  <strong>{messages.app.existingJobs.sourceFile}:</strong> {job.source_file}
-                </div>
-                <div style={{ marginTop: "4px", fontSize: "13px", color: "rgb(51, 65, 85)" }}>
-                  <strong>{messages.app.existingJobs.updatedAt}:</strong>{" "}
-                  {formatTimestamp(job.finished_at ?? job.started_at)}
-                </div>
-                <div style={{ display: "flex", gap: "8px", marginTop: "10px", flexWrap: "wrap" }}>
-                  <button
-                    style={{ ...buttonStyle, padding: "8px 12px", backgroundColor: "rgb(5, 150, 105)" }}
-                    onClick={() => onSelectJob(job)}
-                  >
-                    ใช้งานรายการนี้
-                  </button>
-                  <button
-                    style={{ ...buttonStyle, padding: "8px 12px", backgroundColor: "rgb(59, 130, 246)" }}
-                    disabled={isStartingJob || job.status === "done" || job.status === "cancelled"}
-                    onClick={() => onResumeExisting(job)}
-                  >
-                    {messages.app.resumeExisting}
-                  </button>
-                  {reportPath ? (
-                    <button
-                      style={{ ...buttonStyle, padding: "8px 12px", backgroundColor: "rgb(37, 99, 235)" }}
-                      onClick={() => onRevealPath(reportPath)}
-                    >
-                      {messages.app.progress.openReport}
-                    </button>
-                  ) : null}
-                  {reportDirectory ? (
-                    <button
-                      style={{ ...buttonStyle, padding: "8px 12px", backgroundColor: "rgb(8, 145, 178)" }}
-                      onClick={() => onRevealPath(reportDirectory)}
-                    >
-                      {messages.app.progress.openReportFolder}
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            );
-          })}
+    <Card className="min-w-0">
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle>{messages.app.existingJobs.title}</CardTitle>
+            <CardDescription>กลับมาทำงานต่อหรือเปิดรายงานย้อนหลัง</CardDescription>
+          </div>
+          <select
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
+            className="h-9 rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="active">{messages.app.existingJobs.filterActive}</option>
+            <option value="done">{messages.app.existingJobs.filterDone}</option>
+            <option value="failed">{messages.app.existingJobs.filterFailed}</option>
+            <option value="all">{messages.app.existingJobs.filterAll}</option>
+          </select>
         </div>
-      ) : (
-        <p style={{ marginBottom: 0 }}>{messages.app.existingJobs.empty}</p>
-      )}
-    </section>
+      </CardHeader>
+      <CardContent>
+        {existingJobs.length > 0 ? (
+          <div className="panel-scroll grid max-h-[680px] gap-3 overflow-auto pr-1">
+            {visibleJobs.length === 0 ? (
+              <div className="rounded-lg border border-dashed bg-muted/30 p-4 text-sm text-muted-foreground">
+                {messages.app.existingJobs.emptyFiltered}
+              </div>
+            ) : null}
+            {visibleJobs.map((job) => {
+              const reportPath = job.report_path;
+              const reviewReportPath = job.review_report_path;
+              const reportDirectory = reportPath?.replace(/[\\/][^\\/]+$/, "") ?? reviewReportPath?.replace(/[\\/][^\\/]+$/, "");
+              const isActive = activeJobId === job.job_id;
+              return (
+                <div
+                  key={job.job_id}
+                  className={`min-w-0 rounded-lg border p-3 ${isActive ? "bg-muted" : "bg-card"}`}
+                >
+                  <div className="flex min-w-0 items-start justify-between gap-2">
+                    <div className="min-w-0 truncate font-semibold">{job.job_id}</div>
+                    <Badge variant="outline" className={jobBadgeClass(job.status)}>
+                      {job.status}
+                    </Badge>
+                  </div>
+                  <div className="mt-1 text-sm text-muted-foreground">
+                    {job.level_label ?? "-"} - {job.processed}/{job.total ?? "-"}
+                  </div>
+                  <div className="mt-2 grid gap-1 text-xs text-muted-foreground">
+                    <div className="break-words">
+                      <span className="font-semibold text-foreground">{messages.app.existingJobs.sourceFile}:</span>{" "}
+                      {job.source_file}
+                    </div>
+                    <div>
+                      <span className="font-semibold text-foreground">{messages.app.existingJobs.updatedAt}:</span>{" "}
+                      {formatTimestamp(job.finished_at ?? job.started_at)}
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={() => onSelectJob(job)}>
+                      <Search className="h-4 w-4" />
+                      ใช้งานรายการนี้
+                    </Button>
+                    <Button
+                      size="sm"
+                      disabled={isStartingJob || job.status === "done" || job.status === "cancelled"}
+                      onClick={() => onResumeExisting(job)}
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                      {messages.app.resumeExisting}
+                    </Button>
+                    {reportPath ? (
+                      <Button size="sm" variant="outline" onClick={() => onRevealPath(reportPath)}>
+                        <PlayCircle className="h-4 w-4" />
+                        {messages.app.progress.openReport}
+                      </Button>
+                    ) : null}
+                    {reportDirectory ? (
+                      <Button size="sm" variant="outline" onClick={() => onRevealPath(reportDirectory)}>
+                        <FolderOpen className="h-4 w-4" />
+                        โฟลเดอร์
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed bg-muted/30 p-6 text-center text-sm text-muted-foreground">
+            {messages.app.existingJobs.empty}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

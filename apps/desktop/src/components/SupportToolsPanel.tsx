@@ -1,11 +1,8 @@
-import { buttonStyle, cardStyle, formatTimestamp } from "../lib/appUi";
+import { ArchiveRestore, Database, Download, FileDown, RefreshCw } from "lucide-react";
+import { formatTimestamp } from "../lib/appUi";
+import { Button } from "./ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import type { DatabaseStatus, LicenseStatus } from "../types/contracts";
-
-const pathTextStyle = {
-  minWidth: 0,
-  overflowWrap: "anywhere",
-  wordBreak: "break-word",
-} as const;
 
 type SupportToolsPanelProps = {
   connectionState: "idle" | "connecting" | "ready" | "error";
@@ -20,6 +17,15 @@ type SupportToolsPanelProps = {
   onExportDiagnostics: () => void;
 };
 
+function Detail({ label, value }: { label: string; value: string | number | null | undefined }) {
+  return (
+    <div className="grid gap-0.5 text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="min-w-0 break-words font-medium">{value ?? "-"}</span>
+    </div>
+  );
+}
+
 export function SupportToolsPanel({
   connectionState,
   databaseStatus,
@@ -32,59 +38,50 @@ export function SupportToolsPanel({
   onRestoreBackup,
   onExportDiagnostics,
 }: SupportToolsPanelProps) {
+  const disabled = connectionState !== "ready";
+
   return (
-    <section style={{ ...cardStyle, minWidth: 0 }}>
-      <h2 style={{ marginTop: 0 }}>Support Tools</h2>
-      <div style={{ display: "grid", gap: "10px", color: "rgb(51, 65, 85)", lineHeight: 1.6 }}>
-        <div style={pathTextStyle}>
-          <strong>Database:</strong> {databaseStatus?.path ?? "-"}
+    <Card className="min-w-0">
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle>Support Tools</CardTitle>
+            <CardDescription>เครื่องมือสำหรับ backup, restore และส่ง diagnostics</CardDescription>
+          </div>
+          <Database className="h-5 w-5 shrink-0 text-primary" />
         </div>
-        <div>
-          <strong>Schema version:</strong> {databaseStatus?.schema_version ?? "-"}
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-3">
+          <Detail label="Database" value={databaseStatus?.path ?? "-"} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Detail label="Schema version" value={databaseStatus?.schema_version ?? "-"} />
+            <Detail label="License tier" value={licenseStatus?.license_tier ?? "-"} />
+            <Detail label="Expires" value={formatTimestamp(licenseStatus?.expires_at ?? null)} />
+            <Detail label="Offline grace" value={formatTimestamp(licenseStatus?.offline_grace_until ?? null)} />
+          </div>
+          <Detail label="Tables" value={databaseStatus?.tables.join(", ") ?? "-"} />
         </div>
-        <div style={pathTextStyle}>
-          <strong>Tables:</strong> {databaseStatus?.tables.join(", ") ?? "-"}
+
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" disabled={disabled} onClick={onRefreshDatabaseStatus}>
+            <RefreshCw className="h-4 w-4" />
+            Refresh DB
+          </Button>
+          <Button size="sm" variant="outline" disabled={disabled || isCreatingBackup} onClick={onCreateBackup}>
+            <Download className="h-4 w-4" />
+            {isCreatingBackup ? "Creating..." : "Export Backup"}
+          </Button>
+          <Button size="sm" variant="secondary" disabled={disabled || isRestoringBackup} onClick={onRestoreBackup}>
+            <ArchiveRestore className="h-4 w-4" />
+            {isRestoringBackup ? "Restoring..." : "Restore Backup"}
+          </Button>
+          <Button size="sm" disabled={disabled || isExportingDiagnostics} onClick={onExportDiagnostics}>
+            <FileDown className="h-4 w-4" />
+            {isExportingDiagnostics ? "Exporting..." : "Diagnostics"}
+          </Button>
         </div>
-        <div>
-          <strong>License tier:</strong> {licenseStatus?.license_tier ?? "-"}
-        </div>
-        <div>
-          <strong>Expires:</strong> {formatTimestamp(licenseStatus?.expires_at ?? null)}
-        </div>
-        <div>
-          <strong>Offline grace:</strong> {formatTimestamp(licenseStatus?.offline_grace_until ?? null)}
-        </div>
-      </div>
-      <div style={{ display: "flex", gap: "8px", marginTop: "14px", flexWrap: "wrap" }}>
-        <button
-          style={{ ...buttonStyle, padding: "8px 12px", backgroundColor: "rgb(8, 145, 178)" }}
-          disabled={connectionState !== "ready"}
-          onClick={onRefreshDatabaseStatus}
-        >
-          Refresh DB Status
-        </button>
-        <button
-          style={{ ...buttonStyle, padding: "8px 12px", backgroundColor: "rgb(37, 99, 235)" }}
-          disabled={connectionState !== "ready" || isCreatingBackup}
-          onClick={onCreateBackup}
-        >
-          {isCreatingBackup ? "Creating Backup..." : "Export Backup"}
-        </button>
-        <button
-          style={{ ...buttonStyle, padding: "8px 12px", backgroundColor: "rgb(202, 138, 4)" }}
-          disabled={connectionState !== "ready" || isRestoringBackup}
-          onClick={onRestoreBackup}
-        >
-          {isRestoringBackup ? "Restoring..." : "Restore Backup"}
-        </button>
-        <button
-          style={{ ...buttonStyle, padding: "8px 12px", backgroundColor: "rgb(99, 102, 241)" }}
-          disabled={connectionState !== "ready" || isExportingDiagnostics}
-          onClick={onExportDiagnostics}
-        >
-          {isExportingDiagnostics ? "Exporting..." : "Export Diagnostics"}
-        </button>
-      </div>
-    </section>
+      </CardContent>
+    </Card>
   );
 }
