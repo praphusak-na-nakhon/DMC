@@ -1,6 +1,7 @@
 import { Loader2, LogIn, LogOut, RefreshCw, UploadCloud, WalletCards } from "lucide-react";
 import messages from "../i18n/th.json";
 import { formatTimestamp } from "../lib/appUi";
+import { describeAccountCode } from "../lib/errorMessages";
 import { moduleDefinitions, type ModuleId } from "../lib/moduleCatalog";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -70,6 +71,10 @@ export function ModuleHome({
   const home = messages.app.home;
   const account = messages.app.account;
   const wallet = accountStatus?.wallet ?? null;
+  const accountWarningCode =
+    accountStatus?.last_error ??
+    (accountStatus?.signed_in && accountStatus.needs_attention ? accountStatus.message : null);
+  const accountWarning = describeAccountCode(accountWarningCode) ?? accountWarningCode ?? null;
 
   return (
     <div className="space-y-6">
@@ -102,6 +107,11 @@ export function ModuleHome({
           </div>
         </CardHeader>
         <CardContent className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.65fr)]">
+          {accountWarning ? (
+            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive lg:col-span-2">
+              {accountWarning}
+            </div>
+          ) : null}
           {accountStatus?.signed_in ? (
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg border bg-muted/40 p-3">

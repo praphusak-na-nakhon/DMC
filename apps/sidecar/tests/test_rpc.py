@@ -444,6 +444,33 @@ def test_live_start_blocks_when_credit_reservation_fails(monkeypatch, tmp_path: 
     assert server.job_store.get_job_record("job-credit-low") is None
 
 
+def test_live_start_blocks_when_account_cloud_is_unavailable(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
+    monkeypatch.setattr(
+        "dmc_sidecar.rpc.reserve_credits",
+        lambda *args, **kwargs: (_ for _ in ()).throw(DomainError("ACCOUNT_CLOUD_UNAVAILABLE")),
+    )
+    server = RpcServer(emit_notification=lambda payload: None)
+    started: list[str] = []
+    monkeypatch.setattr(server.job_manager, "start_job", lambda **_: started.append("started"))
+
+    response = _rpc_call(
+        server,
+        "start_job",
+        {
+            "job_id": "job-cloud-down",
+            "module": "graduation",
+            "excel_path": "C:\\data\\m3.xlsx",
+            "options": {"dry_run": False, "estimated_credits": 3},
+        },
+    )
+
+    assert response["error"]["code"] == "ACCOUNT_CLOUD_UNAVAILABLE"
+    assert started == []
+    assert server.job_store.get_job_record("job-cloud-down") is None
+
+
 def test_live_start_reserves_credits_before_starting_job(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
     monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))

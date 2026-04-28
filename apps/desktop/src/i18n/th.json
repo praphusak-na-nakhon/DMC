@@ -47,7 +47,18 @@
       "insufficientCreditsTitle": "เครดิตไม่พอ",
       "insufficientCredits": "เครดิตไม่พอ กรุณาติดต่อผู้ดูแลเพื่อเติมเครดิต",
       "reserveNotice": "ระบบจะกันเครดิตก่อนเริ่มงาน และคืนเครดิตส่วนที่ไม่ได้ใช้หลังจบงาน",
-      "creditBadge": "ใช้เครดิต {credits}/รายการ"
+      "creditBadge": "ใช้เครดิต {credits}/รายการ",
+      "errors": {
+        "SIGN_IN_REQUIRED": "กรุณาลงชื่อเข้าใช้ก่อนเริ่มส่งข้อมูลเข้า DMC",
+        "ACCOUNT_CLOUD_UNAVAILABLE": "เชื่อมต่อ cloud ไม่ได้ กรุณาตรวจอินเทอร์เน็ตหรือเปิด cloud staging ก่อนเริ่มงานจริง",
+        "ACCOUNT_CLOUD_REQUIRED": "งานจริงต้องเชื่อมต่อ cloud และตรวจเครดิตก่อนเริ่มเสมอ",
+        "INSUFFICIENT_CREDITS": "เครดิตไม่พอ กรุณาติดต่อผู้ดูแลเพื่อเติมเครดิต",
+        "ACCOUNT_DISABLED": "บัญชีนี้ถูกปิดใช้งาน กรุณาติดต่อผู้ดูแล",
+        "INVALID_CREDENTIALS": "อีเมลหรือรหัสผ่านไม่ถูกต้อง",
+        "CLOUD_URL_INSECURE": "ตั้งค่า cloud URL ไม่ปลอดภัย ใช้ HTTPS หรือ localhost สำหรับ staging",
+        "MODULE_DISABLED": "โมดูลนี้ยังไม่เปิดให้ใช้งาน",
+        "RESERVATION_REQUIRED": "ระบบยังกันเครดิตไม่สำเร็จ จึงยังเริ่มงานจริงไม่ได้"
+      }
     },
     "license": {
       "title": "License",

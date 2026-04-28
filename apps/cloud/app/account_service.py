@@ -20,6 +20,7 @@ from .schemas import (
     CloudCreditTopupRequest,
     CloudUserAdminResponse,
     CloudUserCreateRequest,
+    CloudUserUpdateRequest,
     CreditCaptureRequest,
     CreditLedgerEntry,
     CreditReleaseRequest,
@@ -302,6 +303,69 @@ class AccountRepository:
                 (str(uuid.uuid4()), user_id, request.amount, idempotency_key, request.note, now),
             )
         return self.get_wallet(user_id)
+
+    def list_users(self, *, limit: int = 100, offset: int = 0) -> list[CloudUserAdminResponse]:
+        safe_limit = min(max(limit, 1), 500)
+        safe_offset = max(offset, 0)
+        with connect(self.sqlite_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT id
+                FROM users
+                ORDER BY created_at DESC, id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (safe_limit, safe_offset),
+            ).fetchall()
+        users: list[CloudUserAdminResponse] = []
+        for row in rows:
+            user = self.get_user_admin(str(row["id"]))
+            if user is not None:
+                users.append(user)
+        return users
+
+    def get_user_by_email(self, email: str) -> CloudUserAdminResponse | None:
+        normalized_email = _normalize_email(email)
+        with connect(self.sqlite_path) as connection:
+            row = connection.execute(
+                "SELECT id FROM users WHERE email = ?",
+                (normalized_email,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self.get_user_admin(str(row["id"]))
+
+    def update_user(self, user_id: str, request: CloudUserUpdateRequest) -> CloudUserAdminResponse:
+        user = self.get_user_admin(user_id)
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+
+        assignments: list[str] = []
+        values: list[str | None] = []
+        if request.password is not None:
+            assignments.append("password_hash = ?")
+            values.append(_hash_password(request.password))
+        if request.display_name is not None:
+            assignments.append("display_name = ?")
+            values.append(request.display_name)
+        if request.status is not None:
+            assignments.append("status = ?")
+            values.append(request.status)
+
+        if assignments:
+            assignments.append("updated_at = ?")
+            values.append(utc_now())
+            values.append(user_id)
+            with connect(self.sqlite_path) as connection:
+                connection.execute(
+                    f"UPDATE users SET {', '.join(assignments)} WHERE id = ?",
+                    tuple(values),
+                )
+
+        updated = self.get_user_admin(user_id)
+        if updated is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+        return updated
 
     def reserve_credits(self, user_id: str, request: CreditReservationRequest) -> CreditReservationResponse:
         with connect(self.sqlite_path) as connection:

@@ -38,6 +38,7 @@ import {
   cancelJob,
 } from "./lib/rpcClient";
 import { buildDraftJob, buildJobId, buildSupportDiagnostics, buildTimestampSlug } from "./lib/appUi";
+import { describeUserFacingError } from "./lib/errorMessages";
 import { useJobStatusReconciliation } from "./hooks/useJobStatusReconciliation";
 import { useJobStore } from "./stores/useJobStore";
 import { GraduationWizard } from "./components/GraduationWizard";
@@ -51,6 +52,10 @@ import type {
   JobStatusSnapshot,
   UpdaterStatus,
 } from "./types/contracts";
+
+function toUserError(error: unknown): string {
+  return describeUserFacingError(error);
+}
 
 export function App() {
   const {
@@ -174,7 +179,7 @@ export function App() {
             : "account: signed out",
         );
       } catch (error) {
-        setErrorMessage(error instanceof Error ? error.message : String(error));
+        setErrorMessage(toUserError(error));
         throw error;
       }
     },
@@ -186,7 +191,7 @@ export function App() {
       const catalog = await getModuleCatalog();
       pushSidecarMessage(`module catalog loaded: ${catalog.modules.length} modules`);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setErrorMessage(toUserError(error));
     }
   }, [pushSidecarMessage, setErrorMessage]);
 
@@ -213,7 +218,7 @@ export function App() {
       }
       return status;
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setErrorMessage(toUserError(error));
       throw error;
     }
   }, [setErrorMessage]);
@@ -268,7 +273,7 @@ export function App() {
       pushSidecarMessage(`signed in: ${status.email ?? status.user_id ?? "-"}`);
       await handleLoadModuleCatalog();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setErrorMessage(toUserError(error));
     } finally {
       setIsSigningIn(false);
     }
@@ -281,7 +286,7 @@ export function App() {
       setAccountStatus(status);
       pushSidecarMessage("signed out");
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setErrorMessage(toUserError(error));
     }
   }
 
@@ -464,7 +469,7 @@ export function App() {
         });
       } catch (error) {
         if (!disposed) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message = toUserError(error);
           setConnectionState("error");
           setErrorMessage(message);
         }
@@ -633,7 +638,7 @@ export function App() {
       }
       await handleLoadJobs();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setErrorMessage(toUserError(error));
     } finally {
       setIsStartingJob(false);
     }

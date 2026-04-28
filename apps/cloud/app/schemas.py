@@ -112,6 +112,14 @@ class CloudUserCreateRequest(BaseModel):
     status: AccountStatus = "active"
 
 
+class CloudUserUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    password: str | None = Field(default=None, min_length=8)
+    display_name: str | None = None
+    status: AccountStatus | None = None
+
+
 class CloudUserAdminResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

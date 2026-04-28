@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -8,6 +10,15 @@ from app.config import settings
 from app.db import connect
 from app.main import app
 from app.telemetry_store import TelemetryStore
+
+_SCRIPT_SPEC = spec_from_file_location(
+    "manage_accounts",
+    Path(__file__).resolve().parents[1] / "scripts" / "manage_accounts.py",
+)
+assert _SCRIPT_SPEC is not None
+assert _SCRIPT_SPEC.loader is not None
+manage_accounts = module_from_spec(_SCRIPT_SPEC)
+_SCRIPT_SPEC.loader.exec_module(manage_accounts)
 
 
 client = TestClient(app)
@@ -147,6 +158,141 @@ def test_manual_topup_wallet_and_reservation_flow(monkeypatch, tmp_path: Path) -
     ledger = client.get(f"/v1/admin/users/{user_id}/ledger", headers=_admin_headers())
     assert ledger.status_code == 200
     assert sorted(entry["type"] for entry in ledger.json()) == ["capture", "release", "reserve", "topup"]
+
+
+def test_admin_user_management_endpoints(monkeypatch, tmp_path: Path) -> None:
+    user_id = _create_user(monkeypatch, tmp_path)
+
+    listed = client.get("/v1/admin/users", headers=_admin_headers())
+    assert listed.status_code == 200
+    assert [user["user_id"] for user in listed.json()] == [user_id]
+
+    updated = client.patch(
+        f"/v1/admin/users/{user_id}",
+        headers=_admin_headers(),
+        json={"display_name": "Updated Teacher", "status": "disabled"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["display_name"] == "Updated Teacher"
+    assert updated.json()["status"] == "disabled"
+
+    login = client.post(
+        "/v1/auth/login",
+        json={
+            "email": "teacher@example.test",
+            "password": "correct-password",
+            "device_id": "device-1",
+            "device_name": "desktop-1",
+            "app_version": "0.1.0",
+        },
+    )
+    assert login.status_code == 403
+
+    reenabled = client.patch(
+        f"/v1/admin/users/{user_id}",
+        headers=_admin_headers(),
+        json={"password": "new-password", "status": "active"},
+    )
+    assert reenabled.status_code == 200
+    assert client.get(f"/v1/admin/users/{user_id}/wallet", headers=_admin_headers()).json()["balance"] == 0
+
+    changed_login = client.post(
+        "/v1/auth/login",
+        json={
+            "email": "teacher@example.test",
+            "password": "new-password",
+            "device_id": "device-1",
+            "device_name": "desktop-1",
+            "app_version": "0.1.0",
+        },
+    )
+    assert changed_login.status_code == 200
+
+
+def test_admin_account_script_topup_is_idempotent(monkeypatch, tmp_path: Path) -> None:
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "manage_accounts.py",
+            "create-user",
+            "--email",
+            "script@example.test",
+            "--password",
+            "correct-password",
+            "--display-name",
+            "Script User",
+        ],
+    )
+    manage_accounts.main()
+
+    for _ in range(2):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "manage_accounts.py",
+                "topup",
+                "--email",
+                "script@example.test",
+                "--amount",
+                "25",
+                "--idempotency-key",
+                "script-topup-1",
+            ],
+        )
+        manage_accounts.main()
+
+    user = client.post(
+        "/v1/auth/login",
+        json={
+            "email": "script@example.test",
+            "password": "correct-password",
+            "device_id": "device-1",
+            "device_name": "desktop-1",
+            "app_version": "0.1.0",
+        },
+    ).json()
+    wallet = client.get("/v1/wallet", headers={"Authorization": f"Bearer {user['token']}"})
+    assert wallet.status_code == 200
+    assert wallet.json()["balance"] == 25
+
+
+def test_admin_account_script_seed_user_is_idempotent(monkeypatch, tmp_path: Path) -> None:
+    _configure(monkeypatch, tmp_path)
+    for _ in range(2):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "manage_accounts.py",
+                "seed-user",
+                "--email",
+                "seed@example.test",
+                "--password",
+                "correct-password",
+                "--display-name",
+                "Seed User",
+            ],
+        )
+        manage_accounts.main()
+
+    users = client.get("/v1/admin/users", headers=_admin_headers())
+    assert users.status_code == 200
+    assert [user["email"] for user in users.json()] == ["seed@example.test"]
+
+    login = client.post(
+        "/v1/auth/login",
+        json={
+            "email": "seed@example.test",
+            "password": "correct-password",
+            "device_id": "device-1",
+            "device_name": "desktop-1",
+            "app_version": "0.1.0",
+        },
+    )
+    assert login.status_code == 200
 
 
 def test_reserve_insufficient_credit_and_module_catalog(monkeypatch, tmp_path: Path) -> None:

@@ -42,6 +42,52 @@ function renderHome(onOpenModule = vi.fn()) {
   return props;
 }
 
+function renderHomeWithAccountWarning() {
+  const props = {
+    onOpenModule: vi.fn(),
+    updaterStatus: null,
+    availableUpdate: null,
+    updateMessage: null,
+    updateProgress: null,
+    isCheckingUpdate: false,
+    isInstallingUpdate: false,
+    connectionState: "ready" as const,
+    databaseStatus: null,
+    accountStatus: {
+      signed_in: false,
+      user_id: null,
+      email: null,
+      display_name: null,
+      status: "missing",
+      token_expires_at: null,
+      last_checked_at: null,
+      wallet: null,
+      can_start_credit_jobs: false,
+      needs_attention: true,
+      message: null,
+      last_error: "ACCOUNT_CLOUD_UNAVAILABLE",
+    },
+    accountEmail: "",
+    accountPassword: "",
+    isSigningIn: false,
+    isCreatingBackup: false,
+    isRestoringBackup: false,
+    isExportingDiagnostics: false,
+    onAccountEmailChange: vi.fn(),
+    onAccountPasswordChange: vi.fn(),
+    onSignIn: vi.fn(),
+    onSignOut: vi.fn(),
+    onRefreshWallet: vi.fn(),
+    onCheckForUpdates: vi.fn(),
+    onInstallUpdate: vi.fn(),
+    onRefreshDatabaseStatus: vi.fn(),
+    onCreateBackup: vi.fn(),
+    onRestoreBackup: vi.fn(),
+    onExportDiagnostics: vi.fn(),
+  };
+  render(<ModuleHome {...props} />);
+}
+
 describe("ModuleHome", () => {
   it("renders all module entry points from i18n copy", () => {
     renderHome();
@@ -62,5 +108,11 @@ describe("ModuleHome", () => {
     fireEvent.click(screen.getAllByRole("button", { name: messages.app.home.openSkeleton })[0]);
 
     expect(onOpenModule).toHaveBeenCalledWith("formConverter");
+  });
+
+  it("shows a friendly cloud unavailable account warning", () => {
+    renderHomeWithAccountWarning();
+
+    expect(screen.getByText(messages.app.account.errors.ACCOUNT_CLOUD_UNAVAILABLE)).toBeInTheDocument();
   });
 });
