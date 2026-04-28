@@ -19,10 +19,12 @@ import {
   SearchCheck,
   ShieldCheck,
   Square,
+  Trash2,
   UploadCloud,
   UserCircle2,
   UsersRound,
 } from "lucide-react";
+import messages from "../i18n/th.json";
 import { describeBrowserRuntimePhase, formatBytes, formatTimestamp } from "../lib/appUi";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Badge } from "./ui/badge";
@@ -75,6 +77,7 @@ type GraduationWizardProps = {
   isStartingJob: boolean;
   isActivatingLicense: boolean;
   isDownloadingTemplate: boolean;
+  isArchivingJobs: boolean;
   isBootstrappingBrowser: boolean;
   licenseBlocksStart: boolean;
   browserRuntimeBlocksStart: boolean;
@@ -102,6 +105,7 @@ type GraduationWizardProps = {
   onActivateLicense: () => void;
   onBrowseFile: () => void;
   onDownloadTemplate: () => void;
+  onArchiveOldJobs: () => void;
   onBootstrapBrowserRuntime: () => void;
   onReloadBrowserRuntime: () => void;
   onSelectJob: (job: JobStatusSnapshot) => void;
@@ -218,6 +222,7 @@ export function GraduationWizard({
   isStartingJob,
   isActivatingLicense,
   isDownloadingTemplate,
+  isArchivingJobs,
   isBootstrappingBrowser,
   licenseBlocksStart,
   browserRuntimeBlocksStart,
@@ -245,6 +250,7 @@ export function GraduationWizard({
   onActivateLicense,
   onBrowseFile,
   onDownloadTemplate,
+  onArchiveOldJobs,
   onBootstrapBrowserRuntime,
   onReloadBrowserRuntime,
   onSelectJob,
@@ -273,6 +279,15 @@ export function GraduationWizard({
   const reportPath = currentJob?.report_path ?? null;
   const reviewReportPath = currentJob?.review_report_path ?? null;
   const reportDirectory = reportPath?.replace(/[\\/][^\\/]+$/, "") ?? reviewReportPath?.replace(/[\\/][^\\/]+$/, "");
+  const latestReportJob = useMemo(
+    () => existingJobs.find((job) => job.report_path || job.review_report_path) ?? null,
+    [existingJobs],
+  );
+  const latestCsvPath = reportPath ?? latestReportJob?.report_path ?? reviewReportPath ?? latestReportJob?.review_report_path ?? null;
+  const latestReportDirectory =
+    reportDirectory ||
+    latestCsvPath?.replace(/[\\/][^\\/]+$/, "") ||
+    null;
   const runSummary = currentJob?.run_summary ?? null;
   const processedLabel =
     currentJob?.total !== null && currentJob?.total !== undefined && currentJob.processed > currentJob.total
@@ -281,6 +296,7 @@ export function GraduationWizard({
 
   const rowsForPreview = useMemo(() => preview?.preview.slice(0, 5) ?? [], [preview]);
   const visibleErrorMessage = errorMessage?.includes("transformCallback") ? null : errorMessage;
+  const reportTools = messages.app.reportTools;
 
   useEffect(() => {
     if (currentJob || preview) {
@@ -624,25 +640,33 @@ export function GraduationWizard({
               </Button>
             </div>
 
-            {(reportPath || reviewReportPath) ? (
-              <div className="flex flex-wrap gap-2">
-                {reportPath ? (
-                  <Button size="sm" onClick={() => onRevealPath(reportPath)}>
-                    เปิด report
-                  </Button>
-                ) : null}
+            <div className="rounded-xl border bg-white p-4">
+              <div className="font-semibold">{reportTools.title}</div>
+              <div className="mt-1 text-sm text-slate-600">
+                {reportTools.description}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button size="sm" disabled={!latestCsvPath} onClick={() => latestCsvPath && onRevealPath(latestCsvPath)}>
+                  <FileSpreadsheet className="h-4 w-4" />
+                  {reportTools.openLatestCsv}
+                </Button>
                 {reviewReportPath ? (
                   <Button size="sm" variant="outline" onClick={() => onRevealPath(reviewReportPath)}>
-                    เปิด review
+                    <SearchCheck className="h-4 w-4" />
+                    {reportTools.openReview}
                   </Button>
                 ) : null}
-                {reportDirectory ? (
-                  <Button size="sm" variant="outline" onClick={() => onRevealPath(reportDirectory)}>
-                    โฟลเดอร์ report
-                  </Button>
-                ) : null}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!latestReportDirectory}
+                  onClick={() => latestReportDirectory && onRevealPath(latestReportDirectory)}
+                >
+                  <FolderOpen className="h-4 w-4" />
+                  {reportTools.openFolder}
+                </Button>
               </div>
-            ) : null}
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -773,9 +797,11 @@ export function GraduationWizard({
                 existingJobs={existingJobs}
                 activeJobId={activeJobId}
                 isStartingJob={isStartingJob}
+                isArchivingJobs={isArchivingJobs}
                 onSelectJob={onSelectJob}
                 onResumeExisting={onResumeExisting}
                 onRevealPath={onRevealPath}
+                onArchiveOldJobs={onArchiveOldJobs}
               />
             ) : null}
 

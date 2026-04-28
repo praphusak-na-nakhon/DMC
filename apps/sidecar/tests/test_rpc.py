@@ -97,6 +97,35 @@ def test_list_jobs_rpc(monkeypatch, tmp_path: Path) -> None:
     }
 
 
+def test_archive_old_jobs_rpc_keeps_latest_terminal_jobs(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    store = JobStore()
+    for index in range(5):
+        job_id = f"job-{index}"
+        store.create_pending_job(job_id, "graduation", f"C:\\data\\m3-{index}.xlsx")
+        checkpoint = JobCheckpoint.initial(level_label="เธก.3", base_url="https://example.test")
+        store.mark_done(job_id, checkpoint=checkpoint, finished_at=f"2026-04-22T00:0{index}:00Z")
+    store.create_pending_job("job-active", "graduation", "C:\\data\\active.xlsx")
+    store.set_status("job-active", "running")
+
+    server = RpcServer(emit_notification=lambda payload: None)
+    payload = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "req-archive",
+            "method": "archive_old_jobs",
+            "params": {"keep_latest": 2},
+        }
+    )
+
+    response = json.loads(server.handle_text(payload))
+    remaining_ids = {job["job_id"] for job in server.job_store.list_jobs(limit=10)}
+
+    assert response["result"] == {"archived": 3, "kept": 2}
+    assert {"job-4", "job-3", "job-active"}.issubset(remaining_ids)
+    assert "job-0" not in remaining_ids
+
+
 def test_get_module_config_status_rpc(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
     server = RpcServer(emit_notification=lambda payload: None)

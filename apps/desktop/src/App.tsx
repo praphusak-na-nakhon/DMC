@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import messages from "./i18n/th.json";
 import {
   activateLicense,
+  archiveOldJobs,
   bootstrapBrowserRuntime,
   checkForAppUpdate,
   copyTemplateFile,
@@ -40,6 +41,8 @@ import { usePeriodicLicenseHeartbeat } from "./hooks/usePeriodicLicenseHeartbeat
 import { useJobStore } from "./stores/useJobStore";
 import { GraduationWizard } from "./components/GraduationWizard";
 import { ModuleHome } from "./components/ModuleHome";
+import { ModuleSkeletonPage } from "./components/ModuleSkeletonPage";
+import type { ModuleId } from "./lib/moduleCatalog";
 import type {
   AvailableUpdate,
   BrowserRuntimeStatus,
@@ -102,12 +105,13 @@ export function App() {
   const [isRestoringBackup, setIsRestoringBackup] = useState(false);
   const [isExportingDiagnostics, setIsExportingDiagnostics] = useState(false);
   const [isDownloadingTemplate, setIsDownloadingTemplate] = useState(false);
+  const [isArchivingJobs, setIsArchivingJobs] = useState(false);
   const [supportMessage, setSupportMessage] = useState<string | null>(null);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [updateProgress, setUpdateProgress] = useState<{ downloaded: number; contentLength: number | null } | null>(
     null,
   );
-  const [activeModule, setActiveModule] = useState<"home" | "graduation">("home");
+  const [activeModule, setActiveModule] = useState<"home" | ModuleId>("home");
 
   const licenseBlocksStart = licenseStatus !== null && !licenseStatus.can_start_jobs;
   const browserRuntimeBlocksStart = browserRuntimeStatus !== null && !browserRuntimeStatus.installed;
@@ -343,6 +347,24 @@ export function App() {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setIsDownloadingTemplate(false);
+    }
+  }
+
+  async function handleArchiveOldJobs() {
+    if (typeof window !== "undefined" && !window.confirm("ล้างประวัติงานเก่าที่จบแล้ว โดยเก็บ 20 รายการล่าสุดไว้?")) {
+      return;
+    }
+    try {
+      setIsArchivingJobs(true);
+      setErrorMessage(null);
+      setSupportMessage(null);
+      const result = await archiveOldJobs(20);
+      setSupportMessage(`ล้างประวัติงานเก่าแล้ว ${result.archived} รายการ และเก็บล่าสุดไว้ ${result.kept} รายการ`);
+      await handleLoadJobs();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsArchivingJobs(false);
     }
   }
 
@@ -739,7 +761,7 @@ export function App() {
       <section className="mx-auto w-full max-w-[1440px] px-3 py-4 sm:px-5 lg:px-6">
         {activeModule === "home" ? (
           <ModuleHome
-            onOpenGraduation={() => setActiveModule("graduation")}
+            onOpenModule={(moduleId) => setActiveModule(moduleId)}
             updaterStatus={updaterStatus}
             availableUpdate={availableUpdate}
             updateMessage={updateMessage}
@@ -758,6 +780,11 @@ export function App() {
             onCreateBackup={() => void handleCreateBackup()}
             onRestoreBackup={() => void handleRestoreBackup()}
             onExportDiagnostics={() => void handleExportDiagnostics()}
+          />
+        ) : activeModule === "formConverter" || activeModule === "currentStudents" ? (
+          <ModuleSkeletonPage
+            moduleId={activeModule}
+            onBackHome={() => setActiveModule("home")}
           />
         ) : (
           <>
@@ -784,6 +811,7 @@ export function App() {
               isStartingJob={isStartingJob}
               isActivatingLicense={isActivatingLicense}
               isDownloadingTemplate={isDownloadingTemplate}
+              isArchivingJobs={isArchivingJobs}
               isBootstrappingBrowser={isBootstrappingBrowser}
               licenseBlocksStart={licenseBlocksStart}
               browserRuntimeBlocksStart={browserRuntimeBlocksStart}
@@ -815,6 +843,7 @@ export function App() {
               onActivateLicense={() => void handleActivateLicense()}
               onBrowseFile={() => void handleBrowseFile()}
               onDownloadTemplate={() => void handleDownloadTemplate()}
+              onArchiveOldJobs={() => void handleArchiveOldJobs()}
               onBootstrapBrowserRuntime={() => void handleBootstrapBrowserRuntime()}
               onReloadBrowserRuntime={() => void handleLoadBrowserRuntime()}
               onSelectJob={(job) => {

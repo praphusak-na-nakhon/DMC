@@ -68,11 +68,70 @@
       "filterDone": "เสร็จแล้ว",
       "filterFailed": "ล้มเหลว",
       "filterAll": "ทั้งหมด",
-      "emptyFiltered": "ไม่มีงานในตัวกรองนี้"
+      "emptyFiltered": "ไม่มีงานในตัวกรองนี้",
+      "description": "กลับมาทำงานต่อหรือเปิดรายงานย้อนหลัง",
+      "latest20": "ล่าสุด 20 รายการ",
+      "archiveOld": "ล้างประวัติเก่า"
     },
     "sidecarLog": {
       "title": "ข้อความจาก Sidecar",
       "empty": "ยังไม่มีข้อความ"
+    },
+    "home": {
+      "badge": "DMC Assistant",
+      "title": "DMC Assistant",
+      "description": "เลือกเครื่องมือที่ต้องการใช้งาน ระบบจะแยกขั้นตอนของแต่ละงานให้ชัดเจน เพื่อลดการกดผิดและกลับมาทำงานต่อได้ง่าย",
+      "emptyTitle": "ยังไม่มีโมดูลที่เปิดใช้งาน",
+      "emptyDescription": "เมื่อเปิดใช้โมดูลใหม่ ระบบจะแสดงเป็นการ์ดให้เลือกจากหน้านี้",
+      "openModule": "เปิดใช้งาน",
+      "openSkeleton": "ดูหน้าตัวอย่าง",
+      "ready": "พร้อมใช้งาน",
+      "skeleton": "กำลังออกแบบ",
+      "updatesTitle": "อัปเดตระบบ",
+      "updatesDescription": "เช็กและติดตั้งอัปเดตของ DMC Assistant ทั้งระบบ ไม่ผูกกับโมดูลใดโมดูลหนึ่ง",
+      "updatesReady": "พร้อมใช้งาน",
+      "updatesNotConfigured": "ยังไม่ตั้งค่า",
+      "currentVersion": "เวอร์ชันปัจจุบัน",
+      "endpoint": "Endpoint",
+      "checkUpdates": "เช็กอัปเดตทั้งระบบ",
+      "installUpdate": "ติดตั้งอัปเดต",
+      "updateAvailable": "พบเวอร์ชันใหม่",
+      "publishedAt": "เผยแพร่เมื่อ",
+      "updateDetails": "รายละเอียด",
+      "downloadProgress": "ดาวน์โหลดแล้ว",
+      "modules": {
+        "formConverter": {
+          "title": "แปลงเอกสารแบบฟอร์ม DMC เป็น Excel",
+          "description": "เตรียมข้อมูลจากเอกสารแบบฟอร์มให้เป็นไฟล์ Excel สำหรับนำไปใช้ต่อในงาน DMC"
+        },
+        "currentStudents": {
+          "title": "นักเรียนปัจจุบัน (ย้ายเข้า/เพิ่มนักเรียน)",
+          "description": "จัดการรายการนักเรียนปัจจุบัน งานย้ายเข้า และการเพิ่มนักเรียนใหม่"
+        },
+        "graduation": {
+          "title": "ข้อมูลสิ้นปีการศึกษา (สอบได้ เรียนจบ)",
+          "description": "ตรวจไฟล์ Excel, dry run, กรอกข้อมูลจบการศึกษาใน DMC และสรุปรายงานหลังจบงาน"
+        }
+      },
+      "skeletonPage": {
+        "backHome": "กลับหน้าหลัก",
+        "status": "สถานะโมดูล",
+        "statusText": "หน้า UI และ data contract พร้อมสำหรับออกแบบ workflow ถัดไป แต่ยังไม่เริ่ม automation จริง",
+        "dataContract": "Data contract เริ่มต้น",
+        "inputs": "ข้อมูลนำเข้า",
+        "validations": "การตรวจสอบ",
+        "outputs": "ผลลัพธ์",
+        "events": "Event ที่คาดว่าจะส่ง",
+        "nextStep": "ขั้นตอนถัดไป",
+        "nextStepText": "ยืนยัน workflow จริงกับผู้ใช้ แล้วค่อยต่อ automation, validation และ report เฉพาะโมดูลนี้"
+      }
+    },
+    "reportTools": {
+      "title": "ไฟล์รายงาน",
+      "description": "เปิด CSV ล่าสุดหรือโฟลเดอร์รายงานหลังจบงาน",
+      "openLatestCsv": "เปิด CSV ล่าสุด",
+      "openReview": "เปิด review",
+      "openFolder": "เปิดโฟลเดอร์ report"
     }
   }
 }

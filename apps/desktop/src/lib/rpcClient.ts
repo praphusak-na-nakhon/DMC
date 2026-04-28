@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AvailableUpdate,
+  ArchiveJobsResponse,
   BackupCreateResponse,
   BrowserRuntimeStatus,
   DatabaseStatus,
@@ -17,13 +18,14 @@ import type {
   ValidateExcelResponse,
 } from "../types/contracts";
 import {
-  parseLicenseStatus,
   parseAvailableUpdate,
+  parseArchiveJobsResponse,
   parseBackupCreateResponse,
   parseBrowserRuntimeStatus,
   parseDatabaseStatus,
   parseJobActionResponse,
   parseJobStatusSnapshot,
+  parseLicenseStatus,
   parseListJobsResponse,
   parseModuleConfigStatus,
   parseRestoreBackupResponse,
@@ -232,6 +234,11 @@ export async function getJobStatus(jobId: string): Promise<JobStatusSnapshot> {
 export async function listJobs(limit = 20): Promise<ListJobsResponse> {
   const result = await sidecarRequest<unknown>("list_jobs", { limit });
   return parseListJobsResponse(result);
+}
+
+export async function archiveOldJobs(keepLatest = 20): Promise<ArchiveJobsResponse> {
+  const result = await sidecarRequest<unknown>("archive_old_jobs", { keep_latest: keepLatest });
+  return parseArchiveJobsResponse(result);
 }
 
 export async function pauseJob(jobId: string): Promise<{ job_id: string; status: string }> {

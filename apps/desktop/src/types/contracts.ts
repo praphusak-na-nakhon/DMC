@@ -207,6 +207,11 @@ export type ListJobsResponse = {
   items: JobStatusSnapshot[];
 };
 
+export type ArchiveJobsResponse = {
+  archived: number;
+  kept: number;
+};
+
 export type UpdaterStatus = {
   configured: boolean;
   endpoint: string | null;
@@ -520,6 +525,14 @@ export function parseListJobsResponse(value: unknown): ListJobsResponse {
   const record = asRecord(value, "list_jobs_response");
   return {
     items: readArray(record, "items", "list_jobs_response").map(parseJobStatusSnapshot),
+  };
+}
+
+export function parseArchiveJobsResponse(value: unknown): ArchiveJobsResponse {
+  const record = asRecord(value, "archive_jobs_response");
+  return {
+    archived: readNumber(record, "archived", "archive_jobs_response"),
+    kept: readNumber(record, "kept", "archive_jobs_response"),
   };
 }
 

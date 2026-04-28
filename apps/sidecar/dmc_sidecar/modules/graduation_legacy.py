@@ -415,13 +415,11 @@ def choose_best_match(
     students: list[SourceStudent],
     used_orders: set[int],
 ) -> tuple[SourceStudent | None, int]:
-    remaining = [student for student in students if student.order not in used_orders]
-    if not remaining:
-        return None, 0
-
     if row_info["student_no"]:
         exact = [
-            student for student in remaining if student.student_no == row_info["student_no"]
+            student
+            for student in students
+            if student.order not in used_orders and student.student_no == row_info["student_no"]
         ]
         if len(exact) == 1:
             return exact[0], 100
@@ -429,6 +427,10 @@ def choose_best_match(
             scored_exact = [(score_match(row_info, student), student) for student in exact]
             scored_exact.sort(key=lambda item: item[0], reverse=True)
             return scored_exact[0][1], 100
+
+    remaining = [student for student in students if student.order not in used_orders]
+    if not remaining:
+        return None, 0
 
     candidates = remaining
     if row_info["room"] is not None:
@@ -477,6 +479,10 @@ def fill_current_page(
     require_exact_student_no = bool(rules["require_exact_student_no"])
     ambiguity_floor_value = rules["ambiguity_floor"]
     ambiguity_floor = ambiguity_floor_value if isinstance(ambiguity_floor_value, int) else None
+    exact_students_by_no: dict[str, list[SourceStudent]] = {}
+    for student in students:
+        if student.student_no:
+            exact_students_by_no.setdefault(student.student_no, []).append(student)
 
     for idx in range(rows.count()):
         row = rows.nth(idx)
@@ -488,16 +494,8 @@ def fill_current_page(
             before_row()
 
         if require_exact_student_no and row_info["student_no"]:
-            exact_student = next(
-                (
-                    item
-                    for item in students
-                    if item.order not in used_orders
-                    and item.student_no == row_info["student_no"]
-                ),
-                None,
-            )
-            if exact_student is None:
+            exact_students = exact_students_by_no.get(row_info["student_no"], [])
+            if not any(item.order not in used_orders for item in exact_students):
                 result: FillResult = {
                     "page": page_number,
                     "level": level_label,
@@ -527,7 +525,7 @@ def fill_current_page(
                     after_row(result)
                 continue
 
-        student, score = choose_best_match(row_info, students, used_orders)
+        matched_student, score = choose_best_match(row_info, students, used_orders)
         result = {
             "page": page_number,
             "level": level_label,
@@ -536,18 +534,18 @@ def fill_current_page(
             "portal_student_no": row_info["student_no"],
             "portal_room": row_info["room"],
             "portal_name": row_info["full_name"],
-            "matched_order": student.order if student else None,
-            "matched_room": student.room if student else None,
-            "matched_student_no": student.student_no if student else None,
-            "matched_name": student.full_name if student else None,
-            "matched_status_text": student.status_text if student else None,
-            "matched_status_code": student.status_code if student else None,
+            "matched_order": matched_student.order if matched_student else None,
+            "matched_room": matched_student.room if matched_student else None,
+            "matched_student_no": matched_student.student_no if matched_student else None,
+            "matched_name": matched_student.full_name if matched_student else None,
+            "matched_status_text": matched_student.status_text if matched_student else None,
+            "matched_status_code": matched_student.status_code if matched_student else None,
             "score": score,
             "applied": False,
             "note": "",
         }
 
-        if not student:
+        if not matched_student:
             if isinstance(default_missing_code, str) and default_missing_code:
                 if not dry_run:
                     row_info["select"].select_option(value=default_missing_code)
@@ -596,7 +594,7 @@ def fill_current_page(
                 break
             continue
 
-        if not student.status_code:
+        if not matched_student.status_code:
             result["note"] = "status_code_not_mapped"
             results.append(result)
             if after_row is not None:
@@ -606,7 +604,7 @@ def fill_current_page(
                 break
             continue
 
-        if not option_exists(row_info["select"], student.status_code):
+        if not option_exists(row_info["select"], matched_student.status_code):
             result["note"] = "option_value_not_found"
             results.append(result)
             if after_row is not None:
@@ -617,10 +615,10 @@ def fill_current_page(
             continue
 
         if not dry_run:
-            row_info["select"].select_option(value=student.status_code)
+            row_info["select"].select_option(value=matched_student.status_code)
             page.wait_for_timeout(80)
 
-        used_orders.add(student.order)
+        used_orders.add(matched_student.order)
         result["applied"] = not dry_run
         result["note"] = "dry_run" if dry_run else "filled"
         results.append(result)

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { FolderOpen, PlayCircle, RotateCcw, Search } from "lucide-react";
+import { FolderOpen, PlayCircle, RotateCcw, Search, Trash2 } from "lucide-react";
 import messages from "../i18n/th.json";
 import { formatTimestamp } from "../lib/appUi";
 import { Badge } from "./ui/badge";
@@ -11,9 +11,11 @@ type ExistingJobsPanelProps = {
   existingJobs: JobStatusSnapshot[];
   activeJobId: string | null;
   isStartingJob: boolean;
+  isArchivingJobs?: boolean;
   onSelectJob: (job: JobStatusSnapshot) => void;
   onResumeExisting: (job: JobStatusSnapshot) => void;
   onRevealPath: (path: string) => void;
+  onArchiveOldJobs?: () => void;
 };
 
 function jobBadgeClass(status: string) {
@@ -25,9 +27,11 @@ export function ExistingJobsPanel({
   existingJobs,
   activeJobId,
   isStartingJob,
+  isArchivingJobs = false,
   onSelectJob,
   onResumeExisting,
   onRevealPath,
+  onArchiveOldJobs,
 }: ExistingJobsPanelProps) {
   const [statusFilter, setStatusFilter] = useState<"latest" | "active" | "done" | "failed" | "all">("latest");
   const visibleJobs = useMemo(() => {
@@ -45,22 +49,35 @@ export function ExistingJobsPanel({
   return (
     <Card className="min-w-0">
       <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <CardTitle>{messages.app.existingJobs.title}</CardTitle>
-            <CardDescription>กลับมาทำงานต่อหรือเปิดรายงานย้อนหลัง</CardDescription>
+            <CardDescription>{messages.app.existingJobs.description}</CardDescription>
           </div>
-          <select
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
-            className="h-9 rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-          >
-            <option value="latest">ล่าสุด 20 รายการ</option>
-            <option value="active">{messages.app.existingJobs.filterActive}</option>
-            <option value="done">{messages.app.existingJobs.filterDone}</option>
-            <option value="failed">{messages.app.existingJobs.filterFailed}</option>
-            <option value="all">{messages.app.existingJobs.filterAll}</option>
-          </select>
+          <div className="flex flex-wrap gap-2">
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
+              className="h-9 rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value="latest">{messages.app.existingJobs.latest20}</option>
+              <option value="active">{messages.app.existingJobs.filterActive}</option>
+              <option value="done">{messages.app.existingJobs.filterDone}</option>
+              <option value="failed">{messages.app.existingJobs.filterFailed}</option>
+              <option value="all">{messages.app.existingJobs.filterAll}</option>
+            </select>
+            {onArchiveOldJobs ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isArchivingJobs || existingJobs.length <= 20}
+                onClick={onArchiveOldJobs}
+              >
+                {isArchivingJobs ? <RotateCcw className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                {messages.app.existingJobs.archiveOld}
+              </Button>
+            ) : null}
+          </div>
         </div>
       </CardHeader>
       <CardContent>

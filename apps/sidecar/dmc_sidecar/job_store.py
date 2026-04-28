@@ -245,6 +245,30 @@ class JobStore:
             ).fetchall()
             return [self._status_from_row(row, connection) for row in rows]
 
+    def archive_old_jobs(self, *, keep_latest: int = 20) -> dict[str, int]:
+        terminal_statuses = ("done", "failed", "cancelled")
+        with connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id
+                FROM job
+                WHERE status IN (?, ?, ?)
+                ORDER BY COALESCE(finished_at, started_at, id) DESC
+                """,
+                terminal_statuses,
+            ).fetchall()
+            archived_ids = [str(row["id"]) for row in rows[keep_latest:]]
+            if archived_ids:
+                placeholders = ", ".join(["?"] * len(archived_ids))
+                connection.execute(
+                    f"DELETE FROM job WHERE id IN ({placeholders})",
+                    archived_ids,
+                )
+            return {
+                "archived": len(archived_ids),
+                "kept": min(len(rows), keep_latest),
+            }
+
     def get_status(self, job_id: str) -> dict[str, Any] | None:
         with connect() as connection:
             row = connection.execute("SELECT * FROM job WHERE id = ?", (job_id,)).fetchone()

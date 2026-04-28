@@ -89,3 +89,23 @@ def test_validate_telemetry_event_rejects_unknown_fields() -> None:
         assert "student_no" in str(exc)
     else:  # pragma: no cover - defensive
         raise AssertionError("expected telemetry validation to reject student_no")
+
+
+def test_validate_telemetry_event_rejects_name_fields() -> None:
+    payload = {
+        "event": "job_completed",
+        "ts": "2026-04-22T00:00:00Z",
+        "module": "graduation",
+        "total": 300,
+        "succeeded": 290,
+        "failed": 10,
+        "duration_sec": 95,
+        "first_name": "สมชาย",
+    }
+
+    try:
+        validate_telemetry_event(payload)
+    except Exception as exc:  # noqa: BLE001
+        assert "first_name" in str(exc)
+    else:  # pragma: no cover - defensive
+        raise AssertionError("expected telemetry validation to reject first_name")

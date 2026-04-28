@@ -45,8 +45,8 @@ export function SupportToolsPanel({
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <CardTitle>Support Tools</CardTitle>
-            <CardDescription>เครื่องมือสำหรับ backup, restore และส่ง diagnostics</CardDescription>
+            <CardTitle>เครื่องมือช่วยเหลือ</CardTitle>
+            <CardDescription>สำรองข้อมูล กู้คืนข้อมูล และสร้างไฟล์วินิจฉัยเมื่อทีมซัพพอร์ตขอ</CardDescription>
           </div>
           <Database className="h-5 w-5 shrink-0 text-primary" />
         </div>
@@ -66,19 +66,19 @@ export function SupportToolsPanel({
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="outline" disabled={disabled} onClick={onRefreshDatabaseStatus}>
             <RefreshCw className="h-4 w-4" />
-            Refresh DB
+            ตรวจสถานะฐานข้อมูล
           </Button>
           <Button size="sm" variant="outline" disabled={disabled || isCreatingBackup} onClick={onCreateBackup}>
             <Download className="h-4 w-4" />
-            {isCreatingBackup ? "Creating..." : "Export Backup"}
+            {isCreatingBackup ? "กำลังสำรอง..." : "สำรองข้อมูล"}
           </Button>
           <Button size="sm" variant="secondary" disabled={disabled || isRestoringBackup} onClick={onRestoreBackup}>
             <ArchiveRestore className="h-4 w-4" />
-            {isRestoringBackup ? "Restoring..." : "Restore Backup"}
+            {isRestoringBackup ? "กำลังกู้คืน..." : "กู้คืนข้อมูล"}
           </Button>
           <Button size="sm" disabled={disabled || isExportingDiagnostics} onClick={onExportDiagnostics}>
             <FileDown className="h-4 w-4" />
-            {isExportingDiagnostics ? "Exporting..." : "Diagnostics"}
+            {isExportingDiagnostics ? "กำลังสร้าง..." : "สร้างไฟล์วินิจฉัย"}
           </Button>
         </div>
       </CardContent>

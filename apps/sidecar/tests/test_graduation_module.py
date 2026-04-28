@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -306,6 +307,49 @@ def test_fill_current_page_uses_m3_default_when_exact_student_number_missing() -
     assert results[0]["note"] == "default_missing_filled"
     assert results[0]["matched_status_code"] == "207"
     assert row.select.selected == ["207"]
+
+
+def test_fill_current_page_large_exact_match_path_stays_fast() -> None:
+    row_count = 1000
+    students = [
+        _student(
+            order=index,
+            level_label=M3,
+            student_no=f"{100000 + index}",
+            first_name=f"student{index}",
+            last_name="test",
+            status_code="201",
+        )
+        for index in range(1, 5001)
+    ]
+    rows = [
+        FakeRow(
+            row_id=f"tr-{index}",
+            seq_no=str(index),
+            room="1",
+            student_no=f"{100000 + index}",
+            first_name=f"student{index}",
+            last_name="test",
+            option_values={"201"},
+        )
+        for index in range(1, row_count + 1)
+    ]
+
+    started_at = time.perf_counter()
+    results, stopped_item = legacy.fill_current_page(
+        FakePage(rows),
+        students=students,
+        used_orders=set(),
+        min_score=72,
+        dry_run=True,
+        stop_on_review=False,
+        level_label=M3,
+    )
+    elapsed = time.perf_counter() - started_at
+
+    assert stopped_item is None
+    assert len(results) == row_count
+    assert elapsed < 8.0
 
 
 def test_fill_current_page_stops_on_unmapped_status_without_selecting() -> None:

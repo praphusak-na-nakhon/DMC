@@ -22,6 +22,7 @@ from .modules import get_module
 from .runtime import JobManager, build_event_notification
 from .schemas import (
     ActivateLicenseRequest,
+    ArchiveJobsRequest,
     FilePathRequest,
     JobIdRequest,
     ModuleConfigRequest,
@@ -235,6 +236,17 @@ class RpcServer:
                 list_params = request.params if isinstance(request.params, dict) else {}
                 limit = int(list_params.get("limit", 20))
                 return RpcSuccessResponse(id=request.id, result={"items": self.job_store.list_jobs(limit=limit)})
+
+            if request.method == "archive_old_jobs":
+                if self.job_manager.runtime_statuses():
+                    return self._error(
+                        request.id,
+                        code="ARCHIVE_REQUIRES_IDLE",
+                        message="Stop active jobs before archiving job history.",
+                    )
+                archive_params = ArchiveJobsRequest.model_validate(request.params)
+                result = self.job_store.archive_old_jobs(keep_latest=archive_params.keep_latest)
+                return RpcSuccessResponse(id=request.id, result=result)
 
             return self._error(
                 request.id,
