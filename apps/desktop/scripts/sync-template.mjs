@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,6 +14,12 @@ if (!existsSync(sourcePath)) {
 }
 
 mkdirSync(targetDir, { recursive: true });
+
+if (existsSync(targetPath) && readFileSync(sourcePath).equals(readFileSync(targetPath))) {
+  console.log(`Template already current: ${targetPath}`);
+  process.exit(0);
+}
+
 copyFileSync(sourcePath, targetPath);
 
 const sourceSize = statSync(sourcePath).size;
