@@ -8,6 +8,139 @@ LicenseTier = Literal["trial", "school_le_500", "school_501_1500", "school_gt_15
 SchoolSizeTier = Literal["le_500", "501_1500", "gt_1500"]
 BillingInterval = Literal["monthly", "annual"]
 LicenseStatus = Literal["active", "suspended", "expired"]
+AccountStatus = Literal["active", "disabled"]
+CreditReservationStatus = Literal["active", "captured", "released"]
+CreditTransactionType = Literal["topup", "reserve", "capture", "release"]
+ModulePricingMode = Literal["per_billable_record"]
+
+
+class AuthLoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str
+    password: str
+    device_id: str
+    device_name: str
+    app_version: str
+
+
+class AccountResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str
+    email: str
+    display_name: str | None
+    status: AccountStatus
+    token_expires_at: str
+
+
+class AuthLoginResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: str
+    account: AccountResponse
+
+
+class WalletResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str
+    balance: int
+    reserved: int
+    available: int
+
+
+class ModuleCatalogItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    enabled: bool
+    requires_credits: bool
+    pricing_mode: ModulePricingMode
+    credit_per_unit: int
+    production_dry_run_enabled: bool
+
+
+class ModuleCatalogResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    modules: list[ModuleCatalogItem]
+
+
+class CreditReservationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str
+    module: str
+    units: int = Field(ge=1)
+    idempotency_key: str
+
+
+class CreditReservationResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reservation_id: str
+    job_id: str
+    module: str
+    status: CreditReservationStatus
+    units_reserved: int
+    units_captured: int
+    units_released: int
+    wallet: WalletResponse
+
+
+class CreditCaptureRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    units: int = Field(ge=0)
+    idempotency_key: str | None = None
+
+
+class CreditReleaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    units: int = Field(ge=0)
+    idempotency_key: str | None = None
+
+
+class CloudUserCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str
+    password: str = Field(min_length=8)
+    display_name: str | None = None
+    status: AccountStatus = "active"
+
+
+class CloudUserAdminResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str
+    email: str
+    display_name: str | None
+    status: AccountStatus
+    wallet: WalletResponse
+
+
+class CloudCreditTopupRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    amount: int = Field(gt=0)
+    note: str | None = None
+    idempotency_key: str | None = None
+
+
+class CreditLedgerEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transaction_id: str
+    type: CreditTransactionType
+    amount: int
+    reservation_id: str | None
+    job_id: str | None
+    module: str | None
+    note: str | None
+    created_at: str
 
 
 class LicenseActivateRequest(BaseModel):

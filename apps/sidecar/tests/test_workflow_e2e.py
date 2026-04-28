@@ -151,6 +151,19 @@ def _configure_cloud_bridge(monkeypatch, tmp_path: Path, client: TestClient) -> 
     monkeypatch.setattr("dmc_sidecar.telemetry.urlopen", fake_urlopen)
 
 
+def _configure_account_cloud_bridge(monkeypatch, tmp_path: Path, client: TestClient) -> None:
+    monkeypatch.setattr(settings, "sqlite_path", str(tmp_path / "cloud-account-state.sqlite3"))
+    monkeypatch.setattr(settings, "api_bearer_token", "dmc-test-token")
+    monkeypatch.setattr(sidecar_config, "default_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(sidecar_config, "cloud_base_url", lambda: "https://cloud.test")
+    monkeypatch.setattr("dmc_sidecar.account_client.secure_cloud_base_url", lambda: "https://cloud.test")
+    monkeypatch.setattr("dmc_sidecar.telemetry.secure_cloud_base_url", lambda: "https://cloud.test")
+    monkeypatch.setattr("dmc_sidecar.account_client.get_or_create_device_id", lambda: "device-account-1")
+    fake_urlopen = _make_cloud_urlopen(client)
+    monkeypatch.setattr("dmc_sidecar.account_client.urlopen", fake_urlopen)
+    monkeypatch.setattr("dmc_sidecar.telemetry.urlopen", fake_urlopen)
+
+
 class _CompletingModule:
     def start_job(self, job_id: str, excel_path: Path, options: dict[str, object], context) -> None:  # noqa: ANN001
         checkpoint = JobCheckpoint.initial(level_label="ม.3", base_url="https://portal.example.test")
@@ -247,7 +260,12 @@ def test_activate_heartbeat_and_start_job_workflow(monkeypatch, tmp_path: Path) 
             "options": {"dry_run": True},
         },
     )
-    assert started["result"] == {"accepted": True, "job_id": "job-e2e-1"}
+    assert started["result"] == {
+        "accepted": True,
+        "job_id": "job-e2e-1",
+        "credit_reservation_id": None,
+        "credits_reserved": 0,
+    }
 
     _wait_until(lambda: server.job_store.get_status("job-e2e-1")["status"] == "done")
     server.telemetry.flush()
@@ -260,6 +278,78 @@ def test_activate_heartbeat_and_start_job_workflow(monkeypatch, tmp_path: Path) 
     assert "app_started" in payloads
     assert "license_checked" in payloads
     assert "job_completed" in payloads
+
+
+def test_account_credit_live_job_reserves_captures_and_releases(monkeypatch, tmp_path: Path) -> None:
+    client = TestClient(cloud_app)
+    _configure_account_cloud_bridge(monkeypatch, tmp_path, client)
+    notifications: list[dict[str, Any]] = []
+
+    create_user = client.post(
+        "/v1/admin/users",
+        headers={"Authorization": "Bearer dmc-test-token"},
+        json={
+            "email": "teacher@example.test",
+            "password": "correct-password",
+            "display_name": "Teacher",
+            "status": "active",
+        },
+    )
+    assert create_user.status_code == 200
+    user_id = create_user.json()["user_id"]
+    topup = client.post(
+        f"/v1/admin/users/{user_id}/credits/topup",
+        headers={"Authorization": "Bearer dmc-test-token"},
+        json={"amount": 5, "idempotency_key": "topup-workflow"},
+    )
+    assert topup.status_code == 200
+
+    monkeypatch.setattr("dmc_sidecar.modules.get_module", lambda module_name: _CompletingModule())
+    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
+
+    server = RpcServer(emit_notification=notifications.append)
+    server.telemetry.background_flush = False
+
+    signed_in = _rpc_call(
+        server,
+        "sign_in",
+        {
+            "email": "teacher@example.test",
+            "password": "correct-password",
+            "device_name": "desktop-01",
+            "app_version": "0.1.0",
+        },
+    )
+    assert signed_in["result"]["signed_in"] is True
+    assert signed_in["result"]["wallet"]["available"] == 5
+
+    started = _rpc_call(
+        server,
+        "start_job",
+        {
+            "job_id": "job-credit-live",
+            "module": "graduation",
+            "excel_path": "C:\\data\\m3.xlsx",
+            "options": {"dry_run": False, "estimated_credits": 2},
+        },
+    )
+    assert started["result"]["credit_reservation_id"]
+    assert started["result"]["credits_reserved"] == 2
+
+    _wait_until(lambda: server.job_store.get_status("job-credit-live")["credit_status"] == "finalized")
+    status = server.job_store.get_status("job-credit-live")
+    assert status is not None
+    assert status["credits_captured"] == 1
+    assert status["credits_refunded"] == 1
+
+    wallet = _rpc_call(server, "refresh_wallet", {})
+    assert wallet["result"]["wallet"]["balance"] == 4
+    assert wallet["result"]["wallet"]["reserved"] == 0
+    assert wallet["result"]["wallet"]["available"] == 4
+
+    ledger = client.get(f"/v1/admin/users/{user_id}/ledger", headers={"Authorization": "Bearer dmc-test-token"})
+    assert ledger.status_code == 200
+    assert sorted(entry["type"] for entry in ledger.json()) == ["capture", "release", "reserve", "topup"]
 
 
 def test_browser_runtime_bootstrap_then_retry_start_job_workflow(monkeypatch, tmp_path: Path) -> None:
@@ -308,7 +398,7 @@ def test_browser_runtime_bootstrap_then_retry_start_job_workflow(monkeypatch, tm
     monkeypatch.setattr(
         server.job_manager,
         "start_job",
-        lambda *, job_id, module_name, excel_path, options: started_jobs.append(
+        lambda *, job_id, module_name, excel_path, options, **_: started_jobs.append(
             {
                 "job_id": job_id,
                 "module": module_name,
@@ -344,7 +434,12 @@ def test_browser_runtime_bootstrap_then_retry_start_job_workflow(monkeypatch, tm
             "options": {"dry_run": True},
         },
     )
-    assert second_start["result"] == {"accepted": True, "job_id": "job-browser"}
+    assert second_start["result"] == {
+        "accepted": True,
+        "job_id": "job-browser",
+        "credit_reservation_id": None,
+        "credits_reserved": 0,
+    }
     assert started_jobs == [
         {
             "job_id": "job-browser",

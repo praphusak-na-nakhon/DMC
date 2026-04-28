@@ -19,10 +19,18 @@ function renderHome(onOpenModule = vi.fn()) {
     isInstallingUpdate: false,
     connectionState: "ready" as const,
     databaseStatus: null,
-    licenseStatus: null,
+    accountStatus: null,
+    accountEmail: "",
+    accountPassword: "",
+    isSigningIn: false,
     isCreatingBackup: false,
     isRestoringBackup: false,
     isExportingDiagnostics: false,
+    onAccountEmailChange: vi.fn(),
+    onAccountPasswordChange: vi.fn(),
+    onSignIn: vi.fn(),
+    onSignOut: vi.fn(),
+    onRefreshWallet: vi.fn(),
     onCheckForUpdates: vi.fn(),
     onInstallUpdate: vi.fn(),
     onRefreshDatabaseStatus: vi.fn(),
@@ -39,9 +47,12 @@ describe("ModuleHome", () => {
     renderHome();
 
     expect(screen.getByRole("heading", { name: messages.app.home.title })).toBeInTheDocument();
+    expect(screen.getByText("บัญชีและเครดิต")).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.formConverter.title)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.currentStudents.title)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.graduation.title)).toBeInTheDocument();
+    expect(screen.getAllByText(/ใช้เครดิต 1\/รายการ/)).toHaveLength(3);
+    expect(screen.queryByText("License Activation")).not.toBeInTheDocument();
   });
 
   it("opens skeleton modules instead of disabling them", () => {

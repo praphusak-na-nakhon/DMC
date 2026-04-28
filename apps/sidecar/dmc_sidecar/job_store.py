@@ -12,14 +12,26 @@ class JobStore:
     def _checkpoint_payload(self, checkpoint: JobCheckpoint) -> str:
         return checkpoint.model_dump_json(exclude={"results"})
 
-    def create_pending_job(self, job_id: str, module: str, source_file: str) -> None:
+    def create_pending_job(
+        self,
+        job_id: str,
+        module: str,
+        source_file: str,
+        *,
+        credit_reservation_id: str | None = None,
+        credits_reserved: int = 0,
+        credit_status: str | None = None,
+    ) -> None:
         with connect() as connection:
             connection.execute(
                 """
-                INSERT INTO job (id, module, status, source_file)
-                VALUES (?, ?, 'pending', ?)
+                INSERT INTO job (
+                    id, module, status, source_file, credit_reservation_id,
+                    credits_reserved, credit_status
+                )
+                VALUES (?, ?, 'pending', ?, ?, ?, ?)
                 """,
-                (job_id, module, source_file),
+                (job_id, module, source_file, credit_reservation_id, credits_reserved, credit_status),
             )
 
     def mark_running(
@@ -71,6 +83,41 @@ class JobStore:
             connection.execute(
                 "UPDATE job SET status = ? WHERE id = ?",
                 (status, job_id),
+            )
+
+    def update_credit_status(
+        self,
+        job_id: str,
+        *,
+        credits_captured: int | None = None,
+        credits_refunded: int | None = None,
+        credit_status: str | None = None,
+    ) -> None:
+        with connect() as connection:
+            current = connection.execute(
+                """
+                SELECT credits_captured, credits_refunded, credit_status
+                FROM job
+                WHERE id = ?
+                """,
+                (job_id,),
+            ).fetchone()
+            if current is None:
+                return
+            connection.execute(
+                """
+                UPDATE job
+                SET credits_captured = ?,
+                    credits_refunded = ?,
+                    credit_status = ?
+                WHERE id = ?
+                """,
+                (
+                    credits_captured if credits_captured is not None else current["credits_captured"],
+                    credits_refunded if credits_refunded is not None else current["credits_refunded"],
+                    credit_status if credit_status is not None else current["credit_status"],
+                    job_id,
+                ),
             )
 
     def save_checkpoint(self, job_id: str, checkpoint: JobCheckpoint) -> None:
@@ -299,6 +346,11 @@ class JobStore:
             "finished_at": row["finished_at"],
             "level_label": row["level_label"],
             "run_summary": self._run_summary(connection, str(row["id"]), row["total_records"]),
+            "credit_reservation_id": row["credit_reservation_id"],
+            "credits_reserved": row["credits_reserved"],
+            "credits_captured": row["credits_captured"],
+            "credits_refunded": row["credits_refunded"],
+            "credit_status": row["credit_status"],
         }
 
     def _run_summary(

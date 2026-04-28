@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import messages from "./i18n/th.json";
 import {
-  activateLicense,
   archiveOldJobs,
   bootstrapBrowserRuntime,
   checkForAppUpdate,
   copyTemplateFile,
   createBackup,
+  getAccountStatus,
   getBrowserRuntimeStatus,
   getDatabaseStatus,
-  getLicenseStatus,
+  getJobStatus,
+  getModuleCatalog,
   getModuleConfigStatus,
   getUpdaterStatus,
   initializeSidecar,
@@ -19,12 +20,14 @@ import {
   listenUpdaterEvents,
   openBackupArchiveDialog,
   openExcelDialog,
-  refreshLicenseStatus,
+  refreshWallet,
   restoreBackup,
   revealPath,
   saveBackupDialog,
   saveDiagnosticsDialog,
   saveTemplateDialog,
+  signIn,
+  signOut,
   startGraduationJob,
   syncModuleConfig,
   validateExcel,
@@ -33,11 +36,9 @@ import {
   resumeExistingJob,
   resumeJob,
   cancelJob,
-  getJobStatus,
 } from "./lib/rpcClient";
 import { buildDraftJob, buildJobId, buildSupportDiagnostics, buildTimestampSlug } from "./lib/appUi";
 import { useJobStatusReconciliation } from "./hooks/useJobStatusReconciliation";
-import { usePeriodicLicenseHeartbeat } from "./hooks/usePeriodicLicenseHeartbeat";
 import { useJobStore } from "./stores/useJobStore";
 import { GraduationWizard } from "./components/GraduationWizard";
 import { ModuleHome } from "./components/ModuleHome";
@@ -48,7 +49,6 @@ import type {
   BrowserRuntimeStatus,
   DatabaseStatus,
   JobStatusSnapshot,
-  LicenseStatus,
   UpdaterStatus,
 } from "./types/contracts";
 
@@ -56,7 +56,7 @@ export function App() {
   const {
     preview,
     currentJob,
-    licenseStatus,
+    accountStatus,
     moduleConfigStatus,
     existingJobs,
     excelPath,
@@ -69,7 +69,7 @@ export function App() {
     setExcelPath,
     setPreview,
     setCurrentJob,
-    setLicenseStatus,
+    setAccountStatus,
     setModuleConfigStatus,
     setExistingJobs,
     upsertExistingJob,
@@ -88,10 +88,11 @@ export function App() {
   const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
-  const [licenseKey, setLicenseKey] = useState("");
+  const [accountEmail, setAccountEmail] = useState("");
+  const [accountPassword, setAccountPassword] = useState("");
   const [deviceName, setDeviceName] = useState("dmc-desktop");
   const [validatedExcelPath, setValidatedExcelPath] = useState<string | null>(null);
-  const [isActivatingLicense, setIsActivatingLicense] = useState(false);
+  const [isSigningIn, setIsSigningIn] = useState(false);
   const [browserRuntimeStatus, setBrowserRuntimeStatus] = useState<BrowserRuntimeStatus | null>(null);
   const [databaseStatus, setDatabaseStatus] = useState<DatabaseStatus | null>(null);
   const [browserRuntimeProgress, setBrowserRuntimeProgress] = useState<{
@@ -113,25 +114,16 @@ export function App() {
   );
   const [activeModule, setActiveModule] = useState<"home" | ModuleId>("home");
 
-  const licenseBlocksStart = licenseStatus !== null && !licenseStatus.can_start_jobs;
-  const browserRuntimeBlocksStart = browserRuntimeStatus !== null && !browserRuntimeStatus.installed;
   const validationBlocksStart =
     !preview || preview.rows_accepted <= 0 || validatedExcelPath !== excelPath.trim();
   const preflightRowsAccepted = validationBlocksStart ? null : preview.rows_accepted;
   const preflightRowsTotal = validationBlocksStart ? null : preview.rows_total;
-
-  const describeLicenseStatus = useCallback((status: LicenseStatus): string => {
-    if (!status.configured) {
-      return messages.app.license.devMode;
-    }
-    if (status.last_error === "HEARTBEAT_FAILED" && status.within_offline_grace) {
-      return `${messages.app.license.offlineMode} ${status.offline_grace_until ?? "-"}`;
-    }
-    if (!status.can_start_jobs) {
-      return status.message ?? messages.app.license.reconnectRequired;
-    }
-    return messages.app.license.active;
-  }, []);
+  const estimatedCredits = preflightRowsAccepted ?? preview?.rows_accepted ?? 0;
+  const browserRuntimeBlocksStart = browserRuntimeStatus !== null && !browserRuntimeStatus.installed;
+  const accountBlocksStart =
+    !accountStatus?.signed_in ||
+    !accountStatus.can_start_credit_jobs ||
+    (estimatedCredits > 0 && (accountStatus.wallet?.available ?? 0) < estimatedCredits);
 
   const handleLoadJobs = useCallback(async () => {
     try {
@@ -162,11 +154,7 @@ export function App() {
     try {
       const status = await syncModuleConfig("graduation");
       setModuleConfigStatus(status);
-      pushSidecarMessage(
-        status.updated
-          ? `config graduation อัปเดตเป็น ${status.version} แล้ว`
-          : `config graduation ใช้งานเวอร์ชัน ${status.version} (${status.source})`,
-      );
+      pushSidecarMessage(`config graduation ${status.version} (${status.source})`);
       if (status.last_error) {
         pushSidecarMessage(`config fallback: ${status.last_error}`);
       }
@@ -175,24 +163,32 @@ export function App() {
     }
   }, [pushSidecarMessage, setErrorMessage, setModuleConfigStatus]);
 
-  const handleRefreshLicense = useCallback(
-    async (heartbeat: boolean): Promise<LicenseStatus> => {
+  const handleRefreshAccount = useCallback(
+    async (forceWallet: boolean): Promise<void> => {
       try {
-        const status = heartbeat ? await refreshLicenseStatus() : await getLicenseStatus();
-        setLicenseStatus(status);
+        const status = forceWallet ? await refreshWallet() : await getAccountStatus();
+        setAccountStatus(status);
         pushSidecarMessage(
-          heartbeat
-            ? `license status: ${status.status}${status.offline_mode ? " (offline)" : ""}`
-            : `license local: ${status.status}`,
+          status.signed_in
+            ? `account: ${status.email ?? status.user_id ?? "signed in"} | available credits ${status.wallet?.available ?? "-"}`
+            : "account: signed out",
         );
-        return status;
       } catch (error) {
         setErrorMessage(error instanceof Error ? error.message : String(error));
         throw error;
       }
     },
-    [pushSidecarMessage, setErrorMessage, setLicenseStatus],
+    [pushSidecarMessage, setAccountStatus, setErrorMessage],
   );
+
+  const handleLoadModuleCatalog = useCallback(async () => {
+    try {
+      const catalog = await getModuleCatalog();
+      pushSidecarMessage(`module catalog loaded: ${catalog.modules.length} modules`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }, [pushSidecarMessage, setErrorMessage]);
 
   const handleLoadBrowserRuntime = useCallback(async (): Promise<BrowserRuntimeStatus> => {
     try {
@@ -228,13 +224,13 @@ export function App() {
     try {
       await initializeSidecar();
       setConnectionState("ready");
-      await handleRefreshLicense(false);
+      await handleRefreshAccount(false);
       setModuleConfigStatus(await getModuleConfigStatus("graduation"));
       await handleLoadUpdaterStatus();
       await handleLoadDatabaseStatus();
       await handleLoadJobs();
       await handleLoadBrowserRuntime();
-      await handleRefreshLicense(true);
+      await handleLoadModuleCatalog();
       await handleSyncConfig();
     } catch (error) {
       setConnectionState("error");
@@ -244,13 +240,50 @@ export function App() {
     handleLoadBrowserRuntime,
     handleLoadDatabaseStatus,
     handleLoadJobs,
+    handleLoadModuleCatalog,
     handleLoadUpdaterStatus,
-    handleRefreshLicense,
+    handleRefreshAccount,
     handleSyncConfig,
     setConnectionState,
     setErrorMessage,
     setModuleConfigStatus,
   ]);
+
+  async function handleSignIn() {
+    if (!accountEmail.trim() || !accountPassword) {
+      setErrorMessage(messages.app.account.missingCredentials);
+      return;
+    }
+    try {
+      setIsSigningIn(true);
+      setErrorMessage(null);
+      const status = await signIn({
+        email: accountEmail.trim(),
+        password: accountPassword,
+        deviceName: deviceName.trim() || "dmc-desktop",
+        appVersion: updaterStatus?.current_version ?? "0.1.0",
+      });
+      setAccountStatus(status);
+      setAccountPassword("");
+      pushSidecarMessage(`signed in: ${status.email ?? status.user_id ?? "-"}`);
+      await handleLoadModuleCatalog();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsSigningIn(false);
+    }
+  }
+
+  async function handleSignOut() {
+    try {
+      setErrorMessage(null);
+      const status = await signOut();
+      setAccountStatus(status);
+      pushSidecarMessage("signed out");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
 
   async function handleCreateBackup() {
     try {
@@ -261,7 +294,7 @@ export function App() {
         return;
       }
       const result = await createBackup(suggestedPath);
-      setSupportMessage(`backup saved: ${result.backup_path}`);
+      setSupportMessage(`สำรองข้อมูลแล้ว: ${result.backup_path}`);
       pushSidecarMessage(`backup saved: ${result.backup_path}`);
       await handleLoadDatabaseStatus();
     } catch (error) {
@@ -283,11 +316,11 @@ export function App() {
       setCurrentJob(null);
       setActiveJobId(null);
       setPreview(null);
-      setSupportMessage(`restored from ${result.restored_from} | safety backup: ${result.safety_backup_path}`);
+      setSupportMessage(`กู้คืนจาก ${result.restored_from} | safety backup: ${result.safety_backup_path}`);
       pushSidecarMessage(`restore completed from ${result.restored_from}`);
       await handleLoadDatabaseStatus();
       await handleLoadJobs();
-      await handleRefreshLicense(false);
+      await handleRefreshAccount(false);
       await handleLoadBrowserRuntime();
       await handleSyncConfig();
     } catch (error) {
@@ -310,7 +343,7 @@ export function App() {
         platform: typeof navigator !== "undefined" ? navigator.userAgent : "unknown",
         connectionState,
         databaseStatus,
-        licenseStatus,
+        accountStatus,
         moduleConfigStatus,
         browserRuntimeStatus,
         updaterStatus,
@@ -321,7 +354,7 @@ export function App() {
         hasErrorMessage: Boolean(errorMessage),
       });
       await writeTextFile(outputPath, JSON.stringify(diagnostics, null, 2));
-      setSupportMessage(`diagnostics exported: ${outputPath}`);
+      setSupportMessage(`สร้างไฟล์วินิจฉัยแล้ว: ${outputPath}`);
       pushSidecarMessage(`diagnostics exported: ${outputPath}`);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -451,14 +484,15 @@ export function App() {
     };
   }, [applySidecarEvent, handleConnect, setConnectionState, setErrorMessage]);
 
-  const handleHeartbeatRefresh = useCallback(() => handleRefreshLicense(true), [handleRefreshLicense]);
-
   const handleJobReconciled = useCallback(
     (status: JobStatusSnapshot) => {
       setCurrentJob(status);
       upsertExistingJob(status);
+      if (status.credit_status === "finalized") {
+        void handleRefreshAccount(true);
+      }
     },
-    [setCurrentJob, upsertExistingJob],
+    [handleRefreshAccount, setCurrentJob, upsertExistingJob],
   );
 
   const handleJobReconcileError = useCallback(
@@ -467,11 +501,6 @@ export function App() {
     },
     [setErrorMessage],
   );
-
-  usePeriodicLicenseHeartbeat({
-    connectionState,
-    onHeartbeat: handleHeartbeatRefresh,
-  });
 
   useJobStatusReconciliation({
     activeJobId,
@@ -503,7 +532,7 @@ export function App() {
 
   async function handleValidate() {
     if (!excelPath.trim()) {
-      setErrorMessage("กรุณาระบุพาธไฟล์ Excel ก่อน");
+      setErrorMessage("กรุณาระบุไฟล์ Excel ก่อน");
       return;
     }
 
@@ -524,28 +553,36 @@ export function App() {
   async function handleStart(dryRun: boolean) {
     const selectedExcelPath = excelPath.trim();
     if (!selectedExcelPath) {
-      setErrorMessage("กรุณาระบุพาธไฟล์ Excel ก่อน");
+      setErrorMessage("กรุณาระบุไฟล์ Excel ก่อน");
       return;
     }
-
     if (validationBlocksStart) {
       setErrorMessage("กรุณาตรวจไฟล์ Excel ให้ผ่านก่อนเริ่มงาน");
       return;
     }
 
+    const rowsToWrite = preview?.rows_accepted ?? 0;
     if (!dryRun) {
-      const rowsToWrite = preview?.rows_accepted ?? 0;
+      if (!accountStatus?.signed_in) {
+        setErrorMessage(messages.app.account.signInBeforeLive);
+        return;
+      }
+      if ((accountStatus.wallet?.available ?? 0) < rowsToWrite) {
+        setErrorMessage(messages.app.account.insufficientCredits);
+        return;
+      }
       const rowsTotal = preview?.rows_total ?? rowsToWrite;
       const confirmed =
         typeof window === "undefined" ||
         window.confirm(
           [
-            "ยืนยันเริ่มงานจริง?",
+            "ยืนยันเริ่มส่งข้อมูลเข้า DMC?",
             "",
             `ไฟล์: ${selectedExcelPath}`,
-            `ระบบจะเขียนข้อมูล ${rowsToWrite} จาก ${rowsTotal} รายการลง DMC`,
+            `ระบบจะส่งข้อมูล ${rowsToWrite} จาก ${rowsTotal} รายการเข้า DMC`,
+            `เครดิตที่จะกันไว้: ${rowsToWrite}`,
             "",
-            "ควรใช้หลังจากตรวจไฟล์หรือ Dry Run กับไฟล์นี้แล้วเท่านั้น",
+            messages.app.account.reserveNotice,
           ].join("\n"),
         );
       if (!confirmed) {
@@ -561,10 +598,18 @@ export function App() {
         setErrorMessage(browserStatus.message ?? "Chromium browser runtime is not installed.");
         return;
       }
-      const latestLicense = await handleRefreshLicense(true);
-      if (!latestLicense.can_start_jobs) {
-        setErrorMessage(latestLicense.message ?? messages.app.license.reconnectRequired);
-        return;
+      if (!dryRun) {
+        await handleRefreshAccount(true);
+        const latestAccount = await getAccountStatus();
+        setAccountStatus(latestAccount);
+        if (!latestAccount.signed_in || !latestAccount.can_start_credit_jobs) {
+          setErrorMessage(latestAccount.message ?? messages.app.account.signInBeforeLive);
+          return;
+        }
+        if ((latestAccount.wallet?.available ?? 0) < rowsToWrite) {
+          setErrorMessage(messages.app.account.insufficientCredits);
+          return;
+        }
       }
       await handleSyncConfig();
       const result = await startGraduationJob({
@@ -573,12 +618,19 @@ export function App() {
         dryRun,
         stopOnReview,
         minScore,
+        estimatedCredits: rowsToWrite,
       });
-      const draft = buildDraftJob(selectedExcelPath, preview?.rows_accepted ?? null, result.job_id);
+      const draft = buildDraftJob(selectedExcelPath, rowsToWrite, result.job_id);
+      draft.credit_reservation_id = result.credit_reservation_id;
+      draft.credits_reserved = result.credits_reserved;
+      draft.credit_status = result.credit_reservation_id ? "reserved" : null;
       setActiveJobId(result.job_id);
       setCurrentJob(draft);
       upsertExistingJob(draft);
       pushSidecarMessage(`${dryRun ? "เริ่ม dry run" : "เริ่มงานจริง"} แล้ว: ${result.job_id}`);
+      if (!dryRun) {
+        await handleRefreshAccount(true);
+      }
       await handleLoadJobs();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -680,6 +732,9 @@ export function App() {
       const status = await getJobStatus(activeJobId);
       setCurrentJob(status);
       upsertExistingJob(status);
+      if (status.credit_status === "finalized") {
+        await handleRefreshAccount(true);
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
@@ -693,33 +748,11 @@ export function App() {
       const status = await getJobStatus(activeJobId);
       setCurrentJob(status);
       upsertExistingJob(status);
+      if (status.credit_status === "finalized") {
+        await handleRefreshAccount(true);
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function handleActivateLicense() {
-    if (!licenseKey.trim()) {
-      setErrorMessage("กรุณากรอก license key ก่อน");
-      return;
-    }
-
-    setErrorMessage(null);
-    setIsActivatingLicense(true);
-    try {
-      const appVersion = updaterStatus?.current_version ?? "0.1.0";
-      const status = await activateLicense({
-        licenseKey: licenseKey.trim(),
-        deviceName: deviceName.trim() || "dmc-desktop",
-        appVersion,
-      });
-      setLicenseStatus(status);
-      pushSidecarMessage(`activate_license สำเร็จ: ${status.status}`);
-      await handleRefreshLicense(true);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setIsActivatingLicense(false);
     }
   }
 
@@ -770,10 +803,18 @@ export function App() {
             isInstallingUpdate={isInstallingUpdate}
             connectionState={connectionState}
             databaseStatus={databaseStatus}
-            licenseStatus={licenseStatus}
+            accountStatus={accountStatus}
+            accountEmail={accountEmail}
+            accountPassword={accountPassword}
+            isSigningIn={isSigningIn}
             isCreatingBackup={isCreatingBackup}
             isRestoringBackup={isRestoringBackup}
             isExportingDiagnostics={isExportingDiagnostics}
+            onAccountEmailChange={setAccountEmail}
+            onAccountPasswordChange={setAccountPassword}
+            onSignIn={() => void handleSignIn()}
+            onSignOut={() => void handleSignOut()}
+            onRefreshWallet={() => void handleRefreshAccount(true)}
             onCheckForUpdates={() => void handleCheckForUpdates()}
             onInstallUpdate={() => void handleInstallUpdate()}
             onRefreshDatabaseStatus={() => void handleLoadDatabaseStatus()}
@@ -787,75 +828,66 @@ export function App() {
             onBackHome={() => setActiveModule("home")}
           />
         ) : (
-          <>
-            <GraduationWizard
-              preview={preview}
-              currentJob={currentJob}
-              existingJobs={existingJobs}
-              sidecarMessages={sidecarMessages}
-              activeJobId={activeJobId}
-              progressPercent={progressPercent}
-              connectionState={connectionState}
-              licenseStatus={licenseStatus}
-              moduleConfigStatus={moduleConfigStatus}
-              browserRuntimeStatus={browserRuntimeStatus}
-              browserRuntimeProgress={browserRuntimeProgress}
-              supportMessage={supportMessage}
-              errorMessage={errorMessage}
-              licenseKey={licenseKey}
-              deviceName={deviceName}
-              excelPath={excelPath}
-              minScore={minScore}
-              stopOnReview={stopOnReview}
-              isValidating={isValidating}
-              isStartingJob={isStartingJob}
-              isActivatingLicense={isActivatingLicense}
-              isDownloadingTemplate={isDownloadingTemplate}
-              isArchivingJobs={isArchivingJobs}
-              isBootstrappingBrowser={isBootstrappingBrowser}
-              licenseBlocksStart={licenseBlocksStart}
-              browserRuntimeBlocksStart={browserRuntimeBlocksStart}
-              validationBlocksStart={validationBlocksStart}
-              preflightRowsAccepted={preflightRowsAccepted}
-              preflightRowsTotal={preflightRowsTotal}
-              currentJobNeedsAuth={Boolean(currentJob?.needs_auth)}
-              onBackHome={() => setActiveModule("home")}
-              onLicenseKeyChange={setLicenseKey}
-              onDeviceNameChange={setDeviceName}
-              onExcelPathChange={(value) => {
-                setExcelPath(value);
-                setPreview(null);
-                setValidatedExcelPath(null);
-              }}
-              onMinScoreChange={setMinScore}
-              onStopOnReviewChange={setStopOnReview}
-              onConnect={() => void handleConnect()}
-              onRefreshJobs={() => void handleLoadJobs()}
-              onRefreshLicense={() => void handleRefreshLicense(true)}
-              onSyncConfig={() => void handleSyncConfig()}
-              onValidate={() => void handleValidate()}
-              onStartDryRun={() => void handleStart(true)}
-              onStartLive={() => void handleStart(false)}
-              onRefreshStatus={() => void handleRefreshStatus()}
-              onPause={() => void handlePause()}
-              onResume={() => void handleResume()}
-              onCancel={() => void handleCancel()}
-              onActivateLicense={() => void handleActivateLicense()}
-              onBrowseFile={() => void handleBrowseFile()}
-              onDownloadTemplate={() => void handleDownloadTemplate()}
-              onArchiveOldJobs={() => void handleArchiveOldJobs()}
-              onBootstrapBrowserRuntime={() => void handleBootstrapBrowserRuntime()}
-              onReloadBrowserRuntime={() => void handleLoadBrowserRuntime()}
-              onSelectJob={(job) => {
-                setActiveJobId(job.job_id);
-                setCurrentJob(job);
-                setExcelPath(job.source_file);
-              }}
-              onResumeExisting={(job) => void handleResumeExisting(job)}
-              onRevealPath={(path) => void handleRevealPath(path)}
-              describeLicenseStatus={describeLicenseStatus}
-            />
-          </>
+          <GraduationWizard
+            preview={preview}
+            currentJob={currentJob}
+            existingJobs={existingJobs}
+            sidecarMessages={sidecarMessages}
+            activeJobId={activeJobId}
+            progressPercent={progressPercent}
+            connectionState={connectionState}
+            accountStatus={accountStatus}
+            moduleConfigStatus={moduleConfigStatus}
+            browserRuntimeStatus={browserRuntimeStatus}
+            browserRuntimeProgress={browserRuntimeProgress}
+            supportMessage={supportMessage}
+            errorMessage={errorMessage}
+            excelPath={excelPath}
+            minScore={minScore}
+            stopOnReview={stopOnReview}
+            isValidating={isValidating}
+            isStartingJob={isStartingJob}
+            isDownloadingTemplate={isDownloadingTemplate}
+            isArchivingJobs={isArchivingJobs}
+            isBootstrappingBrowser={isBootstrappingBrowser}
+            accountBlocksStart={accountBlocksStart}
+            browserRuntimeBlocksStart={browserRuntimeBlocksStart}
+            validationBlocksStart={validationBlocksStart}
+            preflightRowsAccepted={preflightRowsAccepted}
+            preflightRowsTotal={preflightRowsTotal}
+            currentJobNeedsAuth={Boolean(currentJob?.needs_auth)}
+            onBackHome={() => setActiveModule("home")}
+            onExcelPathChange={(value) => {
+              setExcelPath(value);
+              setPreview(null);
+              setValidatedExcelPath(null);
+            }}
+            onMinScoreChange={setMinScore}
+            onStopOnReviewChange={setStopOnReview}
+            onConnect={() => void handleConnect()}
+            onRefreshJobs={() => void handleLoadJobs()}
+            onRefreshWallet={() => void handleRefreshAccount(true)}
+            onSyncConfig={() => void handleSyncConfig()}
+            onValidate={() => void handleValidate()}
+            onStartDryRun={() => void handleStart(true)}
+            onStartLive={() => void handleStart(false)}
+            onRefreshStatus={() => void handleRefreshStatus()}
+            onPause={() => void handlePause()}
+            onResume={() => void handleResume()}
+            onCancel={() => void handleCancel()}
+            onBrowseFile={() => void handleBrowseFile()}
+            onDownloadTemplate={() => void handleDownloadTemplate()}
+            onArchiveOldJobs={() => void handleArchiveOldJobs()}
+            onBootstrapBrowserRuntime={() => void handleBootstrapBrowserRuntime()}
+            onReloadBrowserRuntime={() => void handleLoadBrowserRuntime()}
+            onSelectJob={(job) => {
+              setActiveJobId(job.job_id);
+              setCurrentJob(job);
+              setExcelPath(job.source_file);
+            }}
+            onResumeExisting={(job) => void handleResumeExisting(job)}
+            onRevealPath={(path) => void handleRevealPath(path)}
+          />
         )}
       </section>
     </main>

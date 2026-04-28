@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
+from .account_store import AccountSessionStore
 from .config import secure_cloud_base_url
 from .db import connect
 from .errors import DomainError
@@ -167,11 +168,13 @@ class TelemetryClient:
     def __init__(
         self,
         *,
+        account_store: AccountSessionStore | None = None,
         license_store: LicenseStore | None = None,
         store: TelemetryStore | None = None,
         max_queue_size: int = 500,
         background_flush: bool = True,
     ) -> None:
+        self.account_store = account_store
         self.license_store = license_store
         self.store = store or TelemetryStore()
         self.max_queue_size = max_queue_size
@@ -268,6 +271,13 @@ class TelemetryClient:
         return {"status": status, "sent": sent, "queued": self.store.count(), "last_error": last_error}
 
     def _license_headers(self) -> dict[str, str]:
+        if self.account_store is not None:
+            session = self.account_store.get_session()
+            if session is not None:
+                return {
+                    "Authorization": f"Bearer {session.token}",
+                    "X-DMC-Device-Id": session.user_id,
+                }
         if self.license_store is None:
             return {}
         record = self.license_store.get_license()

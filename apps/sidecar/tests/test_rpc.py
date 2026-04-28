@@ -2,15 +2,51 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from dmc_sidecar import config
 from dmc_sidecar.checkpoint import JobCheckpoint
+from dmc_sidecar.errors import DomainError
 from dmc_sidecar.job_store import JobStore
 from dmc_sidecar.license_client import build_license_status_snapshot
 from dmc_sidecar.license_store import LicenseStore
 from dmc_sidecar.rpc import RpcServer
 from dmc_sidecar.runtime import build_event_notification
 from dmc_sidecar.schemas import LicenseRecord
+
+
+def _rpc_call(server: RpcServer, method: str, params: dict[str, object]) -> dict[str, object]:
+    return json.loads(
+        server.handle_text(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": f"req-{method}",
+                    "method": method,
+                    "params": params,
+                }
+            )
+        )
+    )
+
+
+def _ready_browser_status(tmp_path: Path):
+    return type(
+        "Status",
+        (),
+        {
+            "installed": True,
+            "model_dump": lambda self: {
+                "installed": True,
+                "install_dir": str(tmp_path / "ms-playwright"),
+                "executable_path": str(tmp_path / "ms-playwright" / "chromium-1208" / "chrome-win" / "chrome.exe"),
+                "bootstrap_supported": True,
+                "bootstrap_performed": False,
+                "message": "ready",
+                "last_error": None,
+            },
+        },
+    )()
 
 
 def test_ping_rpc() -> None:
@@ -358,6 +394,111 @@ def test_start_job_rpc_requires_browser_runtime(monkeypatch, tmp_path: Path) -> 
     assert response["error"]["details"]["installed"] is False
 
 
+def test_live_start_requires_account_session_before_job_starts(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
+    server = RpcServer(emit_notification=lambda payload: None)
+    started: list[str] = []
+    monkeypatch.setattr(server.job_manager, "start_job", lambda **_: started.append("started"))
+
+    response = _rpc_call(
+        server,
+        "start_job",
+        {
+            "job_id": "job-credit-session",
+            "module": "graduation",
+            "excel_path": "C:\\data\\m3.xlsx",
+            "options": {"dry_run": False, "estimated_credits": 3},
+        },
+    )
+
+    assert response["error"]["code"] == "SIGN_IN_REQUIRED"
+    assert started == []
+    assert server.job_store.get_job_record("job-credit-session") is None
+
+
+def test_live_start_blocks_when_credit_reservation_fails(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
+    monkeypatch.setattr(
+        "dmc_sidecar.rpc.reserve_credits",
+        lambda *args, **kwargs: (_ for _ in ()).throw(DomainError("INSUFFICIENT_CREDITS")),
+    )
+    server = RpcServer(emit_notification=lambda payload: None)
+    started: list[str] = []
+    monkeypatch.setattr(server.job_manager, "start_job", lambda **_: started.append("started"))
+
+    response = _rpc_call(
+        server,
+        "start_job",
+        {
+            "job_id": "job-credit-low",
+            "module": "graduation",
+            "excel_path": "C:\\data\\m3.xlsx",
+            "options": {"dry_run": False, "estimated_credits": 3},
+        },
+    )
+
+    assert response["error"]["code"] == "INSUFFICIENT_CREDITS"
+    assert started == []
+    assert server.job_store.get_job_record("job-credit-low") is None
+
+
+def test_live_start_reserves_credits_before_starting_job(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
+    reserved: dict[str, object] = {}
+    started: dict[str, object] = {}
+
+    def fake_reserve_credits(*args: object, job_id: str, module: str, units: int, idempotency_key: str, **_: object):
+        reserved.update(
+            {
+                "job_id": job_id,
+                "module": module,
+                "units": units,
+                "idempotency_key": idempotency_key,
+            }
+        )
+        return SimpleNamespace(reservation_id="reservation-1")
+
+    def fake_start_job(**kwargs: object) -> None:
+        started.update(kwargs)
+
+    monkeypatch.setattr("dmc_sidecar.rpc.reserve_credits", fake_reserve_credits)
+    server = RpcServer(emit_notification=lambda payload: None)
+    monkeypatch.setattr(server.job_manager, "start_job", fake_start_job)
+
+    response = _rpc_call(
+        server,
+        "start_job",
+        {
+            "job_id": "job-credit-ok",
+            "module": "graduation",
+            "excel_path": "C:\\data\\m3.xlsx",
+            "options": {"dry_run": False, "estimated_credits": 7},
+        },
+    )
+
+    assert response["result"] == {
+        "accepted": True,
+        "job_id": "job-credit-ok",
+        "credit_reservation_id": "reservation-1",
+        "credits_reserved": 7,
+    }
+    assert reserved == {
+        "job_id": "job-credit-ok",
+        "module": "graduation",
+        "units": 7,
+        "idempotency_key": "job-credit-ok:reserve",
+    }
+    assert started["credit_reservation_id"] == "reservation-1"
+    assert started["credits_reserved"] == 7
+    status = server.job_store.get_status("job-credit-ok")
+    assert status is not None
+    assert status["credit_reservation_id"] == "reservation-1"
+    assert status["credits_reserved"] == 7
+
+
 def test_refresh_license_status_rpc_records_telemetry(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
     store = LicenseStore()
@@ -450,7 +591,14 @@ def test_resume_existing_job_rpc_uses_checkpoint_state_after_pause(monkeypatch, 
         )(),
     )
 
-    def fake_start_job(*, job_id: str, module_name: str, excel_path: Path, options: dict[str, object]) -> None:
+    def fake_start_job(
+        *,
+        job_id: str,
+        module_name: str,
+        excel_path: Path,
+        options: dict[str, object],
+        **_: object,
+    ) -> None:
         started["job_id"] = job_id
         started["module_name"] = module_name
         started["excel_path"] = str(excel_path)

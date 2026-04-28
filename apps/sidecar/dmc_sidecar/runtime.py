@@ -7,9 +7,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from .account_client import capture_credits, release_credits
+from .account_store import AccountSessionStore
 from .errors import DomainError
 from .job_store import JobStore
-from .license_policy import check_license_allows_job_start
 from .license_store import LicenseStore
 from .telemetry import TelemetryClient
 
@@ -75,6 +76,11 @@ class JobSnapshot:
     started_at: str | None = None
     finished_at: str | None = None
     level_label: str | None = None
+    credit_reservation_id: str | None = None
+    credits_reserved: int = 0
+    credits_captured: int = 0
+    credits_refunded: int = 0
+    credit_status: str | None = None
 
 
 @dataclass
@@ -94,6 +100,7 @@ class JobContext:
     control: JobControl
     job_store: JobStore
     license_store: LicenseStore
+    account_store: AccountSessionStore
     snapshot: JobSnapshot
 
     def emit_progress(self) -> None:
@@ -138,11 +145,13 @@ class JobManager:
         *,
         job_store: JobStore,
         license_store: LicenseStore,
+        account_store: AccountSessionStore,
         telemetry: TelemetryClient,
         emit_notification: Callable[[dict[str, Any]], None],
     ) -> None:
         self.job_store = job_store
         self.license_store = license_store
+        self.account_store = account_store
         self.telemetry = telemetry
         self.emit_notification = emit_notification
         self._jobs: dict[str, ActiveJob] = {}
@@ -155,21 +164,22 @@ class JobManager:
         module_name: str,
         excel_path: Path,
         options: dict[str, object],
+        credit_reservation_id: str | None = None,
+        credits_reserved: int = 0,
     ) -> None:
         with self._lock:
             if job_id in self._jobs:
                 raise DomainError("JOB_ALREADY_RUNNING")
 
-            check_license_allows_job_start(
-                self.license_store.get_license(),
-                module_name=module_name,
-            )
             control = JobControl()
             snapshot = JobSnapshot(
                 job_id=job_id,
                 module=module_name,
                 status="running",
                 source_file=str(excel_path),
+                credit_reservation_id=credit_reservation_id,
+                credits_reserved=credits_reserved,
+                credit_status="reserved" if credit_reservation_id else None,
             )
             context = JobContext(
                 job_id=job_id,
@@ -178,6 +188,7 @@ class JobManager:
                 control=control,
                 job_store=self.job_store,
                 license_store=self.license_store,
+                account_store=self.account_store,
                 snapshot=snapshot,
             )
             thread = threading.Thread(
@@ -240,6 +251,11 @@ class JobManager:
             "finished_at": snapshot.finished_at or persisted.get("finished_at"),
             "level_label": snapshot.level_label or persisted.get("level_label"),
             "run_summary": persisted.get("run_summary"),
+            "credit_reservation_id": snapshot.credit_reservation_id or persisted.get("credit_reservation_id"),
+            "credits_reserved": snapshot.credits_reserved or persisted.get("credits_reserved", 0),
+            "credits_captured": snapshot.credits_captured or persisted.get("credits_captured", 0),
+            "credits_refunded": snapshot.credits_refunded or persisted.get("credits_refunded", 0),
+            "credit_status": snapshot.credit_status or persisted.get("credit_status"),
         }
 
     def runtime_statuses(self) -> list[dict[str, Any]]:
@@ -260,6 +276,7 @@ class JobManager:
             )
             status = self.job_store.get_status(context.job_id)
             if status is not None and status["status"] == "done":
+                self._finalize_credits(context, status)
                 self.telemetry.record_job_completed(
                     module=module_name,
                     total=int(status["total"] or 0),
@@ -267,12 +284,16 @@ class JobManager:
                     failed=int(status["failed"]),
                     duration_sec=_duration_seconds(status["started_at"], status["finished_at"]),
                 )
+            elif status is not None and status["status"] in {"failed", "cancelled", "stopped_on_review"}:
+                self._finalize_credits(context, status)
         except Exception as exc:  # pragma: no cover - background defensive path
             code = str(exc)
             checkpoint = context.job_store.load_checkpoint(context.job_id)
             if code == "JOB_CANCELLED":
                 context.snapshot.status = "cancelled"
                 self.job_store.set_status(context.job_id, "cancelled")
+                status = self.job_store.get_status(context.job_id) or {}
+                self._finalize_credits(context, status)
             else:
                 context.snapshot.status = "failed"
                 self.job_store.mark_failed(
@@ -280,6 +301,8 @@ class JobManager:
                     checkpoint=checkpoint,
                     finished_at=utc_now(),
                 )
+                status = self.job_store.get_status(context.job_id) or {}
+                self._finalize_credits(context, status)
                 self.emit_notification(
                     {
                         "type": "error",
@@ -303,6 +326,57 @@ class JobManager:
         if active is None:
             raise DomainError("JOB_NOT_FOUND")
         return active
+
+    def _finalize_credits(self, context: JobContext, status: dict[str, Any]) -> None:
+        reservation_id = context.snapshot.credit_reservation_id or status.get("credit_reservation_id")
+        reserved = int(context.snapshot.credits_reserved or status.get("credits_reserved") or 0)
+        if not reservation_id or reserved <= 0:
+            return
+
+        summary = status.get("run_summary") if isinstance(status.get("run_summary"), dict) else None
+        if status.get("status") == "done" and summary is not None:
+            capture_units = int(summary.get("applied_rows") or status.get("succeeded") or 0)
+        else:
+            capture_units = int(status.get("succeeded") or context.snapshot.succeeded or 0)
+        capture_units = max(0, min(capture_units, reserved))
+        release_units = max(reserved - capture_units, 0)
+
+        try:
+            if capture_units:
+                capture_result = capture_credits(
+                    context.account_store,
+                    reservation_id=str(reservation_id),
+                    units=capture_units,
+                    idempotency_key=f"{context.job_id}:capture",
+                )
+                context.snapshot.credits_captured = capture_result.units_captured
+            if release_units:
+                release_result = release_credits(
+                    context.account_store,
+                    reservation_id=str(reservation_id),
+                    units=release_units,
+                    idempotency_key=f"{context.job_id}:release",
+                )
+                context.snapshot.credits_refunded = release_result.units_released
+            context.snapshot.credit_status = "finalized"
+            self.job_store.update_credit_status(
+                context.job_id,
+                credits_captured=capture_units,
+                credits_refunded=release_units,
+                credit_status="finalized",
+            )
+        except DomainError as exc:
+            context.snapshot.credit_status = f"finalize_failed:{exc.code}"
+            self.job_store.update_credit_status(
+                context.job_id,
+                credit_status=context.snapshot.credit_status,
+            )
+            self.emit_notification(
+                {
+                    "type": "sidecar_stderr",
+                    "message": f"credit finalize failed: {exc.code}",
+                }
+            )
 
 
 def build_event_notification(payload: dict[str, Any]) -> str:

@@ -16,15 +16,16 @@ class TelemetryStore:
         self,
         *,
         license_key: str | None,
+        user_id: str | None = None,
         device_id: str | None,
         events: list[dict[str, Any]],
     ) -> None:
         with connect(self.sqlite_path) as connection:
             for event in events:
                 connection.execute(
-                    """
-                    INSERT INTO telemetry_events (
-                        license_key, device_id, event, app_version, payload_json, created_at
+                """
+                INSERT INTO telemetry_events (
+                    license_key, device_id, event, app_version, payload_json, created_at
                     )
                     VALUES (?, ?, ?, ?, ?, ?)
                     """,

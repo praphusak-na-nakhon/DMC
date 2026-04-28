@@ -5,6 +5,7 @@ import hmac
 from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from .account_service import AccountRepository, SessionRecord
 from .config import settings
 
 
@@ -33,3 +34,14 @@ def require_api_bearer(
         )
 
     return credentials.credentials
+
+
+def require_account_session(
+    credentials: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+) -> SessionRecord:
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="missing account session",
+        )
+    return AccountRepository().get_session(credentials.credentials)

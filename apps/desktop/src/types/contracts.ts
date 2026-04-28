@@ -127,11 +127,53 @@ export type JobStatusSnapshot = {
   finished_at: string | null;
   level_label: string | null;
   run_summary: JobRunSummary | null;
+  credit_reservation_id: string | null;
+  credits_reserved: number;
+  credits_captured: number;
+  credits_refunded: number;
+  credit_status: string | null;
 };
 
 export type StartJobResponse = {
   accepted: boolean;
   job_id: string;
+  credit_reservation_id: string | null;
+  credits_reserved: number;
+};
+
+export type WalletSnapshot = {
+  user_id: string;
+  balance: number;
+  reserved: number;
+  available: number;
+};
+
+export type AccountStatus = {
+  signed_in: boolean;
+  user_id: string | null;
+  email: string | null;
+  display_name: string | null;
+  status: string;
+  token_expires_at: string | null;
+  last_checked_at: string | null;
+  wallet: WalletSnapshot | null;
+  can_start_credit_jobs: boolean;
+  needs_attention: boolean;
+  message: string | null;
+  last_error: string | null;
+};
+
+export type ModuleCatalogItem = {
+  id: string;
+  enabled: boolean;
+  requires_credits: boolean;
+  pricing_mode: "per_billable_record";
+  credit_per_unit: number;
+  production_dry_run_enabled: boolean;
+};
+
+export type ModuleCatalogResponse = {
+  modules: ModuleCatalogItem[];
 };
 
 export type ModuleConfigStatus = {
@@ -391,6 +433,11 @@ export function parseJobStatusSnapshot(value: unknown): JobStatusSnapshot {
     finished_at: readOptionalString(record, "finished_at", "job_status_snapshot"),
     level_label: readOptionalString(record, "level_label", "job_status_snapshot"),
     run_summary: parseOptionalJobRunSummary(record, "run_summary", "job_status_snapshot"),
+    credit_reservation_id: readOptionalString(record, "credit_reservation_id", "job_status_snapshot"),
+    credits_reserved: readNumber(record, "credits_reserved", "job_status_snapshot"),
+    credits_captured: readNumber(record, "credits_captured", "job_status_snapshot"),
+    credits_refunded: readNumber(record, "credits_refunded", "job_status_snapshot"),
+    credit_status: readOptionalString(record, "credit_status", "job_status_snapshot"),
   };
 }
 
@@ -399,6 +446,67 @@ export function parseStartJobResponse(value: unknown): StartJobResponse {
   return {
     accepted: readBoolean(record, "accepted", "start_job_response"),
     job_id: readString(record, "job_id", "start_job_response"),
+    credit_reservation_id: readOptionalString(record, "credit_reservation_id", "start_job_response"),
+    credits_reserved: readNumber(record, "credits_reserved", "start_job_response"),
+  };
+}
+
+function parseWalletSnapshot(value: unknown, context = "wallet_snapshot"): WalletSnapshot {
+  const record = asRecord(value, context);
+  return {
+    user_id: readString(record, "user_id", context),
+    balance: readNumber(record, "balance", context),
+    reserved: readNumber(record, "reserved", context),
+    available: readNumber(record, "available", context),
+  };
+}
+
+function parseOptionalWalletSnapshot(record: UnknownRecord, key: string, context: string): WalletSnapshot | null {
+  const value = record[key];
+  if (value === null || value === undefined) {
+    return null;
+  }
+  return parseWalletSnapshot(value, `${context}.${key}`);
+}
+
+export function parseAccountStatus(value: unknown): AccountStatus {
+  const record = asRecord(value, "account_status");
+  return {
+    signed_in: readBoolean(record, "signed_in", "account_status"),
+    user_id: readOptionalString(record, "user_id", "account_status"),
+    email: readOptionalString(record, "email", "account_status"),
+    display_name: readOptionalString(record, "display_name", "account_status"),
+    status: readString(record, "status", "account_status"),
+    token_expires_at: readOptionalString(record, "token_expires_at", "account_status"),
+    last_checked_at: readOptionalString(record, "last_checked_at", "account_status"),
+    wallet: parseOptionalWalletSnapshot(record, "wallet", "account_status"),
+    can_start_credit_jobs: readBoolean(record, "can_start_credit_jobs", "account_status"),
+    needs_attention: readBoolean(record, "needs_attention", "account_status"),
+    message: readOptionalString(record, "message", "account_status"),
+    last_error: readOptionalString(record, "last_error", "account_status"),
+  };
+}
+
+function parseModuleCatalogItem(value: unknown, index: number): ModuleCatalogItem {
+  const record = asRecord(value, `module_catalog_item[${index}]`);
+  const pricingMode = readString(record, "pricing_mode", "module_catalog_item");
+  if (pricingMode !== "per_billable_record") {
+    throw new Error("module_catalog_item.pricing_mode must be per_billable_record");
+  }
+  return {
+    id: readString(record, "id", "module_catalog_item"),
+    enabled: readBoolean(record, "enabled", "module_catalog_item"),
+    requires_credits: readBoolean(record, "requires_credits", "module_catalog_item"),
+    pricing_mode: pricingMode,
+    credit_per_unit: readNumber(record, "credit_per_unit", "module_catalog_item"),
+    production_dry_run_enabled: readBoolean(record, "production_dry_run_enabled", "module_catalog_item"),
+  };
+}
+
+export function parseModuleCatalogResponse(value: unknown): ModuleCatalogResponse {
+  const record = asRecord(value, "module_catalog_response");
+  return {
+    modules: readArray(record, "modules", "module_catalog_response").map(parseModuleCatalogItem),
   };
 }
 

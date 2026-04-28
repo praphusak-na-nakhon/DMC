@@ -84,9 +84,84 @@ def _add_indexes(connection: sqlite3.Connection) -> None:
     )
 
 
+def _account_credit_schema(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            display_name TEXT,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS sessions (
+            token TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            device_name TEXT NOT NULL,
+            app_version TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            revoked_at TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS wallets (
+            user_id TEXT PRIMARY KEY,
+            balance INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS credit_reservations (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            job_id TEXT NOT NULL,
+            module TEXT NOT NULL,
+            status TEXT NOT NULL,
+            units_reserved INTEGER NOT NULL,
+            units_captured INTEGER NOT NULL DEFAULT 0,
+            units_released INTEGER NOT NULL DEFAULT 0,
+            idempotency_key TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE (user_id, job_id),
+            UNIQUE (user_id, idempotency_key),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS credit_transactions (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            type TEXT NOT NULL,
+            amount INTEGER NOT NULL,
+            reservation_id TEXT,
+            job_id TEXT,
+            module TEXT,
+            idempotency_key TEXT,
+            note TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE (user_id, idempotency_key),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sessions_user_expires
+            ON sessions(user_id, expires_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_credit_reservations_user_status
+            ON credit_reservations(user_id, status);
+        CREATE INDEX IF NOT EXISTS idx_credit_transactions_user_created
+            ON credit_transactions(user_id, created_at DESC);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(version=1, name="baseline_schema", apply=_baseline_schema),
     Migration(version=2, name="add_indexes", apply=_add_indexes),
+    Migration(version=3, name="account_credit_schema", apply=_account_credit_schema),
 )
 
 _MIGRATION_LOCK = threading.Lock()

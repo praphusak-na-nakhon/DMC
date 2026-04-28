@@ -8,6 +8,17 @@ from typing import Any, Callable
 
 from pydantic import ValidationError
 
+from .account_client import (
+    build_account_snapshot,
+    cached_module_catalog,
+    get_module_catalog,
+    refresh_wallet,
+    reserve_credits,
+    sign_in,
+    sign_out,
+)
+from .account_store import AccountSessionStore
+
 from . import __version__
 from .backup import create_backup_archive, restore_backup_archive
 from .browser_runtime import bootstrap_browser_runtime, get_browser_runtime_status
@@ -32,6 +43,7 @@ from .schemas import (
     RpcErrorResponse,
     RpcRequest,
     RpcSuccessResponse,
+    SignInRequest,
     StartJobRequest,
     ValidateExcelRequest,
 )
@@ -43,10 +55,12 @@ class RpcServer:
         self.emit_notification = emit_notification
         self.job_store = JobStore()
         self.license_store = LicenseStore()
-        self.telemetry = TelemetryClient(license_store=self.license_store)
+        self.account_store = AccountSessionStore()
+        self.telemetry = TelemetryClient(account_store=self.account_store, license_store=self.license_store)
         self.job_manager = JobManager(
             job_store=self.job_store,
             license_store=self.license_store,
+            account_store=self.account_store,
             telemetry=self.telemetry,
             emit_notification=emit_notification,
         )
@@ -104,6 +118,36 @@ class RpcServer:
 
             if request.method == "get_license_status":
                 result = build_license_status_snapshot(self.license_store.get_license()).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "sign_in":
+                sign_in_params = SignInRequest.model_validate(request.params)
+                result = sign_in(
+                    self.account_store,
+                    email=sign_in_params.email,
+                    password=sign_in_params.password,
+                    device_name=sign_in_params.device_name,
+                    app_version=sign_in_params.app_version,
+                ).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "sign_out":
+                result = sign_out(self.account_store).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "get_account_status":
+                result = build_account_snapshot(self.account_store).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "refresh_wallet":
+                result = refresh_wallet(self.account_store).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "get_module_catalog":
+                try:
+                    result = get_module_catalog(self.account_store).model_dump()
+                except DomainError:
+                    result = cached_module_catalog(self.account_store).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "get_browser_runtime_status":
@@ -192,20 +236,42 @@ class RpcServer:
                         message="Chromium browser runtime is not installed.",
                         details=browser_runtime.model_dump(),
                     )
+                credit_reservation_id: str | None = None
+                credits_reserved = 0
+                if not bool(start_params.options.get("dry_run", False)):
+                    credits_reserved = self._estimate_credit_units(start_params)
+                    reservation = reserve_credits(
+                        self.account_store,
+                        job_id=start_params.job_id,
+                        module=start_params.module,
+                        units=credits_reserved,
+                        idempotency_key=f"{start_params.job_id}:reserve",
+                    )
+                    credit_reservation_id = reservation.reservation_id
                 self.job_store.create_pending_job(
                     job_id=start_params.job_id,
                     module=start_params.module,
                     source_file=start_params.excel_path,
+                    credit_reservation_id=credit_reservation_id,
+                    credits_reserved=credits_reserved,
+                    credit_status="reserved" if credit_reservation_id else None,
                 )
                 self.job_manager.start_job(
                     job_id=start_params.job_id,
                     module_name=start_params.module,
                     excel_path=Path(start_params.excel_path),
                     options=start_params.options,
+                    credit_reservation_id=credit_reservation_id,
+                    credits_reserved=credits_reserved,
                 )
                 return RpcSuccessResponse(
                     id=request.id,
-                    result={"accepted": True, "job_id": start_params.job_id},
+                    result={
+                        "accepted": True,
+                        "job_id": start_params.job_id,
+                        "credit_reservation_id": credit_reservation_id,
+                        "credits_reserved": credits_reserved,
+                    },
                 )
 
             if request.method == "get_job_status":
@@ -300,6 +366,17 @@ class RpcServer:
 
         return RpcSuccessResponse(id=request_id, result={"job_id": job_id, "status": status})
 
+    def _estimate_credit_units(self, start_params: StartJobRequest) -> int:
+        raw_units = start_params.options.get("estimated_credits")
+        if isinstance(raw_units, int) and raw_units > 0:
+            return raw_units
+        module = get_module(start_params.module)
+        try:
+            preview = module.validate_excel(Path(start_params.excel_path))
+        except Exception as exc:
+            raise DomainError("CREDIT_PREFLIGHT_FAILED", "Unable to estimate credits for this job.") from exc
+        return max(int(preview.rows_accepted), 1)
+
     def _resume_existing_job(
         self,
         request_id: str | int | None,
@@ -345,6 +422,8 @@ class RpcServer:
             module_name=record["module"],
             excel_path=Path(record["source_file"]),
             options=checkpoint.options,
+            credit_reservation_id=record.get("credit_reservation_id"),
+            credits_reserved=int(record.get("credits_reserved") or 0),
         )
         return RpcSuccessResponse(
             id=request_id,

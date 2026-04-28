@@ -7,9 +7,8 @@ import pandas as pd
 from playwright.sync_api import BrowserContext, Error as PlaywrightError, Page, sync_playwright
 
 from ..checkpoint import JobCheckpoint
-from ..config import profile_dir_for_license, profiles_dir, reports_dir
+from ..config import profile_dir_for_account, profiles_dir, reports_dir
 from ..errors import DomainError
-from ..license_policy import check_license_allows_record_count
 from ..module_config import load_effective_config, sync_module_config
 from ..runtime import JobContext, utc_now
 from ..schemas import PreviewRow, ValidateExcelResponse, ValidationWarning
@@ -101,12 +100,6 @@ class GraduationModule(AutomationModule):
                 }
             )
         students, level_label = legacy.load_source_data(excel_path)
-        license_record = context.license_store.get_license()
-        check_license_allows_record_count(
-            license_record,
-            record_count=len(students),
-            dry_run=bool(options.get("dry_run", False)),
-        )
         level_rules = legacy.LEVEL_RULES[level_label]
         base_url = legacy.build_target_url(str(level_rules["level_code"]))
 
@@ -135,9 +128,8 @@ class GraduationModule(AutomationModule):
             started_at=utc_now(),
         )
 
-        profile_dir = profile_dir_for_license(
-            license_record.license_key if license_record is not None else None
-        )
+        account_session = context.account_store.get_session()
+        profile_dir = profile_dir_for_account(account_session.user_id if account_session is not None else None)
 
         report_dir = reports_dir() / job_id
         report_dir.mkdir(parents=True, exist_ok=True)

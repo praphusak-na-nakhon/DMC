@@ -15,6 +15,10 @@ export type ModuleDefinition = {
   id: ModuleId;
   status: ModuleStatus;
   icon: typeof GraduationCap;
+  requiresCredits: boolean;
+  pricingMode: "per_billable_record";
+  creditPerUnit: number;
+  productionDryRunEnabled: boolean;
   contract: ModuleContract;
 };
 
@@ -23,6 +27,10 @@ export const moduleDefinitions: ModuleDefinition[] = [
     id: "formConverter",
     status: "skeleton",
     icon: FileSpreadsheet,
+    requiresCredits: true,
+    pricingMode: "per_billable_record",
+    creditPerUnit: 1,
+    productionDryRunEnabled: false,
     contract: {
       version: "0.1-draft",
       inputs: ["source_document_path", "school_year", "template_type"],
@@ -35,6 +43,10 @@ export const moduleDefinitions: ModuleDefinition[] = [
     id: "currentStudents",
     status: "skeleton",
     icon: UserPlus,
+    requiresCredits: true,
+    pricingMode: "per_billable_record",
+    creditPerUnit: 1,
+    productionDryRunEnabled: false,
     contract: {
       version: "0.1-draft",
       inputs: ["student_roster_excel_path", "operation_type", "school_year"],
@@ -47,10 +59,14 @@ export const moduleDefinitions: ModuleDefinition[] = [
     id: "graduation",
     status: "ready",
     icon: GraduationCap,
+    requiresCredits: true,
+    pricingMode: "per_billable_record",
+    creditPerUnit: 1,
+    productionDryRunEnabled: false,
     contract: {
       version: "0.1",
       inputs: ["obec_study_excel_path", "grade_level", "minimum_match_score"],
-      validations: ["excel_schema", "status_mapping", "browser_runtime", "license_policy"],
+      validations: ["excel_schema", "status_mapping", "browser_runtime", "credit_policy"],
       outputs: ["obec_fill_report_csv", "obec_fill_review_csv", "run_summary"],
       events: ["validate_excel", "start_job", "progress", "job_done"],
     },

@@ -1,10 +1,10 @@
 import type { CSSProperties } from "react";
 import type {
+  AccountStatus,
   AvailableUpdate,
   BrowserRuntimeStatus,
   DatabaseStatus,
   JobStatusSnapshot,
-  LicenseStatus,
   ModuleConfigStatus,
   UpdaterStatus,
 } from "../types/contracts";
@@ -121,6 +121,11 @@ export function buildDraftJob(
     finished_at: null,
     level_label: null,
     run_summary: null,
+    credit_reservation_id: null,
+    credits_reserved: 0,
+    credits_captured: 0,
+    credits_refunded: 0,
+    credit_status: null,
   };
 }
 
@@ -129,7 +134,7 @@ type DiagnosticsInput = {
   platform: string;
   connectionState: string;
   databaseStatus: DatabaseStatus | null;
-  licenseStatus: LicenseStatus | null;
+  accountStatus: AccountStatus | null;
   moduleConfigStatus: ModuleConfigStatus | null;
   browserRuntimeStatus: BrowserRuntimeStatus | null;
   updaterStatus: UpdaterStatus | null;
@@ -162,28 +167,31 @@ function sanitizeJobForDiagnostics(job: JobStatusSnapshot | null): Record<string
     has_review_report_path: Boolean(job.review_report_path),
     has_stopped_item: Boolean(job.stopped_item),
     run_summary: job.run_summary,
+    credits_reserved: job.credits_reserved,
+    credits_captured: job.credits_captured,
+    credits_refunded: job.credits_refunded,
+    credit_status: job.credit_status,
   };
 }
 
-function sanitizeLicenseForDiagnostics(status: LicenseStatus | null): Record<string, unknown> | null {
+function sanitizeAccountForDiagnostics(status: AccountStatus | null): Record<string, unknown> | null {
   if (!status) {
     return null;
   }
   return {
-    configured: status.configured,
+    signed_in: status.signed_in,
+    user_id: status.user_id,
     status: status.status,
-    license_tier: status.license_tier,
-    school_size_tier: status.school_size_tier,
-    billing_interval: status.billing_interval,
-    student_count_total: status.student_count_total,
-    max_devices: status.max_devices,
-    modules_enabled: status.modules_enabled,
-    expires_at: status.expires_at,
+    token_expires_at: status.token_expires_at,
     last_checked_at: status.last_checked_at,
-    offline_grace_until: status.offline_grace_until,
-    offline_mode: status.offline_mode,
-    within_offline_grace: status.within_offline_grace,
-    can_start_jobs: status.can_start_jobs,
+    wallet: status.wallet
+      ? {
+          balance: status.wallet.balance,
+          reserved: status.wallet.reserved,
+          available: status.wallet.available,
+        }
+      : null,
+    can_start_credit_jobs: status.can_start_credit_jobs,
     needs_attention: status.needs_attention,
     message: status.message,
     last_error: status.last_error,
@@ -197,7 +205,7 @@ export function buildSupportDiagnostics(input: DiagnosticsInput): Record<string,
     platform: input.platform,
     connection_state: input.connectionState,
     database_status: input.databaseStatus,
-    license_status: sanitizeLicenseForDiagnostics(input.licenseStatus),
+    account_status: sanitizeAccountForDiagnostics(input.accountStatus),
     module_config_status: input.moduleConfigStatus,
     browser_runtime_status: input.browserRuntimeStatus,
     updater_status: input.updaterStatus,

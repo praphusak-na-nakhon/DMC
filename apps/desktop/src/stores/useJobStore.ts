@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type {
+  AccountStatus,
   JobStatusSnapshot,
   LicenseStatus,
   ModuleConfigStatus,
@@ -10,6 +11,7 @@ import type {
 type JobStoreState = {
   preview: ValidateExcelResponse | null;
   currentJob: JobStatusSnapshot | null;
+  accountStatus: AccountStatus | null;
   licenseStatus: LicenseStatus | null;
   moduleConfigStatus: ModuleConfigStatus | null;
   existingJobs: JobStatusSnapshot[];
@@ -23,6 +25,7 @@ type JobStoreState = {
   setExcelPath: (excelPath: string) => void;
   setPreview: (preview: ValidateExcelResponse | null) => void;
   setCurrentJob: (job: JobStatusSnapshot | null) => void;
+  setAccountStatus: (status: AccountStatus | null) => void;
   setLicenseStatus: (status: LicenseStatus | null) => void;
   setModuleConfigStatus: (status: ModuleConfigStatus | null) => void;
   setExistingJobs: (jobs: JobStatusSnapshot[]) => void;
@@ -60,6 +63,11 @@ function mergeJob(
     finished_at: partial.finished_at ?? base?.finished_at ?? null,
     level_label: partial.level_label ?? base?.level_label ?? null,
     run_summary: partial.run_summary ?? base?.run_summary ?? null,
+    credit_reservation_id: partial.credit_reservation_id ?? base?.credit_reservation_id ?? null,
+    credits_reserved: partial.credits_reserved ?? base?.credits_reserved ?? 0,
+    credits_captured: partial.credits_captured ?? base?.credits_captured ?? 0,
+    credits_refunded: partial.credits_refunded ?? base?.credits_refunded ?? 0,
+    credit_status: partial.credit_status ?? base?.credit_status ?? null,
   };
 }
 
@@ -70,6 +78,7 @@ function upsertJobList(existingJobs: JobStatusSnapshot[], nextJob: JobStatusSnap
 export const useJobStore = create<JobStoreState>((set) => ({
   preview: null,
   currentJob: null,
+  accountStatus: null,
   licenseStatus: null,
   moduleConfigStatus: null,
   existingJobs: [],
@@ -83,6 +92,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
   setExcelPath: (excelPath) => set({ excelPath }),
   setPreview: (preview) => set({ preview }),
   setCurrentJob: (currentJob) => set({ currentJob }),
+  setAccountStatus: (accountStatus) => set({ accountStatus }),
   setLicenseStatus: (licenseStatus) => set({ licenseStatus }),
   setModuleConfigStatus: (moduleConfigStatus) => set({ moduleConfigStatus }),
   setExistingJobs: (existingJobs) => set({ existingJobs }),
@@ -228,6 +238,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
     set({
       preview: null,
       currentJob: null,
+      accountStatus: null,
       licenseStatus: null,
       moduleConfigStatus: null,
       existingJobs: [],

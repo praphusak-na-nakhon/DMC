@@ -34,6 +34,7 @@ class Settings(BaseModel):
         "DMC_CLOUD_TRIAL_LICENSE_KEYS",
         "DMC-TRIAL-0001,DMC-TEST-0001,DMC-TEST-NEW,DMC-TEST-ACTIVATE",
     )
+    session_duration_hours: int = int(os.getenv("DMC_CLOUD_SESSION_DURATION_HOURS", "720"))
 
 
 settings = Settings()

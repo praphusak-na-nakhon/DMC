@@ -160,10 +160,36 @@ def _ensure_job_summary_columns(connection: sqlite3.Connection) -> None:
     )
 
 
+def _account_credit_columns(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS account_session (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            token TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            email TEXT NOT NULL,
+            display_name TEXT,
+            status TEXT NOT NULL,
+            token_expires_at TEXT NOT NULL,
+            signed_in_at TEXT NOT NULL,
+            last_checked_at TEXT NOT NULL,
+            wallet_json TEXT NOT NULL DEFAULT '{}',
+            module_catalog_json TEXT NOT NULL DEFAULT '[]'
+        );
+        """
+    )
+    _ensure_column(connection, table="job", column="credit_reservation_id", definition="TEXT")
+    _ensure_column(connection, table="job", column="credits_reserved", definition="INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(connection, table="job", column="credits_captured", definition="INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(connection, table="job", column="credits_refunded", definition="INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(connection, table="job", column="credit_status", definition="TEXT")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(version=1, name="baseline_schema", apply=_baseline_schema),
     Migration(version=2, name="add_indexes", apply=_add_indexes),
     Migration(version=3, name="job_record_summary", apply=_ensure_job_summary_columns),
+    Migration(version=4, name="account_credit_columns", apply=_account_credit_columns),
 )
 
 _MIGRATION_LOCK = threading.Lock()

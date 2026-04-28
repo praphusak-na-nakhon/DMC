@@ -10,14 +10,12 @@ import {
   FileSpreadsheet,
   FolderOpen,
   Grid3X3,
-  KeyRound,
   Loader2,
   LogIn,
   Pause,
   Play,
   RefreshCw,
   SearchCheck,
-  ShieldCheck,
   Square,
   Trash2,
   UploadCloud,
@@ -38,9 +36,9 @@ import { Switch } from "./ui/switch";
 import { ExistingJobsPanel } from "./ExistingJobsPanel";
 import { SidecarLogPanel } from "./SidecarLogPanel";
 import type {
+  AccountStatus,
   BrowserRuntimeStatus,
   JobStatusSnapshot,
-  LicenseStatus,
   ModuleConfigStatus,
   ValidateExcelResponse,
 } from "../types/contracts";
@@ -62,38 +60,33 @@ type GraduationWizardProps = {
   activeJobId: string | null;
   progressPercent: number;
   connectionState: ConnectionState;
-  licenseStatus: LicenseStatus | null;
+  accountStatus: AccountStatus | null;
   moduleConfigStatus: ModuleConfigStatus | null;
   browserRuntimeStatus: BrowserRuntimeStatus | null;
   browserRuntimeProgress: BrowserRuntimeProgress;
   supportMessage: string | null;
   errorMessage: string | null;
-  licenseKey: string;
-  deviceName: string;
   excelPath: string;
   minScore: number;
   stopOnReview: boolean;
   isValidating: boolean;
   isStartingJob: boolean;
-  isActivatingLicense: boolean;
   isDownloadingTemplate: boolean;
   isArchivingJobs: boolean;
   isBootstrappingBrowser: boolean;
-  licenseBlocksStart: boolean;
+  accountBlocksStart: boolean;
   browserRuntimeBlocksStart: boolean;
   validationBlocksStart: boolean;
   preflightRowsAccepted: number | null;
   preflightRowsTotal: number | null;
   currentJobNeedsAuth: boolean;
   onBackHome: () => void;
-  onLicenseKeyChange: (value: string) => void;
-  onDeviceNameChange: (value: string) => void;
   onExcelPathChange: (value: string) => void;
   onMinScoreChange: (value: number) => void;
   onStopOnReviewChange: (value: boolean) => void;
   onConnect: () => void;
   onRefreshJobs: () => void;
-  onRefreshLicense: () => void;
+  onRefreshWallet: () => void;
   onSyncConfig: () => void;
   onValidate: () => void;
   onStartDryRun: () => void;
@@ -102,7 +95,6 @@ type GraduationWizardProps = {
   onPause: () => void;
   onResume: () => void;
   onCancel: () => void;
-  onActivateLicense: () => void;
   onBrowseFile: () => void;
   onDownloadTemplate: () => void;
   onArchiveOldJobs: () => void;
@@ -111,7 +103,6 @@ type GraduationWizardProps = {
   onSelectJob: (job: JobStatusSnapshot) => void;
   onResumeExisting: (job: JobStatusSnapshot) => void;
   onRevealPath: (path: string) => void;
-  describeLicenseStatus: (status: LicenseStatus) => string;
 };
 
 const gradeOptions = [
@@ -207,38 +198,33 @@ export function GraduationWizard({
   activeJobId,
   progressPercent,
   connectionState,
-  licenseStatus,
+  accountStatus,
   moduleConfigStatus,
   browserRuntimeStatus,
   browserRuntimeProgress,
   supportMessage,
   errorMessage,
-  licenseKey,
-  deviceName,
   excelPath,
   minScore,
   stopOnReview,
   isValidating,
   isStartingJob,
-  isActivatingLicense,
   isDownloadingTemplate,
   isArchivingJobs,
   isBootstrappingBrowser,
-  licenseBlocksStart,
+  accountBlocksStart,
   browserRuntimeBlocksStart,
   validationBlocksStart,
   preflightRowsAccepted,
   preflightRowsTotal,
   currentJobNeedsAuth,
   onBackHome,
-  onLicenseKeyChange,
-  onDeviceNameChange,
   onExcelPathChange,
   onMinScoreChange,
   onStopOnReviewChange,
   onConnect,
   onRefreshJobs,
-  onRefreshLicense,
+  onRefreshWallet,
   onSyncConfig,
   onValidate,
   onStartDryRun,
@@ -247,7 +233,6 @@ export function GraduationWizard({
   onPause,
   onResume,
   onCancel,
-  onActivateLicense,
   onBrowseFile,
   onDownloadTemplate,
   onArchiveOldJobs,
@@ -256,21 +241,21 @@ export function GraduationWizard({
   onSelectJob,
   onResumeExisting,
   onRevealPath,
-  describeLicenseStatus,
 }: GraduationWizardProps) {
   const [selectedGrade, setSelectedGrade] = useState<"m3" | "m6" | null>(null);
   const [activeStep, setActiveStep] = useState(1);
   const [showSupportDrawer, setShowSupportDrawer] = useState(false);
   const [supportSection, setSupportSection] = useState<"settings" | "history" | "messages">("settings");
   const runtimeReady = browserRuntimeStatus?.installed ?? false;
-  const licenseReady = licenseStatus?.can_start_jobs ?? false;
-  const canStart =
+  const accountReady = accountStatus?.can_start_credit_jobs ?? false;
+  const showDryRun = Boolean((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV);
+  const canDryRun =
     Boolean(selectedGrade) &&
     !isStartingJob &&
     !isBootstrappingBrowser &&
-    !licenseBlocksStart &&
     !browserRuntimeBlocksStart &&
     !validationBlocksStart;
+  const canStart = canDryRun && !accountBlocksStart;
   const acceptedRows = preview?.rows_accepted ?? preflightRowsAccepted ?? 0;
   const totalRows = preview?.rows_total ?? preflightRowsTotal ?? null;
   const detectedLevel =
@@ -297,6 +282,7 @@ export function GraduationWizard({
   const rowsForPreview = useMemo(() => preview?.preview.slice(0, 5) ?? [], [preview]);
   const visibleErrorMessage = errorMessage?.includes("transformCallback") ? null : errorMessage;
   const reportTools = messages.app.reportTools;
+  const accountCopy = messages.app.account;
 
   useEffect(() => {
     if (currentJob || preview) {
@@ -342,9 +328,14 @@ export function GraduationWizard({
                 tone={connectionState === "ready" ? "success" : connectionState === "error" ? "danger" : "warning"}
               />
               <SystemPill
-                label="License"
-                value={licenseStatus ? describeLicenseStatus(licenseStatus) : "-"}
-                tone={licenseReady ? "success" : "warning"}
+                label="Account"
+                value={accountStatus?.signed_in ? accountStatus.email ?? "signed in" : accountCopy.signInRequired}
+                tone={accountReady ? "success" : "warning"}
+              />
+              <SystemPill
+                label="Credits"
+                value={accountStatus?.wallet ? `${accountStatus.wallet.available} available` : "-"}
+                tone={accountStatus?.wallet && accountStatus.wallet.available > 0 ? "success" : "warning"}
               />
               <SystemPill
                 label="Chromium"
@@ -554,6 +545,17 @@ export function GraduationWizard({
                 {totalRows !== null ? ` จาก ${totalRows} แถว` : ""}
               </div>
               <div className="text-sm text-slate-600">ระดับชั้น: {detectedLevel}</div>
+              <div className="rounded-lg border bg-blue-50 px-3 py-2 text-sm text-blue-900">
+                งานจริงนี้จะกันเครดิตไว้ประมาณ {acceptedRows} เครดิต
+                {accountStatus?.wallet ? ` · ${accountCopy.availableCredits} ${accountStatus.wallet.available}` : ` · ${accountCopy.signInBeforeLive}`}
+              </div>
+              {accountStatus?.wallet && accountStatus.wallet.available < acceptedRows ? (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>{accountCopy.insufficientCreditsTitle}</AlertTitle>
+                  <AlertDescription>{accountCopy.insufficientCredits}</AlertDescription>
+                </Alert>
+              ) : null}
               <Progress value={preview ? 100 : progressPercent} className="h-3" />
             </div>
 
@@ -588,10 +590,12 @@ export function GraduationWizard({
                 <RefreshCw className="h-7 w-7" />
                 เริ่มส่งข้อมูลเข้า DMC
               </Button>
-              <Button variant="outline" disabled={!canStart} onClick={onStartDryRun}>
-                <FileCheck2 className="h-4 w-4" />
-                เริ่ม Dry Run ก่อนส่งจริง
-              </Button>
+              {showDryRun ? (
+                <Button variant="outline" disabled={!canDryRun} onClick={onStartDryRun}>
+                  <FileCheck2 className="h-4 w-4" />
+                  เริ่ม Dry Run ก่อนส่งจริง
+                </Button>
+              ) : null}
             </div>
 
             <div className="space-y-2">
@@ -609,6 +613,14 @@ export function GraduationWizard({
                 </div>
                 <div>สำเร็จ: {currentJob.succeeded}</div>
                 <div>ต้องตรวจเพิ่ม/ผิดพลาด: {currentJob.failed}</div>
+                {currentJob.credits_reserved > 0 ? (
+                  <>
+                    <Separator />
+                    <div>เครดิตที่กันไว้: {currentJob.credits_reserved}</div>
+                    <div>เครดิตที่ใช้จริง: {currentJob.credits_captured}</div>
+                    <div>เครดิตที่คืน: {currentJob.credits_refunded}</div>
+                  </>
+                ) : null}
                 {runSummary ? (
                   <>
                     <Separator />
@@ -731,19 +743,28 @@ export function GraduationWizard({
                 </div>
 
                 <div className="space-y-3 rounded-xl border bg-slate-50 p-4">
-                  <div className="font-semibold">License</div>
-                  <Input value={licenseKey} onChange={(event) => onLicenseKeyChange(event.target.value)} placeholder="DMC-XXXX-XXXX" />
-                  <Input value={deviceName} onChange={(event) => onDeviceNameChange(event.target.value)} placeholder="desktop-01" />
-                  <div className="flex flex-wrap gap-2">
-                    <Button disabled={connectionState !== "ready" || isActivatingLicense} onClick={onActivateLicense}>
-                      {isActivatingLicense ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
-                      Activate
-                    </Button>
-                    <Button variant="outline" onClick={onRefreshLicense}>
-                      <ShieldCheck className="h-4 w-4" />
-                      Refresh
-                    </Button>
+                  <div className="font-semibold">Account / Credits</div>
+                  <div className="text-sm text-slate-600">
+                    {accountStatus?.signed_in ? accountStatus.email : accountCopy.signInRequired}
                   </div>
+                  <div className="grid grid-cols-3 gap-2 text-sm">
+                    <div className="rounded-lg border bg-white p-2">
+                      <div className="text-xs text-slate-500">Balance</div>
+                      <div className="font-semibold">{accountStatus?.wallet?.balance ?? "-"}</div>
+                    </div>
+                    <div className="rounded-lg border bg-white p-2">
+                      <div className="text-xs text-slate-500">Reserved</div>
+                      <div className="font-semibold">{accountStatus?.wallet?.reserved ?? "-"}</div>
+                    </div>
+                    <div className="rounded-lg border bg-white p-2">
+                      <div className="text-xs text-slate-500">Available</div>
+                      <div className="font-semibold">{accountStatus?.wallet?.available ?? "-"}</div>
+                    </div>
+                  </div>
+                  <Button variant="outline" onClick={onRefreshWallet} disabled={!accountStatus?.signed_in}>
+                    <RefreshCw className="h-4 w-4" />
+                    {accountCopy.refreshCredits}
+                  </Button>
                 </div>
 
                 <div className="space-y-3 rounded-xl border bg-slate-50 p-4">
@@ -811,7 +832,7 @@ export function GraduationWizard({
       </Card>
 
       <Card className="rounded-2xl border-slate-200 bg-white/80 px-4 py-3 text-xs text-slate-500">
-        สถานะล่าสุด: license checked {formatTimestamp(licenseStatus?.last_checked_at ?? null)} · config checked{" "}
+        สถานะล่าสุด: account checked {formatTimestamp(accountStatus?.last_checked_at ?? null)} · config checked{" "}
         {formatTimestamp(moduleConfigStatus?.checked_at ?? null)}
       </Card>
     </div>

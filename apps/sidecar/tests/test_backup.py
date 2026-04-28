@@ -36,8 +36,8 @@ def test_sidecar_migrations_report_latest_version(monkeypatch, tmp_path: Path) -
     version = migrate_database(config.sqlite_path())
     metadata = get_database_metadata(config.sqlite_path())
 
-    assert version == 3
-    assert metadata["schema_version"] == 3
+    assert version == 4
+    assert metadata["schema_version"] == 4
     assert "job" in metadata["tables"]
     assert "job_record" in metadata["tables"]
     assert "schema_migrations" in metadata["tables"]

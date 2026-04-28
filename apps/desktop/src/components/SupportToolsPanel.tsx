@@ -2,12 +2,12 @@ import { ArchiveRestore, Database, Download, FileDown, RefreshCw } from "lucide-
 import { formatTimestamp } from "../lib/appUi";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-import type { DatabaseStatus, LicenseStatus } from "../types/contracts";
+import type { AccountStatus, DatabaseStatus } from "../types/contracts";
 
 type SupportToolsPanelProps = {
   connectionState: "idle" | "connecting" | "ready" | "error";
   databaseStatus: DatabaseStatus | null;
-  licenseStatus: LicenseStatus | null;
+  accountStatus: AccountStatus | null;
   isCreatingBackup: boolean;
   isRestoringBackup: boolean;
   isExportingDiagnostics: boolean;
@@ -29,7 +29,7 @@ function Detail({ label, value }: { label: string; value: string | number | null
 export function SupportToolsPanel({
   connectionState,
   databaseStatus,
-  licenseStatus,
+  accountStatus,
   isCreatingBackup,
   isRestoringBackup,
   isExportingDiagnostics,
@@ -56,9 +56,9 @@ export function SupportToolsPanel({
           <Detail label="Database" value={databaseStatus?.path ?? "-"} />
           <div className="grid gap-3 sm:grid-cols-2">
             <Detail label="Schema version" value={databaseStatus?.schema_version ?? "-"} />
-            <Detail label="License tier" value={licenseStatus?.license_tier ?? "-"} />
-            <Detail label="Expires" value={formatTimestamp(licenseStatus?.expires_at ?? null)} />
-            <Detail label="Offline grace" value={formatTimestamp(licenseStatus?.offline_grace_until ?? null)} />
+            <Detail label="Account" value={accountStatus?.email ?? accountStatus?.user_id ?? "-"} />
+            <Detail label="Session expires" value={formatTimestamp(accountStatus?.token_expires_at ?? null)} />
+            <Detail label="Available credits" value={accountStatus?.wallet?.available ?? "-"} />
           </div>
           <Detail label="Tables" value={databaseStatus?.tables.join(", ") ?? "-"} />
         </div>

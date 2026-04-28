@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AvailableUpdate,
+  AccountStatus,
   ArchiveJobsResponse,
   BackupCreateResponse,
   BrowserRuntimeStatus,
@@ -9,6 +10,7 @@ import type {
   JobStatusSnapshot,
   LicenseStatus,
   ListJobsResponse,
+  ModuleCatalogResponse,
   ModuleConfigStatus,
   RestoreBackupResponse,
   SidecarEvent,
@@ -19,6 +21,7 @@ import type {
 } from "../types/contracts";
 import {
   parseAvailableUpdate,
+  parseAccountStatus,
   parseArchiveJobsResponse,
   parseBackupCreateResponse,
   parseBrowserRuntimeStatus,
@@ -27,6 +30,7 @@ import {
   parseJobStatusSnapshot,
   parseLicenseStatus,
   parseListJobsResponse,
+  parseModuleCatalogResponse,
   parseModuleConfigStatus,
   parseRestoreBackupResponse,
   parseResumeExistingJobResponse,
@@ -163,6 +167,41 @@ export async function getLicenseStatus(): Promise<LicenseStatus> {
   return parseLicenseStatus(result);
 }
 
+export async function signIn(input: {
+  email: string;
+  password: string;
+  deviceName: string;
+  appVersion: string;
+}): Promise<AccountStatus> {
+  const result = await sidecarRequest<unknown>("sign_in", {
+    email: input.email,
+    password: input.password,
+    device_name: input.deviceName,
+    app_version: input.appVersion,
+  });
+  return parseAccountStatus(result);
+}
+
+export async function signOut(): Promise<AccountStatus> {
+  const result = await sidecarRequest<unknown>("sign_out", {});
+  return parseAccountStatus(result);
+}
+
+export async function getAccountStatus(): Promise<AccountStatus> {
+  const result = await sidecarRequest<unknown>("get_account_status", {});
+  return parseAccountStatus(result);
+}
+
+export async function refreshWallet(): Promise<AccountStatus> {
+  const result = await sidecarRequest<unknown>("refresh_wallet", {});
+  return parseAccountStatus(result);
+}
+
+export async function getModuleCatalog(): Promise<ModuleCatalogResponse> {
+  const result = await sidecarRequest<unknown>("get_module_catalog", {});
+  return parseModuleCatalogResponse(result);
+}
+
 export async function activateLicense(input: {
   licenseKey: string;
   deviceName: string;
@@ -212,6 +251,7 @@ export async function startGraduationJob(input: {
   dryRun: boolean;
   stopOnReview: boolean;
   minScore: number;
+  estimatedCredits: number;
 }): Promise<StartJobResponse> {
   const result = await sidecarRequest<unknown>("start_job", {
     job_id: input.jobId,
@@ -221,6 +261,7 @@ export async function startGraduationJob(input: {
       dry_run: input.dryRun,
       stop_on_review: input.stopOnReview,
       min_score: input.minScore,
+      estimated_credits: input.estimatedCredits,
     },
   });
   return parseStartJobResponse(result);

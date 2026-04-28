@@ -5,17 +5,21 @@ import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException, status
 
 from .config import settings
 from .db import connect
 from .schemas import (
+    BillingInterval,
     CloudLicenseAdminResponse,
     CloudLicenseUpsertRequest,
     LicenseActivateRequest,
+    LicenseStatus,
     LicenseStateResponse,
+    LicenseTier,
+    SchoolSizeTier,
 )
 
 
@@ -190,12 +194,12 @@ class LicenseRepository:
             )
         return CloudLicenseAdminResponse(
             license_key=record.license_key,
-            license_tier=record.license_tier,
-            school_size_tier=record.school_size_tier,
-            billing_interval=record.billing_interval,
+            license_tier=cast(LicenseTier, record.license_tier),
+            school_size_tier=cast(SchoolSizeTier, record.school_size_tier),
+            billing_interval=cast(BillingInterval | None, record.billing_interval),
             student_count_total=record.student_count_total,
             max_devices=record.max_devices,
-            status=record.status,
+            status=cast(LicenseStatus, record.status),
             expires_at=record.expires_at,
             modules_enabled=record.modules_enabled,
             active_devices=self.count_active_devices(record.license_key),
@@ -247,10 +251,10 @@ class LicenseRepository:
 
 def _build_response(record: LicenseRecord) -> LicenseStateResponse:
     return LicenseStateResponse(
-        status=record.status,
-        license_tier=record.license_tier,
-        school_size_tier=record.school_size_tier,
-        billing_interval=record.billing_interval,
+        status=cast(LicenseStatus, record.status),
+        license_tier=cast(LicenseTier, record.license_tier),
+        school_size_tier=cast(SchoolSizeTier, record.school_size_tier),
+        billing_interval=cast(BillingInterval | None, record.billing_interval),
         student_count_total=record.student_count_total,
         expires_at=record.expires_at,
         modules_enabled=record.modules_enabled,
