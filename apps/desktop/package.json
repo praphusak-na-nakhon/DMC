@@ -4,8 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "sync-template": "node scripts/sync-template.mjs",
+    "dev": "node scripts/sync-template.mjs && vite",
+    "build": "node scripts/sync-template.mjs && vite build",
     "preview": "vite preview"
   },
   "dependencies": {

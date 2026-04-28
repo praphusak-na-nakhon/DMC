@@ -104,6 +104,14 @@ export async function saveDiagnosticsDialog(defaultName?: string): Promise<strin
   return invoke<string | null>("save_diagnostics_dialog", { defaultName });
 }
 
+export async function saveTemplateDialog(defaultName?: string): Promise<string | null> {
+  return invoke<string | null>("save_template_dialog", { defaultName });
+}
+
+export async function copyTemplateFile(destinationPath: string): Promise<string> {
+  return invoke<string>("copy_template_file", { destinationPath });
+}
+
 export async function writeTextFile(path: string, contents: string): Promise<void> {
   await invoke("write_text_file", { path, contents });
 }

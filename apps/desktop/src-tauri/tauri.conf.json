@@ -23,7 +23,8 @@
     "createUpdaterArtifacts": true,
     "resources": [
       "bundled-sidecar",
-      "release-config"
+      "release-config",
+      "templates"
     ],
     "icon": [
       "icons/icon.ico"

@@ -739,6 +739,46 @@ fn save_diagnostics_dialog(default_name: Option<String>) -> Option<String> {
         .map(|path| path.to_string_lossy().to_string())
 }
 
+fn template_source_path(app: &AppHandle) -> Result<PathBuf, String> {
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let candidate = resource_dir
+            .join("templates")
+            .join("obec-study-form.xlsx");
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    let candidate = repo_root()?.join("obec-study-form.xlsx");
+    if candidate.exists() {
+        return Ok(candidate);
+    }
+
+    Err("TEMPLATE_NOT_FOUND".to_string())
+}
+
+#[tauri::command]
+fn save_template_dialog(default_name: Option<String>) -> Option<String> {
+    let mut dialog = rfd::FileDialog::new().add_filter("Excel", &["xlsx"]);
+    if let Some(name) = default_name.as_deref() {
+        dialog = dialog.set_file_name(name);
+    }
+    dialog
+        .save_file()
+        .map(|path| path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn copy_template_file(app: AppHandle, destination_path: String) -> Result<String, String> {
+    let source = template_source_path(&app)?;
+    let target = PathBuf::from(destination_path);
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::copy(source, &target).map_err(|error| error.to_string())?;
+    Ok(target.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 fn write_text_file(path: String, contents: String) -> Result<(), String> {
     let target = PathBuf::from(path);
@@ -893,6 +933,8 @@ fn main() {
             open_backup_archive_dialog,
             save_backup_dialog,
             save_diagnostics_dialog,
+            save_template_dialog,
+            copy_template_file,
             write_text_file,
             reveal_path,
             get_updater_status,

@@ -3,7 +3,8 @@ import { formatTimestamp } from "../lib/appUi";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-import type { AvailableUpdate, UpdaterStatus } from "../types/contracts";
+import { SupportToolsPanel } from "./SupportToolsPanel";
+import type { AvailableUpdate, DatabaseStatus, LicenseStatus, UpdaterStatus } from "../types/contracts";
 
 type ModuleHomeProps = {
   onOpenGraduation: () => void;
@@ -13,8 +14,18 @@ type ModuleHomeProps = {
   updateProgress: { downloaded: number; contentLength: number | null } | null;
   isCheckingUpdate: boolean;
   isInstallingUpdate: boolean;
+  connectionState: "idle" | "connecting" | "ready" | "error";
+  databaseStatus: DatabaseStatus | null;
+  licenseStatus: LicenseStatus | null;
+  isCreatingBackup: boolean;
+  isRestoringBackup: boolean;
+  isExportingDiagnostics: boolean;
   onCheckForUpdates: () => void;
   onInstallUpdate: () => void;
+  onRefreshDatabaseStatus: () => void;
+  onCreateBackup: () => void;
+  onRestoreBackup: () => void;
+  onExportDiagnostics: () => void;
 };
 
 type ModuleCard = {
@@ -33,8 +44,18 @@ export function ModuleHome({
   updateProgress,
   isCheckingUpdate,
   isInstallingUpdate,
+  connectionState,
+  databaseStatus,
+  licenseStatus,
+  isCreatingBackup,
+  isRestoringBackup,
+  isExportingDiagnostics,
   onCheckForUpdates,
   onInstallUpdate,
+  onRefreshDatabaseStatus,
+  onCreateBackup,
+  onRestoreBackup,
+  onExportDiagnostics,
 }: ModuleHomeProps) {
   const modules: ModuleCard[] = [
     {
@@ -112,61 +133,76 @@ export function ModuleHome({
         })}
       </section>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <CardTitle>App Updates</CardTitle>
-              <CardDescription>
-                เช็กและติดตั้งอัปเดตของ DMC Assistant ทั้งระบบ ไม่ผูกกับโมดูลใดโมดูลหนึ่ง
-              </CardDescription>
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <CardTitle>App Updates</CardTitle>
+                <CardDescription>
+                  เช็กและติดตั้งอัปเดตของ DMC Assistant ทั้งระบบ ไม่ผูกกับโมดูลใดโมดูลหนึ่ง
+                </CardDescription>
+              </div>
+              <Badge variant={updaterStatus?.configured ? "default" : "secondary"}>
+                {updaterStatus?.configured ? "พร้อมใช้งาน" : "ยังไม่ตั้งค่า"}
+              </Badge>
             </div>
-            <Badge variant={updaterStatus?.configured ? "default" : "secondary"}>
-              {updaterStatus?.configured ? "พร้อมใช้งาน" : "ยังไม่ตั้งค่า"}
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent className="grid gap-4">
-          <div className="grid gap-3 lg:grid-cols-3">
-            <div className="rounded-lg border bg-muted/40 p-3">
-              <div className="text-xs text-muted-foreground">เวอร์ชันปัจจุบัน</div>
-              <div className="mt-1 font-semibold">{updaterStatus?.current_version ?? "-"}</div>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <div className="grid gap-3 lg:grid-cols-3">
+              <div className="rounded-lg border bg-muted/40 p-3">
+                <div className="text-xs text-muted-foreground">เวอร์ชันปัจจุบัน</div>
+                <div className="mt-1 font-semibold">{updaterStatus?.current_version ?? "-"}</div>
+              </div>
+              <div className="rounded-lg border bg-muted/40 p-3 lg:col-span-2">
+                <div className="text-xs text-muted-foreground">Endpoint</div>
+                <div className="mt-1 break-words text-sm font-medium">{updaterStatus?.endpoint ?? "-"}</div>
+              </div>
             </div>
-            <div className="rounded-lg border bg-muted/40 p-3 lg:col-span-2">
-              <div className="text-xs text-muted-foreground">Endpoint</div>
-              <div className="mt-1 break-words text-sm font-medium">{updaterStatus?.endpoint ?? "-"}</div>
-            </div>
-          </div>
 
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" disabled={isCheckingUpdate} onClick={onCheckForUpdates}>
-              {isCheckingUpdate ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              เช็กอัปเดตทั้งระบบ
-            </Button>
-            <Button disabled={!availableUpdate || isInstallingUpdate} onClick={onInstallUpdate}>
-              {isInstallingUpdate ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
-              ติดตั้งอัปเดต
-            </Button>
-          </div>
-
-          {availableUpdate ? (
-            <div className="grid gap-1 rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
-              <div className="font-medium text-foreground">พบเวอร์ชันใหม่: {availableUpdate.version}</div>
-              <div>เผยแพร่เมื่อ: {formatTimestamp(availableUpdate.date)}</div>
-              <div className="break-words">รายละเอียด: {availableUpdate.body ?? "-"}</div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" disabled={isCheckingUpdate} onClick={onCheckForUpdates}>
+                {isCheckingUpdate ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                เช็กอัปเดตทั้งระบบ
+              </Button>
+              <Button disabled={!availableUpdate || isInstallingUpdate} onClick={onInstallUpdate}>
+                {isInstallingUpdate ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
+                ติดตั้งอัปเดต
+              </Button>
             </div>
-          ) : null}
 
-          {updateProgress ? (
-            <div className="text-sm text-muted-foreground">
-              ดาวน์โหลดแล้ว {updateProgress.downloaded}
-              {updateProgress.contentLength ? ` / ${updateProgress.contentLength}` : ""} bytes
-            </div>
-          ) : null}
+            {availableUpdate ? (
+              <div className="grid gap-1 rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
+                <div className="font-medium text-foreground">พบเวอร์ชันใหม่: {availableUpdate.version}</div>
+                <div>เผยแพร่เมื่อ: {formatTimestamp(availableUpdate.date)}</div>
+                <div className="break-words">รายละเอียด: {availableUpdate.body ?? "-"}</div>
+              </div>
+            ) : null}
 
-          {updateMessage ? <div className="break-words text-sm text-muted-foreground">{updateMessage}</div> : null}
-        </CardContent>
-      </Card>
+            {updateProgress ? (
+              <div className="text-sm text-muted-foreground">
+                ดาวน์โหลดแล้ว {updateProgress.downloaded}
+                {updateProgress.contentLength ? ` / ${updateProgress.contentLength}` : ""} bytes
+              </div>
+            ) : null}
+
+            {updateMessage ? <div className="break-words text-sm text-muted-foreground">{updateMessage}</div> : null}
+          </CardContent>
+        </Card>
+
+        <SupportToolsPanel
+          connectionState={connectionState}
+          databaseStatus={databaseStatus}
+          licenseStatus={licenseStatus}
+          isCreatingBackup={isCreatingBackup}
+          isRestoringBackup={isRestoringBackup}
+          isExportingDiagnostics={isExportingDiagnostics}
+          onRefreshDatabaseStatus={onRefreshDatabaseStatus}
+          onCreateBackup={onCreateBackup}
+          onRestoreBackup={onRestoreBackup}
+          onExportDiagnostics={onExportDiagnostics}
+        />
+      </section>
     </div>
   );
 }

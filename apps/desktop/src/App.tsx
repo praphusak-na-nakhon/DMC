@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft } from "lucide-react";
 import messages from "./i18n/th.json";
 import {
   activateLicense,
   bootstrapBrowserRuntime,
   checkForAppUpdate,
+  copyTemplateFile,
   createBackup,
   getBrowserRuntimeStatus,
   getDatabaseStatus,
@@ -23,6 +23,7 @@ import {
   revealPath,
   saveBackupDialog,
   saveDiagnosticsDialog,
+  saveTemplateDialog,
   startGraduationJob,
   syncModuleConfig,
   validateExcel,
@@ -37,15 +38,8 @@ import { buildDraftJob, buildJobId, buildSupportDiagnostics, buildTimestampSlug 
 import { useJobStatusReconciliation } from "./hooks/useJobStatusReconciliation";
 import { usePeriodicLicenseHeartbeat } from "./hooks/usePeriodicLicenseHeartbeat";
 import { useJobStore } from "./stores/useJobStore";
-import { ControlPanel } from "./components/ControlPanel";
-import { ExistingJobsPanel } from "./components/ExistingJobsPanel";
-import { JobProgressPanel } from "./components/JobProgressPanel";
-import { PreviewPanel } from "./components/PreviewPanel";
-import { SidecarLogPanel } from "./components/SidecarLogPanel";
-import { SupportToolsPanel } from "./components/SupportToolsPanel";
+import { GraduationWizard } from "./components/GraduationWizard";
 import { ModuleHome } from "./components/ModuleHome";
-import { Button } from "./components/ui/button";
-import { Card } from "./components/ui/card";
 import type {
   AvailableUpdate,
   BrowserRuntimeStatus,
@@ -107,6 +101,7 @@ export function App() {
   const [isCreatingBackup, setIsCreatingBackup] = useState(false);
   const [isRestoringBackup, setIsRestoringBackup] = useState(false);
   const [isExportingDiagnostics, setIsExportingDiagnostics] = useState(false);
+  const [isDownloadingTemplate, setIsDownloadingTemplate] = useState(false);
   const [supportMessage, setSupportMessage] = useState<string | null>(null);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [updateProgress, setUpdateProgress] = useState<{ downloaded: number; contentLength: number | null } | null>(
@@ -328,6 +323,26 @@ export function App() {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setIsExportingDiagnostics(false);
+    }
+  }
+
+  async function handleDownloadTemplate() {
+    try {
+      setIsDownloadingTemplate(true);
+      setErrorMessage(null);
+      setSupportMessage(null);
+      const outputPath = await saveTemplateDialog("obec-study-form.xlsx");
+      if (!outputPath) {
+        return;
+      }
+      const savedPath = await copyTemplateFile(outputPath);
+      setSupportMessage(`ดาวน์โหลดไฟล์ Template แล้ว: ${savedPath}`);
+      pushSidecarMessage(`template saved: ${savedPath}`);
+      await revealPath(savedPath);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsDownloadingTemplate(false);
     }
   }
 
@@ -731,24 +746,28 @@ export function App() {
             updateProgress={updateProgress}
             isCheckingUpdate={isCheckingUpdate}
             isInstallingUpdate={isInstallingUpdate}
+            connectionState={connectionState}
+            databaseStatus={databaseStatus}
+            licenseStatus={licenseStatus}
+            isCreatingBackup={isCreatingBackup}
+            isRestoringBackup={isRestoringBackup}
+            isExportingDiagnostics={isExportingDiagnostics}
             onCheckForUpdates={() => void handleCheckForUpdates()}
             onInstallUpdate={() => void handleInstallUpdate()}
+            onRefreshDatabaseStatus={() => void handleLoadDatabaseStatus()}
+            onCreateBackup={() => void handleCreateBackup()}
+            onRestoreBackup={() => void handleRestoreBackup()}
+            onExportDiagnostics={() => void handleExportDiagnostics()}
           />
         ) : (
           <>
-            <div className="mb-4 flex min-w-0 flex-col gap-3 border-b pb-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <Button variant="outline" size="sm" onClick={() => setActiveModule("home")}>
-                  <ArrowLeft className="h-4 w-4" />
-                  กลับหน้าหลัก
-                </Button>
-              </div>
-              <div className="min-w-0 text-sm text-muted-foreground">
-                โมดูล: ข้อมูลสิ้นปีการศึกษา (สอบได้ เรียนจบ)
-              </div>
-            </div>
-
-            <ControlPanel
+            <GraduationWizard
+              preview={preview}
+              currentJob={currentJob}
+              existingJobs={existingJobs}
+              sidecarMessages={sidecarMessages}
+              activeJobId={activeJobId}
+              progressPercent={progressPercent}
               connectionState={connectionState}
               licenseStatus={licenseStatus}
               moduleConfigStatus={moduleConfigStatus}
@@ -764,12 +783,15 @@ export function App() {
               isValidating={isValidating}
               isStartingJob={isStartingJob}
               isActivatingLicense={isActivatingLicense}
+              isDownloadingTemplate={isDownloadingTemplate}
               isBootstrappingBrowser={isBootstrappingBrowser}
               licenseBlocksStart={licenseBlocksStart}
               browserRuntimeBlocksStart={browserRuntimeBlocksStart}
               validationBlocksStart={validationBlocksStart}
               preflightRowsAccepted={preflightRowsAccepted}
               preflightRowsTotal={preflightRowsTotal}
+              currentJobNeedsAuth={Boolean(currentJob?.needs_auth)}
+              onBackHome={() => setActiveModule("home")}
               onLicenseKeyChange={setLicenseKey}
               onDeviceNameChange={setDeviceName}
               onExcelPathChange={(value) => {
@@ -792,53 +814,18 @@ export function App() {
               onCancel={() => void handleCancel()}
               onActivateLicense={() => void handleActivateLicense()}
               onBrowseFile={() => void handleBrowseFile()}
+              onDownloadTemplate={() => void handleDownloadTemplate()}
               onBootstrapBrowserRuntime={() => void handleBootstrapBrowserRuntime()}
               onReloadBrowserRuntime={() => void handleLoadBrowserRuntime()}
+              onSelectJob={(job) => {
+                setActiveJobId(job.job_id);
+                setCurrentJob(job);
+                setExcelPath(job.source_file);
+              }}
+              onResumeExisting={(job) => void handleResumeExisting(job)}
+              onRevealPath={(path) => void handleRevealPath(path)}
               describeLicenseStatus={describeLicenseStatus}
-              activeJobId={activeJobId}
-              currentJobNeedsAuth={Boolean(currentJob?.needs_auth)}
             />
-
-            <div className="app-dashboard-grid mt-4">
-              <PreviewPanel preview={preview} />
-              <JobProgressPanel
-                currentJob={currentJob}
-                progressPercent={progressPercent}
-                onRevealPath={(path) => void handleRevealPath(path)}
-              />
-
-              <div className="responsive-stack grid gap-4">
-                <ExistingJobsPanel
-                  existingJobs={existingJobs}
-                  activeJobId={activeJobId}
-                  isStartingJob={isStartingJob}
-                  onSelectJob={(job) => {
-                    setActiveJobId(job.job_id);
-                    setCurrentJob(job);
-                    setExcelPath(job.source_file);
-                  }}
-                  onResumeExisting={(job) => void handleResumeExisting(job)}
-                  onRevealPath={(path) => void handleRevealPath(path)}
-                />
-                <SidecarLogPanel sidecarMessages={sidecarMessages} />
-                <SupportToolsPanel
-                  connectionState={connectionState}
-                  databaseStatus={databaseStatus}
-                  licenseStatus={licenseStatus}
-                  isCreatingBackup={isCreatingBackup}
-                  isRestoringBackup={isRestoringBackup}
-                  isExportingDiagnostics={isExportingDiagnostics}
-                  onRefreshDatabaseStatus={() => void handleLoadDatabaseStatus()}
-                  onCreateBackup={() => void handleCreateBackup()}
-                  onRestoreBackup={() => void handleRestoreBackup()}
-                  onExportDiagnostics={() => void handleExportDiagnostics()}
-                />
-              </div>
-            </div>
-
-            <Card className="mt-4 px-4 py-3 text-xs text-muted-foreground">
-              Event-driven sidecar updates are primary. Background reconciliation now runs every 15s only while a job is active, reducing duplicate polling load.
-            </Card>
           </>
         )}
       </section>
