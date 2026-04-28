@@ -28,17 +28,39 @@ def default_backup_path() -> Path:
 
 def _snapshot_sqlite_database(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(source) as source_connection:
-        target_connection = sqlite3.connect(target)
+    source_connection = sqlite3.connect(source)
+    target_connection = sqlite3.connect(target)
+    try:
         source_connection.backup(target_connection)
         target_connection.commit()
+    finally:
         target_connection.close()
+        source_connection.close()
+
+
+def _remove_sqlite_sidecars(path: Path) -> None:
+    for suffix in ("-wal", "-shm"):
+        sidecar_path = Path(f"{path}{suffix}")
+        if sidecar_path.exists():
+            sidecar_path.unlink()
+
+
+def _restore_sqlite_database(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source_connection = sqlite3.connect(source)
+    target_connection = sqlite3.connect(target)
+    try:
+        source_connection.backup(target_connection)
+        target_connection.commit()
+    finally:
+        target_connection.close()
+        source_connection.close()
 
 
 def _iter_data_files() -> list[tuple[Path, str]]:
     files: list[tuple[Path, str]] = []
     data_dir = config.default_data_dir()
-    for root in (config.configs_dir(), config.reports_dir(), config.profiles_dir()):
+    for root in (config.configs_dir(), config.reports_dir()):
         if not root.exists():
             continue
         for path in sorted(item for item in root.rglob("*") if item.is_file()):
@@ -100,13 +122,12 @@ def restore_backup_archive(archive_path: Path) -> dict[str, str]:
         if not restored_db.exists():
             raise DomainError("BACKUP_DATABASE_MISSING")
 
-        for folder in (config.configs_dir(), config.reports_dir(), config.profiles_dir()):
+        for folder in (config.configs_dir(), config.reports_dir()):
             if folder.exists():
                 shutil.rmtree(folder)
 
         sqlite_target = config.sqlite_path()
-        sqlite_target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(restored_db, sqlite_target)
+        _restore_sqlite_database(restored_db, sqlite_target)
 
         for relative in manifest.get("files", []):
             if relative in {"manifest.json", "desktop.sqlite3"}:

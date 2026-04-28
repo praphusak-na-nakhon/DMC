@@ -61,7 +61,7 @@ def test_telemetry_client_flushes_batched_events(monkeypatch, tmp_path: Path) ->
 
     monkeypatch.setattr("dmc_sidecar.telemetry.urlopen", fake_urlopen)
 
-    client = TelemetryClient(license_store=license_store)
+    client = TelemetryClient(license_store=license_store, background_flush=False)
     client.record_app_started(app_version="0.1.0", platform="win32")
     client.record_license_checked(result="HEARTBEAT_OK", offline_mode=False)
 

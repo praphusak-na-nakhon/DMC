@@ -78,6 +78,9 @@ export const cardStyle: CSSProperties = {
   borderRadius: "16px",
   padding: "20px",
   backgroundColor: "rgba(255, 255, 255, 0.92)",
+  minWidth: 0,
+  maxWidth: "100%",
+  boxSizing: "border-box",
 };
 
 export const buttonStyle: CSSProperties = {
@@ -89,6 +92,9 @@ export const buttonStyle: CSSProperties = {
   cursor: "pointer",
   backgroundColor: "rgb(15, 118, 110)",
   color: "white",
+  maxWidth: "100%",
+  overflowWrap: "anywhere",
+  textAlign: "center",
 };
 
 export function buildDraftJob(

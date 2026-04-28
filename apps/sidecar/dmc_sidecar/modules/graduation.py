@@ -243,6 +243,7 @@ class GraduationModule(AutomationModule):
                             action=lambda: legacy.save_current_page(page),
                         )
 
+                    context.job_store.append_results(job_id, page_results)
                     checkpoint.results.extend(page_results)
                     checkpoint.used_orders = self._merge_used_orders(checkpoint.used_orders, page_results)
                     checkpoint.processed = context.snapshot.processed
@@ -252,8 +253,9 @@ class GraduationModule(AutomationModule):
                     context.job_store.save_checkpoint(job_id, checkpoint)
 
                     if current_page >= total_pages:
+                        persisted_results = context.job_store.list_results(job_id)
                         json_path, csv_path, review_path = legacy.save_reports(
-                            checkpoint.results,
+                            persisted_results,
                             report_json=report_json,
                             report_csv=report_csv,
                             review_csv=review_csv,

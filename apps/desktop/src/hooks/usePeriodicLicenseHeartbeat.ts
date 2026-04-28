@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 type ConnectionState = "idle" | "connecting" | "ready" | "error";
 
@@ -11,15 +11,26 @@ export function usePeriodicLicenseHeartbeat({
   connectionState,
   onHeartbeat,
 }: UsePeriodicLicenseHeartbeatArgs) {
+  const inFlightRef = useRef(false);
+
   useEffect(() => {
     if (connectionState !== "ready") {
       return;
     }
 
     const timer = window.setInterval(() => {
-      void onHeartbeat();
+      if (inFlightRef.current) {
+        return;
+      }
+      inFlightRef.current = true;
+      void onHeartbeat().finally(() => {
+        inFlightRef.current = false;
+      });
     }, 5 * 60 * 1000);
 
-    return () => window.clearInterval(timer);
+    return () => {
+      inFlightRef.current = false;
+      window.clearInterval(timer);
+    };
   }, [connectionState, onHeartbeat]);
 }

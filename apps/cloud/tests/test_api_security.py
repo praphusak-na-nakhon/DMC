@@ -266,7 +266,7 @@ def test_config_returns_204_when_current_version_matches(monkeypatch) -> None:
     assert response.text == ""
 
 
-def test_telemetry_is_public() -> None:
+def test_telemetry_requires_activated_device() -> None:
     response = client.post(
         "/v1/telemetry",
         json={
@@ -280,16 +280,29 @@ def test_telemetry_is_public() -> None:
             ]
         },
     )
-    assert response.status_code == 200
-    assert response.json() == {"accepted": 1, "rejected": 0}
+    assert response.status_code == 401
 
 
 def test_telemetry_accepts_allowlisted_payload(monkeypatch, tmp_path: Path) -> None:
     setup_test_security(monkeypatch)
     use_temp_cloud_db(monkeypatch, tmp_path)
+    activate = client.post(
+        "/v1/license/activate",
+        json={
+            "license_key": "DMC-TEST-0001",
+            "device_id": "device-1",
+            "device_name": "desktop-01",
+            "app_version": "0.1.0",
+        },
+    )
+    assert activate.status_code == 200
     store = TelemetryStore(settings.sqlite_path)
     response = client.post(
         "/v1/telemetry",
+        headers={
+            "X-DMC-License-Key": "DMC-TEST-0001",
+            "X-DMC-Device-Id": "device-1",
+        },
         json={
             "events": [
                 {
@@ -312,6 +325,16 @@ def test_telemetry_accepts_allowlisted_payload(monkeypatch, tmp_path: Path) -> N
 def test_telemetry_persists_license_and_device_headers(monkeypatch, tmp_path: Path) -> None:
     setup_test_security(monkeypatch)
     use_temp_cloud_db(monkeypatch, tmp_path)
+    activate = client.post(
+        "/v1/license/activate",
+        json={
+            "license_key": "DMC-TEST-0001",
+            "device_id": "device-1",
+            "device_name": "desktop-01",
+            "app_version": "0.1.0",
+        },
+    )
+    assert activate.status_code == 200
     store = TelemetryStore(settings.sqlite_path)
     response = client.post(
         "/v1/telemetry",

@@ -22,7 +22,7 @@ class LicenseActivateRequest(BaseModel):
 class LicenseStateResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    status: str | None = None
+    status: LicenseStatus
     license_tier: LicenseTier
     school_size_tier: SchoolSizeTier
     billing_interval: BillingInterval | None

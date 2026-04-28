@@ -85,7 +85,25 @@ def _baseline_schema(connection: sqlite3.Connection) -> None:
             failed INTEGER NOT NULL DEFAULT 0,
             started_at TEXT,
             finished_at TEXT,
+            current_page INTEGER,
+            awaiting_auth INTEGER NOT NULL DEFAULT 0,
+            auth_reason TEXT,
+            report_path TEXT,
+            review_report_path TEXT,
+            stopped_item_json TEXT,
+            level_label TEXT,
             checkpoint_json TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS job_record (
+            job_id TEXT NOT NULL,
+            page INTEGER NOT NULL,
+            portal_row_index INTEGER NOT NULL,
+            matched_order INTEGER,
+            result_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (job_id, page, portal_row_index),
+            FOREIGN KEY (job_id) REFERENCES job(id) ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS telemetry_queue (
@@ -102,6 +120,7 @@ def _baseline_schema(connection: sqlite3.Connection) -> None:
         column="modules_enabled_json",
         definition="TEXT NOT NULL DEFAULT '[]'",
     )
+    _ensure_job_summary_columns(connection)
 
 
 def _add_indexes(connection: sqlite3.Connection) -> None:
@@ -111,6 +130,32 @@ def _add_indexes(connection: sqlite3.Connection) -> None:
             ON job(status, started_at DESC);
         CREATE INDEX IF NOT EXISTS idx_telemetry_queue_created_at
             ON telemetry_queue(created_at ASC);
+        CREATE INDEX IF NOT EXISTS idx_job_record_job_page
+            ON job_record(job_id, page, portal_row_index);
+        """
+    )
+
+
+def _ensure_job_summary_columns(connection: sqlite3.Connection) -> None:
+    _ensure_column(connection, table="job", column="current_page", definition="INTEGER")
+    _ensure_column(connection, table="job", column="awaiting_auth", definition="INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(connection, table="job", column="auth_reason", definition="TEXT")
+    _ensure_column(connection, table="job", column="report_path", definition="TEXT")
+    _ensure_column(connection, table="job", column="review_report_path", definition="TEXT")
+    _ensure_column(connection, table="job", column="stopped_item_json", definition="TEXT")
+    _ensure_column(connection, table="job", column="level_label", definition="TEXT")
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_record (
+            job_id TEXT NOT NULL,
+            page INTEGER NOT NULL,
+            portal_row_index INTEGER NOT NULL,
+            matched_order INTEGER,
+            result_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (job_id, page, portal_row_index),
+            FOREIGN KEY (job_id) REFERENCES job(id) ON DELETE CASCADE
+        )
         """
     )
 
@@ -118,6 +163,7 @@ def _add_indexes(connection: sqlite3.Connection) -> None:
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(version=1, name="baseline_schema", apply=_baseline_schema),
     Migration(version=2, name="add_indexes", apply=_add_indexes),
+    Migration(version=3, name="job_record_summary", apply=_ensure_job_summary_columns),
 )
 
 _MIGRATION_LOCK = threading.Lock()
@@ -139,8 +185,7 @@ def current_schema_version(connection: sqlite3.Connection) -> int:
 def migrate_database(path: Path | None = None) -> int:
     ensure_data_dir()
     target_path = path or database_path()
-    with sqlite3.connect(target_path) as connection:
-        connection.row_factory = sqlite3.Row
+    with open_connection(target_path) as connection:
         _create_migration_table(connection)
         applied_version = current_schema_version(connection)
         for migration in MIGRATIONS:
@@ -173,8 +218,7 @@ def ensure_database_ready(path: Path | None = None) -> Path:
 
 def get_database_metadata(path: Path | None = None) -> dict[str, object]:
     target_path = ensure_database_ready(path)
-    with sqlite3.connect(target_path) as connection:
-        connection.row_factory = sqlite3.Row
+    with open_connection(target_path) as connection:
         version = current_schema_version(connection)
         tables = [
             row["name"]
@@ -194,11 +238,20 @@ def get_database_metadata(path: Path | None = None) -> dict[str, object]:
     }
 
 
+def open_connection(path: Path) -> sqlite3.Connection:
+    connection = sqlite3.connect(path, timeout=5.0)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA synchronous=NORMAL")
+    connection.execute("PRAGMA busy_timeout=5000")
+    connection.execute("PRAGMA foreign_keys=ON")
+    return connection
+
+
 @contextmanager
 def connect(path: Path | None = None) -> Iterator[sqlite3.Connection]:
     target_path = ensure_database_ready(path)
-    connection = sqlite3.connect(target_path)
-    connection.row_factory = sqlite3.Row
+    connection = open_connection(target_path)
     try:
         yield connection
         connection.commit()

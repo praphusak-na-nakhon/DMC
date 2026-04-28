@@ -153,10 +153,25 @@ def _load_cached_envelope(module: str) -> ConfigEnvelope | None:
     return ConfigEnvelope.model_validate(_read_json_file(path))
 
 
+def _quarantine_cached_config(module: str) -> None:
+    path = cached_config_path(module)
+    if not path.exists():
+        return
+    quarantine_path = path.with_suffix(f".invalid-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.json")
+    try:
+        path.replace(quarantine_path)
+    except OSError:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
 def load_effective_config(module: str) -> ModuleConfigState:
     try:
         cached = _load_cached_envelope(module)
     except Exception:
+        _quarantine_cached_config(module)
         return _load_bundled_state(module, last_error="CONFIG_CACHE_INVALID")
 
     if cached is None:
@@ -165,6 +180,7 @@ def load_effective_config(module: str) -> ModuleConfigState:
     try:
         verify_signature(cached.version, cached.config, cached.signature)
     except DomainError as exc:
+        _quarantine_cached_config(module)
         return _load_bundled_state(module, last_error=str(exc))
 
     return ModuleConfigState(

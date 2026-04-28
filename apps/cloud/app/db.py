@@ -111,8 +111,7 @@ def current_schema_version(connection: sqlite3.Connection) -> int:
 
 def migrate_database(path: Path) -> int:
     ensure_parent(path)
-    with sqlite3.connect(path) as connection:
-        connection.row_factory = sqlite3.Row
+    with open_connection(path) as connection:
         _create_migration_table(connection)
         applied_version = current_schema_version(connection)
         for migration in MIGRATIONS:
@@ -144,8 +143,7 @@ def ensure_database_ready(path: Path) -> Path:
 
 def get_database_metadata(path: Path) -> dict[str, object]:
     target_path = ensure_database_ready(path)
-    with sqlite3.connect(target_path) as connection:
-        connection.row_factory = sqlite3.Row
+    with open_connection(target_path) as connection:
         version = current_schema_version(connection)
         tables = [
             row["name"]
@@ -165,11 +163,20 @@ def get_database_metadata(path: Path) -> dict[str, object]:
     }
 
 
+def open_connection(path: Path) -> sqlite3.Connection:
+    connection = sqlite3.connect(path, timeout=5.0)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA synchronous=NORMAL")
+    connection.execute("PRAGMA busy_timeout=5000")
+    connection.execute("PRAGMA foreign_keys=ON")
+    return connection
+
+
 @contextmanager
 def connect(path: Path) -> Iterator[sqlite3.Connection]:
     target_path = ensure_database_ready(path)
-    connection = sqlite3.connect(target_path)
-    connection.row_factory = sqlite3.Row
+    connection = open_connection(target_path)
     try:
         yield connection
         connection.commit()

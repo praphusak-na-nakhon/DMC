@@ -50,6 +50,8 @@ type ControlPanelProps = {
   licenseBlocksStart: boolean;
   browserRuntimeBlocksStart: boolean;
   validationBlocksStart: boolean;
+  preflightRowsAccepted: number | null;
+  preflightRowsTotal: number | null;
   onLicenseKeyChange: (value: string) => void;
   onDeviceNameChange: (value: string) => void;
   onExcelPathChange: (value: string) => void;
@@ -116,6 +118,8 @@ export function ControlPanel({
   licenseBlocksStart,
   browserRuntimeBlocksStart,
   validationBlocksStart,
+  preflightRowsAccepted,
+  preflightRowsTotal,
   onLicenseKeyChange,
   onDeviceNameChange,
   onExcelPathChange,
@@ -162,6 +166,7 @@ export function ControlPanel({
           <p style={{ lineHeight: 1.7, margin: 0 }}>{messages.app.description}</p>
         </div>
         <div
+          className="control-header-card"
           style={{
             ...cardStyle,
             ...breakableTextStyle,
@@ -223,8 +228,8 @@ export function ControlPanel({
                 onChange={(event) => onLicenseKeyChange(event.target.value)}
                 placeholder="DMC-XXXX-XXXX"
                 style={{
-                  flex: 1,
-                  minWidth: "240px",
+                  flex: "1 1 220px",
+                  minWidth: 0,
                   borderRadius: "12px",
                   border: "1px solid rgb(203, 213, 225)",
                   padding: "12px 14px",
@@ -236,8 +241,8 @@ export function ControlPanel({
                 onChange={(event) => onDeviceNameChange(event.target.value)}
                 placeholder="desktop-01"
                 style={{
-                  flex: 1,
-                  minWidth: "220px",
+                  flex: "1 1 220px",
+                  minWidth: 0,
                   borderRadius: "12px",
                   border: "1px solid rgb(203, 213, 225)",
                   padding: "12px 14px",
@@ -262,8 +267,8 @@ export function ControlPanel({
                 onChange={(event) => onExcelPathChange(event.target.value)}
                 placeholder={messages.app.filePathPlaceholder}
                 style={{
-                  flex: 1,
-                  minWidth: "360px",
+                  flex: "1 1 260px",
+                  minWidth: 0,
                   borderRadius: "12px",
                   border: "1px solid rgb(203, 213, 225)",
                   padding: "12px 14px",
@@ -399,6 +404,20 @@ export function ControlPanel({
             <p style={{ margin: 0, color: "rgb(180, 83, 9)", fontWeight: 600 }}>
               กรุณาตรวจไฟล์ Excel ให้ผ่านก่อนเริ่มงาน และตรวจใหม่ทุกครั้งหลังเปลี่ยนไฟล์
             </p>
+          ) : preflightRowsAccepted !== null ? (
+            <div
+              style={{
+                borderRadius: "12px",
+                backgroundColor: "rgb(240, 253, 250)",
+                border: "1px solid rgb(167, 243, 208)",
+                color: "rgb(6, 95, 70)",
+                padding: "12px 14px",
+                fontWeight: 700,
+              }}
+            >
+              Preflight ผ่านแล้ว: งานจริงจะเขียนข้อมูล {preflightRowsAccepted}
+              {preflightRowsTotal !== null ? ` จาก ${preflightRowsTotal}` : ""} รายการลง DMC และจะถามยืนยันอีกครั้งก่อนเริ่ม
+            </div>
           ) : null}
           <p style={{ margin: 0, color: "rgb(180, 83, 9)" }}>{messages.app.authHint}</p>
 

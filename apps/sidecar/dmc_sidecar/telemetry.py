@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from .config import secure_cloud_base_url
 from .db import connect
+from .errors import DomainError
 from .license_store import LicenseStore
 
 
@@ -169,22 +170,52 @@ class TelemetryClient:
         license_store: LicenseStore | None = None,
         store: TelemetryStore | None = None,
         max_queue_size: int = 500,
+        background_flush: bool = True,
     ) -> None:
         self.license_store = license_store
         self.store = store or TelemetryStore()
         self.max_queue_size = max_queue_size
+        self.background_flush = background_flush
         self._flush_lock = threading.Lock()
+        self._background_lock = threading.Lock()
+        self._background_flush_active = False
 
     def record(self, payload: dict[str, Any]) -> None:
         normalized = validate_telemetry_event(payload)
         self.store.enqueue(normalized)
         self.store.prune(self.max_queue_size)
-        self.flush()
+        if self.background_flush:
+            self.flush_soon()
+        else:
+            self.flush()
+
+    def flush_soon(self) -> None:
+        try:
+            base_url = secure_cloud_base_url()
+        except DomainError:
+            return
+        if not base_url:
+            return
+
+        with self._background_lock:
+            if self._background_flush_active:
+                return
+            self._background_flush_active = True
+
+        def worker() -> None:
+            try:
+                self.flush()
+            finally:
+                with self._background_lock:
+                    self._background_flush_active = False
+
+        thread = threading.Thread(target=worker, name="dmc-telemetry-flush", daemon=True)
+        thread.start()
 
     def flush(self, *, batch_size: int = 20, max_batches: int = 5) -> dict[str, Any]:
         try:
             base_url = secure_cloud_base_url()
-        except RuntimeError as exc:
+        except DomainError as exc:
             return {"status": "error", "sent": 0, "queued": self.store.count(), "last_error": str(exc)}
         if not base_url:
             return {"status": "disabled", "sent": 0, "queued": self.store.count(), "last_error": None}

@@ -142,9 +142,12 @@ def activate_license(
     now = datetime.now(UTC)
     activated_at = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
     offline_grace_until = _add_days(now, int(payload["offline_grace_days"]))
+    status_value = payload.get("status")
+    if not isinstance(status_value, str) or not status_value:
+        raise DomainError("LICENSE_RESPONSE_INVALID")
     record = LicenseRecord(
         license_key=license_key,
-        status=str(payload["status"]),
+        status=status_value,
         device_id=device_id,
         license_tier=str(payload["license_tier"]),
         school_size_tier=str(payload["school_size_tier"]),

@@ -113,6 +113,8 @@ export function App() {
   const browserRuntimeBlocksStart = browserRuntimeStatus !== null && !browserRuntimeStatus.installed;
   const validationBlocksStart =
     !preview || preview.rows_accepted <= 0 || validatedExcelPath !== excelPath.trim();
+  const preflightRowsAccepted = validationBlocksStart ? null : preview.rows_accepted;
+  const preflightRowsTotal = validationBlocksStart ? null : preview.rows_total;
 
   const describeLicenseStatus = useCallback((status: LicenseStatus): string => {
     if (!status.configured) {
@@ -478,7 +480,8 @@ export function App() {
   }
 
   async function handleStart(dryRun: boolean) {
-    if (!excelPath.trim()) {
+    const selectedExcelPath = excelPath.trim();
+    if (!selectedExcelPath) {
       setErrorMessage("กรุณาระบุพาธไฟล์ Excel ก่อน");
       return;
     }
@@ -486,6 +489,26 @@ export function App() {
     if (validationBlocksStart) {
       setErrorMessage("กรุณาตรวจไฟล์ Excel ให้ผ่านก่อนเริ่มงาน");
       return;
+    }
+
+    if (!dryRun) {
+      const rowsToWrite = preview?.rows_accepted ?? 0;
+      const rowsTotal = preview?.rows_total ?? rowsToWrite;
+      const confirmed =
+        typeof window === "undefined" ||
+        window.confirm(
+          [
+            "ยืนยันเริ่มงานจริง?",
+            "",
+            `ไฟล์: ${selectedExcelPath}`,
+            `ระบบจะเขียนข้อมูล ${rowsToWrite} จาก ${rowsTotal} รายการลง DMC`,
+            "",
+            "ควรใช้หลังจากตรวจไฟล์หรือ Dry Run กับไฟล์นี้แล้วเท่านั้น",
+          ].join("\n"),
+        );
+      if (!confirmed) {
+        return;
+      }
     }
 
     setErrorMessage(null);
@@ -504,12 +527,12 @@ export function App() {
       await handleSyncConfig();
       const result = await startGraduationJob({
         jobId: buildJobId(),
-        excelPath: excelPath.trim(),
+        excelPath: selectedExcelPath,
         dryRun,
         stopOnReview,
         minScore,
       });
-      const draft = buildDraftJob(excelPath.trim(), preview?.rows_accepted ?? null, result.job_id);
+      const draft = buildDraftJob(selectedExcelPath, preview?.rows_accepted ?? null, result.job_id);
       setActiveJobId(result.job_id);
       setCurrentJob(draft);
       upsertExistingJob(draft);
@@ -695,7 +718,7 @@ export function App() {
     <main
       style={{
         minHeight: "100vh",
-        padding: "28px",
+        padding: "clamp(12px, 3vw, 28px)",
         background:
           "radial-gradient(circle at top left, rgb(240, 253, 250), rgb(226, 232, 240) 50%, rgb(248, 250, 252))",
         color: "rgb(15, 23, 42)",
@@ -711,7 +734,7 @@ export function App() {
           margin: "0 auto",
           backgroundColor: "rgba(255, 255, 255, 0.9)",
           borderRadius: "24px",
-          padding: "28px",
+          padding: "clamp(16px, 3vw, 28px)",
           boxShadow: "0 30px 80px rgba(15, 23, 42, 0.12)",
           backdropFilter: "blur(10px)",
           boxSizing: "border-box",
@@ -748,6 +771,8 @@ export function App() {
           licenseBlocksStart={licenseBlocksStart}
           browserRuntimeBlocksStart={browserRuntimeBlocksStart}
           validationBlocksStart={validationBlocksStart}
+          preflightRowsAccepted={preflightRowsAccepted}
+          preflightRowsTotal={preflightRowsTotal}
           onLicenseKeyChange={setLicenseKey}
           onDeviceNameChange={setDeviceName}
           onExcelPathChange={(value) => {
@@ -780,10 +805,8 @@ export function App() {
         />
 
         <div
+          className="app-dashboard-grid"
           style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-            gap: "20px",
             minWidth: 0,
           }}
         >
@@ -794,7 +817,7 @@ export function App() {
             onRevealPath={(path) => void handleRevealPath(path)}
           />
 
-          <div style={{ display: "grid", gap: "20px", minWidth: 0 }}>
+          <div className="responsive-stack" style={{ display: "grid", gap: "20px" }}>
             <ExistingJobsPanel
               existingJobs={existingJobs}
               activeJobId={activeJobId}

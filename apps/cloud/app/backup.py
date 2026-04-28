@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 import sqlite3
 import tempfile
 import zipfile
@@ -27,11 +26,26 @@ def default_backup_path() -> Path:
 
 def _snapshot_sqlite_database(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(source) as source_connection:
-        target_connection = sqlite3.connect(target)
+    source_connection = sqlite3.connect(source)
+    target_connection = sqlite3.connect(target)
+    try:
         source_connection.backup(target_connection)
         target_connection.commit()
+    finally:
         target_connection.close()
+        source_connection.close()
+
+
+def _restore_sqlite_database(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source_connection = sqlite3.connect(source)
+    target_connection = sqlite3.connect(target)
+    try:
+        source_connection.backup(target_connection)
+        target_connection.commit()
+    finally:
+        target_connection.close()
+        source_connection.close()
 
 
 def create_backup_archive(output_path: Path | None = None) -> Path:
@@ -83,7 +97,7 @@ def restore_backup_archive(archive_path: Path) -> dict[str, str]:
         if not restored_db.exists():
             raise RuntimeError("BACKUP_DATABASE_MISSING")
 
-        shutil.copy2(restored_db, sqlite_target)
+        _restore_sqlite_database(restored_db, sqlite_target)
 
     migrate_database(sqlite_target)
     return {

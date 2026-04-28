@@ -36,9 +36,10 @@ def test_sidecar_migrations_report_latest_version(monkeypatch, tmp_path: Path) -
     version = migrate_database(config.sqlite_path())
     metadata = get_database_metadata(config.sqlite_path())
 
-    assert version == 2
-    assert metadata["schema_version"] == 2
+    assert version == 3
+    assert metadata["schema_version"] == 3
     assert "job" in metadata["tables"]
+    assert "job_record" in metadata["tables"]
     assert "schema_migrations" in metadata["tables"]
 
 
@@ -50,6 +51,9 @@ def test_sidecar_backup_archive_round_trip(monkeypatch, tmp_path: Path) -> None:
     sample_report.write_text('{"ok":true}', encoding="utf-8")
     sample_config = config.configs_dir() / "graduation.json"
     sample_config.write_text("{}", encoding="utf-8")
+    sample_profile_cache = config.profiles_dir() / "profile-1" / "Cache" / "blob"
+    sample_profile_cache.parent.mkdir(parents=True, exist_ok=True)
+    sample_profile_cache.write_bytes(b"browser-cache")
 
     archive_path = create_backup_archive(tmp_path / "backup.zip")
     assert archive_path.exists()
@@ -59,6 +63,7 @@ def test_sidecar_backup_archive_round_trip(monkeypatch, tmp_path: Path) -> None:
         assert manifest["kind"] == "dmc-sidecar-backup"
         assert "desktop.sqlite3" in manifest["files"]
         assert "reports/report.json" in manifest["files"]
+        assert all(not item.startswith("profiles/") for item in manifest["files"])
 
     seed_license(store, license_key="DMC-BACKUP-CHANGED")
     sample_report.write_text('{"ok":false}', encoding="utf-8")
@@ -70,4 +75,3 @@ def test_sidecar_backup_archive_round_trip(monkeypatch, tmp_path: Path) -> None:
     assert restored.license_key == "DMC-BACKUP-001"
     assert sample_report.read_text(encoding="utf-8") == '{"ok":true}'
     assert Path(result["safety_backup_path"]).exists()
-

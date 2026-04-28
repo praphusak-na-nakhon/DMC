@@ -4,7 +4,7 @@ import argparse
 import json
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, TypeAlias
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -101,6 +101,14 @@ class SourceStudent:
     last_name: str
     status_text: str
     status_code: str
+    _normalized_first_name: str = field(init=False, repr=False)
+    _normalized_last_name: str = field(init=False, repr=False)
+    _normalized_full_name: str = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._normalized_first_name = normalize_name(self.first_name)
+        self._normalized_last_name = normalize_name(self.last_name)
+        self._normalized_full_name = normalize_name(self.full_name)
 
     @property
     def full_name(self) -> str:
@@ -108,15 +116,15 @@ class SourceStudent:
 
     @property
     def normalized_first_name(self) -> str:
-        return normalize_name(self.first_name)
+        return self._normalized_first_name
 
     @property
     def normalized_last_name(self) -> str:
-        return normalize_name(self.last_name)
+        return self._normalized_last_name
 
     @property
     def normalized_full_name(self) -> str:
-        return normalize_name(self.full_name)
+        return self._normalized_full_name
 
 
 def normalize_text(text: str) -> str:
@@ -336,14 +344,19 @@ def find_row_select(row: Locator) -> Locator:
 def extract_row_info(row: Locator) -> RowInfo | None:
     row_id = row.get_attribute("id") or ""
     cells = row.locator("td")
-    if not row_id.startswith("tr-") or cells.count() < 11:
+    if not row_id.startswith("tr-"):
         return None
 
     select = find_row_select(row)
     if select.count() == 0:
         return None
 
-    cell_texts = [cells.nth(idx).inner_text().strip() for idx in range(cells.count())]
+    if hasattr(cells, "all_text_contents"):
+        cell_texts = [text.strip() for text in cells.all_text_contents()]
+    else:
+        cell_texts = [cells.nth(idx).inner_text().strip() for idx in range(cells.count())]
+    if len(cell_texts) < 11:
+        return None
     index_digits = re.findall(r"\d+", row_id)
     if not index_digits:
         return None

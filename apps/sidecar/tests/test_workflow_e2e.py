@@ -219,6 +219,7 @@ def test_activate_heartbeat_and_start_job_workflow(monkeypatch, tmp_path: Path) 
     monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
 
     server = RpcServer(emit_notification=notifications.append)
+    server.telemetry.background_flush = False
 
     activate = _rpc_call(
         server,
@@ -249,6 +250,7 @@ def test_activate_heartbeat_and_start_job_workflow(monkeypatch, tmp_path: Path) 
     assert started["result"] == {"accepted": True, "job_id": "job-e2e-1"}
 
     _wait_until(lambda: server.job_store.get_status("job-e2e-1")["status"] == "done")
+    server.telemetry.flush()
     telemetry_store = CloudTelemetryStore(settings.sqlite_path)
     _wait_until(
         lambda: "job_completed" in [row["payload"]["event"] for row in telemetry_store.list_events()]
