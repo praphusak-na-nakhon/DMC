@@ -324,11 +324,19 @@ fn finish_pending_with_error(pending: &PendingMap, message: &str) {
 
 fn spawn_sidecar_process(app: &AppHandle) -> Result<RunningSidecar, String> {
     let mut launch_specs = Vec::new();
-    if let Some(spec) = bundled_sidecar_launch_spec(app)? {
-        launch_specs.push(spec);
-    }
-    if let Ok(specs) = python_sidecar_launch_specs(app) {
-        launch_specs.extend(specs);
+    let bundled_spec = bundled_sidecar_launch_spec(app)?;
+    let python_specs = python_sidecar_launch_specs(app).unwrap_or_default();
+
+    if cfg!(dev) {
+        launch_specs.extend(python_specs);
+        if let Some(spec) = bundled_spec {
+            launch_specs.push(spec);
+        }
+    } else {
+        if let Some(spec) = bundled_spec {
+            launch_specs.push(spec);
+        }
+        launch_specs.extend(python_specs);
     }
 
     let mut last_error = String::from("No sidecar runtime candidate succeeded.");
