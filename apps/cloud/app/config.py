@@ -35,6 +35,18 @@ class Settings(BaseModel):
         "DMC-TRIAL-0001,DMC-TEST-0001,DMC-TEST-NEW,DMC-TEST-ACTIVATE",
     )
     session_duration_hours: int = int(os.getenv("DMC_CLOUD_SESSION_DURATION_HOURS", "720"))
+    ocr_provider: str = os.getenv("DMC_OCR_PROVIDER", "mock").strip().lower() or "mock"
+    ocr_openai_api_key: str = os.getenv("DMC_OCR_OPENAI_API_KEY", "").strip()
+    ocr_openai_model: str = os.getenv("DMC_OCR_OPENAI_MODEL", "gpt-5.5").strip()
+    ocr_openai_base_url: str = os.getenv("DMC_OCR_OPENAI_BASE_URL", "https://api.openai.com/v1").strip().rstrip("/")
+    ocr_gemini_api_key: str = os.getenv("DMC_OCR_GEMINI_API_KEY", "").strip()
+    ocr_gemini_model: str = os.getenv("DMC_OCR_GEMINI_MODEL", "gemini-2.5-flash-lite").strip()
+    ocr_gemini_base_url: str = os.getenv(
+        "DMC_OCR_GEMINI_BASE_URL",
+        "https://generativelanguage.googleapis.com",
+    ).strip().rstrip("/")
+    ocr_max_pdf_bytes: int = int(os.getenv("DMC_OCR_MAX_PDF_BYTES", str(20 * 1024 * 1024)))
+    ocr_max_pages_per_job: int = int(os.getenv("DMC_OCR_MAX_PAGES_PER_JOB", "100"))
 
 
 settings = Settings()

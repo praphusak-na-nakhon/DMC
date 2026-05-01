@@ -49,7 +49,7 @@
 - โฟกัส workflow ระดับโรงเรียน สำหรับครู/เจ้าหน้าที่ที่รับผิดชอบ DMC โดยตรง
 - เริ่มจากโมดูล **ข้อมูลจบการศึกษา** โดย reuse logic จาก `fill_obec_portal.py`
 - เพิ่ม license activation, device binding, remote config, progress UI, report export, app update
-- ส่งขึ้น cloud ได้เฉพาะข้อมูลด้าน licensing/config/allow-listed telemetry ที่ไม่มี PII
+- ส่งขึ้น cloud ได้เฉพาะข้อมูลด้าน account/credit/config/allow-listed telemetry ที่ไม่มี PII ยกเว้นโมดูล `formConverter` ที่ผู้ใช้ต้องยินยอมก่อนส่ง PDF ไป cloud AI
 
 ## 6. User Stories (MVP)
 
@@ -115,11 +115,11 @@
 - รองรับไฟล์ Excel ≤ 5,000 แถว/ครั้ง
 
 ### Security / Privacy
-- **ข้อมูลนักเรียนต้องไม่ถูกส่งขึ้น cloud ไม่ว่ากรณีใด** (hard rule)
-- Cloud sync อนุญาตเฉพาะ `license key`, `device ID`, remote config request/response, และ allow-listed telemetry ที่ไม่มี PII
+- **ข้อมูลนักเรียนต้องไม่ถูกส่งขึ้น cloud โดยปริยาย** ยกเว้นโมดูล `formConverter` ที่ผู้ใช้ยืนยัน consent ก่อนส่ง PDF ไป cloud AI เพื่อ OCR
+- Cloud sync อนุญาตเฉพาะ account/session, credit wallet/reservation, remote config request/response, และ allow-listed telemetry ที่ไม่มี PII
 - Credential DMC (ถ้ามี) เก็บใน Windows Credential Manager (DPAPI)
 - Report files อาจมีข้อมูลนักเรียนได้ แต่ต้องเก็บในเครื่องเท่านั้น
-- Log, audit trail, telemetry, และ cloud payload ทุกชนิดต้องไม่มี student PII
+- Log, audit trail, telemetry, และ cloud payload ที่ไม่ใช่ OCR request ต้องไม่มี student PII; OCR request ต้องไม่ persist PDF หรือ field ที่อ่านได้หลังประมวลผล
 - ผู้ใช้ต้องสามารถลบ log/report files ในเครื่องได้ตลอดเวลา
 - เป็นไปตาม PDPA (มีหนังสือแจ้งการประมวลผลข้อมูลให้โรงเรียน)
 
@@ -167,7 +167,7 @@
 
 - ❌ macOS / Linux
 - ❌ Mobile app
-- ❌ การเก็บข้อมูลนักเรียนบน cloud
+- ❌ การเก็บข้อมูลนักเรียนบน cloud ถาวร
 - ❌ การ integrate กับระบบโรงเรียนภายใน (SIS ต่าง ๆ)
 - ❌ การรันแบบ server-side automation
 - ❌ Web dashboard สำหรับผู้บริหาร

@@ -25,4 +25,7 @@ app.include_router(api_router)
 
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "ocr_provider": settings.ocr_provider,
+    }

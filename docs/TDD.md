@@ -48,8 +48,9 @@
 ```
 
 ### Boundaries
-- **ข้อมูลนักเรียน (PII)** อยู่เฉพาะใน desktop และ report files ในเครื่องเท่านั้น
-- **License, device ID, config sync, และ allow-listed telemetry** เป็นข้อมูลเดียวที่ขึ้น cloud ได้
+- **ข้อมูลนักเรียน (PII)** อยู่เฉพาะใน desktop และ report files ในเครื่องเป็นค่าเริ่มต้น ยกเว้น `formConverter` ที่ผู้ใช้ยินยอมส่ง PDF ไป cloud OCR gateway
+- **Account/session, credit wallet/reservation, config sync, และ allow-listed telemetry** เป็นข้อมูลปกติที่ขึ้น cloud ได้โดยต้องไม่มี PII
+- **Cloud OCR gateway** ต้องไม่ persist PDF ต้นฉบับหรือ field ที่อ่านได้ และต้องอยู่หลัง auth + credit reservation เสมอ
 - **Playwright รันบนเครื่อง user** เพื่อให้ IP เป็นของโรงเรียนและ user ทำ QR 2FA เองได้
 
 ## 3. Tech Stack

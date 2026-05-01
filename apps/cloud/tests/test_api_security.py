@@ -35,7 +35,8 @@ def use_temp_cloud_db(monkeypatch, tmp_path: Path) -> None:
 def test_healthz_is_public() -> None:
     response = client.get("/healthz")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json()["status"] == "ok"
+    assert response.json()["ocr_provider"] in {"mock", "openai", "gemini"}
 
 
 def test_admin_requires_bearer() -> None:

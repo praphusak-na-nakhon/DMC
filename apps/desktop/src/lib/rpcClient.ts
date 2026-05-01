@@ -17,6 +17,11 @@ import type {
   UpdaterEvent,
   UpdaterStatus,
   StartJobResponse,
+  ExportFormExcelResponse,
+  FormConversionRecord,
+  FormConversionStatusResponse,
+  StartFormConversionResponse,
+  ValidateFormPdfResponse,
   ValidateExcelResponse,
 } from "../types/contracts";
 import {
@@ -26,6 +31,8 @@ import {
   parseBackupCreateResponse,
   parseBrowserRuntimeStatus,
   parseDatabaseStatus,
+  parseExportFormExcelResponse,
+  parseFormConversionStatusResponse,
   parseJobActionResponse,
   parseJobStatusSnapshot,
   parseLicenseStatus,
@@ -36,8 +43,10 @@ import {
   parseResumeExistingJobResponse,
   parseSidecarEvent,
   parseStartJobResponse,
+  parseStartFormConversionResponse,
   parseUpdaterEvent,
   parseUpdaterStatus,
+  parseValidateFormPdfResponse,
   parseValidateExcelResponse,
 } from "../types/contracts";
 
@@ -98,6 +107,10 @@ export async function openExcelDialog(): Promise<string | null> {
   return invoke<string | null>("open_excel_dialog");
 }
 
+export async function openPdfDialog(): Promise<string | null> {
+  return invoke<string | null>("open_pdf_dialog");
+}
+
 export async function openBackupArchiveDialog(): Promise<string | null> {
   return invoke<string | null>("open_backup_archive_dialog");
 }
@@ -146,6 +159,54 @@ export async function validateExcel(
 ): Promise<ValidateExcelResponse> {
   const result = await sidecarRequest<unknown>("validate_excel", { path, module });
   return parseValidateExcelResponse(result);
+}
+
+export async function validateFormPdf(
+  path: string,
+  templateType = "student_history_v1",
+): Promise<ValidateFormPdfResponse> {
+  const result = await sidecarRequest<unknown>("validate_form_pdf", {
+    path,
+    module: "formConverter",
+    template_type: templateType,
+  });
+  return parseValidateFormPdfResponse(result);
+}
+
+export async function startFormConversion(input: {
+  jobId: string;
+  pdfPath: string;
+  templateType: string;
+  schoolYear: string | null;
+  confirmedAiProcessing: boolean;
+}): Promise<StartFormConversionResponse> {
+  const result = await sidecarRequest<unknown>("start_form_conversion", {
+    job_id: input.jobId,
+    module: "formConverter",
+    pdf_path: input.pdfPath,
+    template_type: input.templateType,
+    school_year: input.schoolYear,
+    confirmed_ai_processing: input.confirmedAiProcessing,
+  });
+  return parseStartFormConversionResponse(result);
+}
+
+export async function getConversionStatus(jobId: string): Promise<FormConversionStatusResponse> {
+  const result = await sidecarRequest<unknown>("get_conversion_status", { job_id: jobId });
+  return parseFormConversionStatusResponse(result);
+}
+
+export async function saveReviewEdits(
+  jobId: string,
+  records: FormConversionRecord[],
+): Promise<FormConversionStatusResponse> {
+  const result = await sidecarRequest<unknown>("save_review_edits", { job_id: jobId, records });
+  return parseFormConversionStatusResponse(result);
+}
+
+export async function exportConvertedExcel(jobId: string): Promise<ExportFormExcelResponse> {
+  const result = await sidecarRequest<unknown>("export_converted_excel", { job_id: jobId });
+  return parseExportFormExcelResponse(result);
 }
 
 export async function getModuleConfigStatus(

@@ -7,6 +7,7 @@ from .config import router as config_router
 from .credits import router as credits_router
 from .license import router as license_router
 from .modules import router as modules_router
+from .ocr import router as ocr_router
 from .telemetry import router as telemetry_router
 from .updates import router as updates_router
 from .wallet import router as wallet_router
@@ -19,6 +20,7 @@ api_router.include_router(license_router, prefix="/v1/license", tags=["license"]
 api_router.include_router(config_router, prefix="/v1/config", tags=["config"])
 api_router.include_router(wallet_router, prefix="/v1/wallet", tags=["wallet"])
 api_router.include_router(modules_router, prefix="/v1/modules", tags=["modules"])
+api_router.include_router(ocr_router, prefix="/v1/ocr", tags=["ocr"])
 api_router.include_router(credits_router, prefix="/v1/credits", tags=["credits"])
 api_router.include_router(telemetry_router, prefix="/v1/telemetry", tags=["telemetry"])
 api_router.include_router(billing_router, prefix="/v1/billing", tags=["billing"])

@@ -40,9 +40,9 @@ def seed_license(store: LicenseStore) -> None:
             modules_enabled=["graduation"],
             max_devices=3,
             activated_at="2026-04-22T00:00:00Z",
-            expires_at="2026-05-06T00:00:00Z",
+            expires_at="2099-05-06T00:00:00Z",
             last_checked_at="2026-04-22T00:00:00Z",
-            offline_grace_until="2026-04-29T00:00:00Z",
+            offline_grace_until="2099-04-29T00:00:00Z",
         )
     )
 

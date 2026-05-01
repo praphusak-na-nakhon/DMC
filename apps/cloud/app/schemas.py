@@ -13,6 +13,8 @@ CreditReservationStatus = Literal["active", "captured", "released"]
 CreditTransactionType = Literal["topup", "reserve", "capture", "release"]
 ModulePricingMode = Literal["per_billable_record"]
 CreditTopupRequestStatus = Literal["pending", "approved", "rejected"]
+OcrRecordStatus = Literal["ready", "needs_review", "invalid"]
+OcrFieldStatus = Literal["ready", "needs_review", "invalid"]
 
 
 class AuthLoginRequest(BaseModel):
@@ -66,6 +68,48 @@ class ModuleCatalogResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     modules: list[ModuleCatalogItem]
+
+
+class OcrFormConverterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str
+    module: Literal["formConverter"]
+    template_type: str
+    page_count: int = Field(ge=1)
+    credit_reservation_id: str
+    document_sha256: str
+    document_base64: str
+
+
+class OcrFieldResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field_name: str
+    label_th: str
+    value: str
+    confidence: float = Field(ge=0, le=1)
+    status: OcrFieldStatus
+    alternatives: list[str] = Field(default_factory=list)
+
+
+class OcrRecordResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    record_id: str
+    page_number: int = Field(ge=1)
+    status: OcrRecordStatus
+    fields: list[OcrFieldResponse]
+
+
+class OcrFormConverterResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str
+    module: Literal["formConverter"]
+    template_type: str
+    provider: str
+    records: list[OcrRecordResponse]
 
 
 class CreditReservationRequest(BaseModel):

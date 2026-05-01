@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import json
+import base64
+import hashlib
+import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -13,10 +18,17 @@ from .errors import DomainError
 from .schemas import (
     AccountSnapshot,
     CreditReservationSnapshot,
+    FormConversionRecord,
     ModuleCatalogItem,
     ModuleCatalogResponse,
     WalletSnapshot,
 )
+
+
+@dataclass(frozen=True)
+class FormConverterOcrResult:
+    provider: str
+    records: list[FormConversionRecord]
 
 
 def utc_now() -> str:
@@ -97,7 +109,10 @@ def _json_request(
         with urlopen(request, timeout=timeout_sec) as response:
             body = response.read()
     except HTTPError as exc:
+        detail = _http_error_detail(exc)
         if exc.code == 401:
+            if detail == "invalid email or password":
+                raise DomainError("INVALID_CREDENTIALS") from exc
             raise DomainError("SIGN_IN_REQUIRED") from exc
         if exc.code == 402:
             raise DomainError("INSUFFICIENT_CREDITS") from exc
@@ -105,12 +120,33 @@ def _json_request(
             raise DomainError("ACCOUNT_DISABLED") from exc
         if exc.code == 404:
             raise DomainError("CREDIT_RESERVATION_NOT_FOUND") from exc
+        if detail and _is_machine_error_code(detail):
+            raise DomainError(detail) from exc
         raise DomainError(f"HTTP_{exc.code}") from exc
     except URLError as exc:
         raise DomainError("ACCOUNT_CLOUD_UNAVAILABLE") from exc
     if not body:
         return {}
     return cast(dict[str, Any], json.loads(body.decode("utf-8")))
+
+
+def _http_error_detail(exc: HTTPError) -> str | None:
+    try:
+        body = exc.read()
+    except OSError:
+        return None
+    if not body:
+        return None
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    detail = payload.get("detail")
+    return detail if isinstance(detail, str) else None
+
+
+def _is_machine_error_code(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Z][A-Z0-9_]+", value))
 
 
 def sign_in(
@@ -284,3 +320,41 @@ def cached_module_catalog(store: AccountSessionStore) -> ModuleCatalogResponse:
             ]
         )
     return ModuleCatalogResponse(modules=session.module_catalog)
+
+
+def request_form_converter_ocr(
+    store: AccountSessionStore,
+    *,
+    job_id: str,
+    pdf_path: Path,
+    template_type: str,
+    page_count: int,
+    credit_reservation_id: str,
+) -> FormConverterOcrResult:
+    session = store.get_session()
+    if session is None:
+        raise DomainError("SIGN_IN_REQUIRED")
+    document_bytes = pdf_path.read_bytes()
+    payload = _json_request(
+        "/v1/ocr/form-converter",
+        method="POST",
+        token=session.token,
+        payload={
+            "job_id": job_id,
+            "module": "formConverter",
+            "template_type": template_type,
+            "page_count": page_count,
+            "credit_reservation_id": credit_reservation_id,
+            "document_sha256": hashlib.sha256(document_bytes).hexdigest(),
+            "document_base64": base64.b64encode(document_bytes).decode("ascii"),
+        },
+        timeout_sec=60,
+    )
+    records = payload.get("records")
+    if not isinstance(records, list):
+        raise DomainError("OCR_RESPONSE_INVALID")
+    provider = payload.get("provider")
+    return FormConverterOcrResult(
+        provider=provider if isinstance(provider, str) and provider else "unknown",
+        records=[FormConversionRecord.model_validate(record) for record in records],
+    )

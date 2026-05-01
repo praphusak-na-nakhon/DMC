@@ -42,6 +42,7 @@ import { describeUserFacingError } from "./lib/errorMessages";
 import { useJobStatusReconciliation } from "./hooks/useJobStatusReconciliation";
 import { useJobStore } from "./stores/useJobStore";
 import { GraduationWizard } from "./components/GraduationWizard";
+import { FormConverterPage } from "./components/FormConverterPage";
 import { ModuleHome } from "./components/ModuleHome";
 import { ModuleSkeletonPage } from "./components/ModuleSkeletonPage";
 import type { ModuleId } from "./lib/moduleCatalog";
@@ -828,7 +829,14 @@ export function App() {
             onRestoreBackup={() => void handleRestoreBackup()}
             onExportDiagnostics={() => void handleExportDiagnostics()}
           />
-        ) : activeModule === "formConverter" || activeModule === "currentStudents" ? (
+        ) : activeModule === "formConverter" ? (
+          <FormConverterPage
+            accountStatus={accountStatus}
+            onBackHome={() => setActiveModule("home")}
+            onRefreshWallet={() => void handleRefreshAccount(true)}
+            onRevealPath={(path) => void handleRevealPath(path)}
+          />
+        ) : activeModule === "currentStudents" ? (
           <ModuleSkeletonPage
             moduleId={activeModule}
             onBackHome={() => setActiveModule("home")}

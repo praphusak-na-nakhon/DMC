@@ -103,13 +103,17 @@ describe("ModuleHome", () => {
     expect(screen.queryByText("License Activation")).not.toBeInTheDocument();
   });
 
-  it("opens skeleton modules instead of disabling them", () => {
+  it("opens ready and skeleton modules instead of disabling them", () => {
     const onOpenModule = vi.fn();
     renderHome(onOpenModule);
 
-    fireEvent.click(screen.getAllByRole("button", { name: messages.app.home.openSkeleton })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: messages.app.home.openModule })[0]);
 
     expect(onOpenModule).toHaveBeenCalledWith("formConverter");
+
+    fireEvent.click(screen.getAllByRole("button", { name: messages.app.home.openSkeleton })[0]);
+
+    expect(onOpenModule).toHaveBeenCalledWith("currentStudents");
   });
 
   it("shows a friendly cloud unavailable account warning", () => {

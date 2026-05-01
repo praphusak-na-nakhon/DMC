@@ -176,6 +176,92 @@ export type ModuleCatalogResponse = {
   modules: ModuleCatalogItem[];
 };
 
+export type FormPdfValidationWarning = {
+  code: string;
+  message_th: string;
+};
+
+export type ValidateFormPdfResponse = {
+  module: "formConverter";
+  path: string;
+  file_name: string;
+  template_type: string;
+  page_count: number;
+  estimated_records: number;
+  credit_estimate: number;
+  supported_template: boolean;
+  requires_ai_consent: boolean;
+  warnings: FormPdfValidationWarning[];
+};
+
+export type FormConversionField = {
+  field_name: string;
+  label_th: string;
+  value: string;
+  confidence: number;
+  status: "ready" | "needs_review" | "invalid";
+  alternatives: string[];
+  edited: boolean;
+};
+
+export type FormConversionRecord = {
+  record_id: string;
+  page_number: number;
+  status: "ready" | "needs_review" | "invalid";
+  fields: FormConversionField[];
+};
+
+export type FormConversionSummary = {
+  records_total: number;
+  ready_records: number;
+  needs_review_records: number;
+  invalid_records: number;
+  exported_records: number;
+};
+
+export type StartFormConversionResponse = {
+  accepted: boolean;
+  job_id: string;
+  credit_reservation_id: string | null;
+  credits_reserved: number;
+};
+
+export type FormConversionStatusResponse = {
+  job_id: string;
+  module: "formConverter";
+  status: "pending" | "processing" | "needs_review" | "reviewed" | "done" | "failed";
+  pdf_path: string;
+  template_type: string;
+  ocr_provider: string | null;
+  school_year: string | null;
+  page_count: number;
+  processed: number;
+  total: number;
+  records: FormConversionRecord[];
+  summary: FormConversionSummary;
+  excel_path: string | null;
+  report_path: string | null;
+  review_report_path: string | null;
+  credit_reservation_id: string | null;
+  credits_reserved: number;
+  credits_captured: number;
+  credits_refunded: number;
+  credit_status: string | null;
+  last_error: string | null;
+  review_confirmed: boolean;
+};
+
+export type ExportFormExcelResponse = {
+  job_id: string;
+  excel_path: string;
+  report_path: string;
+  review_report_path: string;
+  exported_records: number;
+  credit_reservation_id: string | null;
+  credits_captured: number;
+  credits_refunded: number;
+};
+
 export type ModuleConfigStatus = {
   module: "graduation";
   version: string;
@@ -507,6 +593,148 @@ export function parseModuleCatalogResponse(value: unknown): ModuleCatalogRespons
   const record = asRecord(value, "module_catalog_response");
   return {
     modules: readArray(record, "modules", "module_catalog_response").map(parseModuleCatalogItem),
+  };
+}
+
+function parseFormPdfValidationWarning(value: unknown, index: number): FormPdfValidationWarning {
+  const record = asRecord(value, `form_pdf_warning[${index}]`);
+  return {
+    code: readString(record, "code", "form_pdf_warning"),
+    message_th: readString(record, "message_th", "form_pdf_warning"),
+  };
+}
+
+export function parseValidateFormPdfResponse(value: unknown): ValidateFormPdfResponse {
+  const record = asRecord(value, "validate_form_pdf_response");
+  const module = readString(record, "module", "validate_form_pdf_response");
+  if (module !== "formConverter") {
+    throw new Error("validate_form_pdf_response.module must be formConverter");
+  }
+  return {
+    module,
+    path: readString(record, "path", "validate_form_pdf_response"),
+    file_name: readString(record, "file_name", "validate_form_pdf_response"),
+    template_type: readString(record, "template_type", "validate_form_pdf_response"),
+    page_count: readNumber(record, "page_count", "validate_form_pdf_response"),
+    estimated_records: readNumber(record, "estimated_records", "validate_form_pdf_response"),
+    credit_estimate: readNumber(record, "credit_estimate", "validate_form_pdf_response"),
+    supported_template: readBoolean(record, "supported_template", "validate_form_pdf_response"),
+    requires_ai_consent: readBoolean(record, "requires_ai_consent", "validate_form_pdf_response"),
+    warnings: readArray(record, "warnings", "validate_form_pdf_response").map(parseFormPdfValidationWarning),
+  };
+}
+
+function parseFormConversionField(value: unknown, index: number): FormConversionField {
+  const record = asRecord(value, `form_conversion_field[${index}]`);
+  const status = readString(record, "status", "form_conversion_field");
+  if (status !== "ready" && status !== "needs_review" && status !== "invalid") {
+    throw new Error("form_conversion_field.status is invalid");
+  }
+  return {
+    field_name: readString(record, "field_name", "form_conversion_field"),
+    label_th: readString(record, "label_th", "form_conversion_field"),
+    value: readString(record, "value", "form_conversion_field"),
+    confidence: readNumber(record, "confidence", "form_conversion_field"),
+    status,
+    alternatives: readArray(record, "alternatives", "form_conversion_field").map((item, itemIndex) => {
+      if (typeof item !== "string") {
+        throw new Error(`form_conversion_field.alternatives[${itemIndex}] must be a string`);
+      }
+      return item;
+    }),
+    edited: readBoolean(record, "edited", "form_conversion_field"),
+  };
+}
+
+function parseFormConversionRecord(value: unknown, index: number): FormConversionRecord {
+  const record = asRecord(value, `form_conversion_record[${index}]`);
+  const status = readString(record, "status", "form_conversion_record");
+  if (status !== "ready" && status !== "needs_review" && status !== "invalid") {
+    throw new Error("form_conversion_record.status is invalid");
+  }
+  return {
+    record_id: readString(record, "record_id", "form_conversion_record"),
+    page_number: readNumber(record, "page_number", "form_conversion_record"),
+    status,
+    fields: readArray(record, "fields", "form_conversion_record").map(parseFormConversionField),
+  };
+}
+
+function parseFormConversionSummary(value: unknown): FormConversionSummary {
+  const record = asRecord(value, "form_conversion_summary");
+  return {
+    records_total: readNumber(record, "records_total", "form_conversion_summary"),
+    ready_records: readNumber(record, "ready_records", "form_conversion_summary"),
+    needs_review_records: readNumber(record, "needs_review_records", "form_conversion_summary"),
+    invalid_records: readNumber(record, "invalid_records", "form_conversion_summary"),
+    exported_records: readNumber(record, "exported_records", "form_conversion_summary"),
+  };
+}
+
+export function parseStartFormConversionResponse(value: unknown): StartFormConversionResponse {
+  const record = asRecord(value, "start_form_conversion_response");
+  return {
+    accepted: readBoolean(record, "accepted", "start_form_conversion_response"),
+    job_id: readString(record, "job_id", "start_form_conversion_response"),
+    credit_reservation_id: readOptionalString(record, "credit_reservation_id", "start_form_conversion_response"),
+    credits_reserved: readNumber(record, "credits_reserved", "start_form_conversion_response"),
+  };
+}
+
+export function parseFormConversionStatusResponse(value: unknown): FormConversionStatusResponse {
+  const record = asRecord(value, "form_conversion_status");
+  const module = readString(record, "module", "form_conversion_status");
+  if (module !== "formConverter") {
+    throw new Error("form_conversion_status.module must be formConverter");
+  }
+  const status = readString(record, "status", "form_conversion_status");
+  if (
+    status !== "pending" &&
+    status !== "processing" &&
+    status !== "needs_review" &&
+    status !== "reviewed" &&
+    status !== "done" &&
+    status !== "failed"
+  ) {
+    throw new Error("form_conversion_status.status is invalid");
+  }
+  return {
+    job_id: readString(record, "job_id", "form_conversion_status"),
+    module,
+    status,
+    pdf_path: readString(record, "pdf_path", "form_conversion_status"),
+    template_type: readString(record, "template_type", "form_conversion_status"),
+    ocr_provider: readOptionalString(record, "ocr_provider", "form_conversion_status"),
+    school_year: readOptionalString(record, "school_year", "form_conversion_status"),
+    page_count: readNumber(record, "page_count", "form_conversion_status"),
+    processed: readNumber(record, "processed", "form_conversion_status"),
+    total: readNumber(record, "total", "form_conversion_status"),
+    records: readArray(record, "records", "form_conversion_status").map(parseFormConversionRecord),
+    summary: parseFormConversionSummary(record.summary),
+    excel_path: readOptionalString(record, "excel_path", "form_conversion_status"),
+    report_path: readOptionalString(record, "report_path", "form_conversion_status"),
+    review_report_path: readOptionalString(record, "review_report_path", "form_conversion_status"),
+    credit_reservation_id: readOptionalString(record, "credit_reservation_id", "form_conversion_status"),
+    credits_reserved: readNumber(record, "credits_reserved", "form_conversion_status"),
+    credits_captured: readNumber(record, "credits_captured", "form_conversion_status"),
+    credits_refunded: readNumber(record, "credits_refunded", "form_conversion_status"),
+    credit_status: readOptionalString(record, "credit_status", "form_conversion_status"),
+    last_error: readOptionalString(record, "last_error", "form_conversion_status"),
+    review_confirmed: readBoolean(record, "review_confirmed", "form_conversion_status"),
+  };
+}
+
+export function parseExportFormExcelResponse(value: unknown): ExportFormExcelResponse {
+  const record = asRecord(value, "export_form_excel_response");
+  return {
+    job_id: readString(record, "job_id", "export_form_excel_response"),
+    excel_path: readString(record, "excel_path", "export_form_excel_response"),
+    report_path: readString(record, "report_path", "export_form_excel_response"),
+    review_report_path: readString(record, "review_report_path", "export_form_excel_response"),
+    exported_records: readNumber(record, "exported_records", "export_form_excel_response"),
+    credit_reservation_id: readOptionalString(record, "credit_reservation_id", "export_form_excel_response"),
+    credits_captured: readNumber(record, "credits_captured", "export_form_excel_response"),
+    credits_refunded: readNumber(record, "credits_refunded", "export_form_excel_response"),
   };
 }
 

@@ -25,7 +25,7 @@ export type ModuleDefinition = {
 export const moduleDefinitions: ModuleDefinition[] = [
   {
     id: "formConverter",
-    status: "skeleton",
+    status: "ready",
     icon: FileSpreadsheet,
     requiresCredits: true,
     pricingMode: "per_billable_record",
@@ -33,10 +33,10 @@ export const moduleDefinitions: ModuleDefinition[] = [
     productionDryRunEnabled: false,
     contract: {
       version: "0.1-draft",
-      inputs: ["source_document_path", "school_year", "template_type"],
-      validations: ["file_exists", "supported_document_type", "extractable_student_table"],
-      outputs: ["excel_path", "conversion_report_path", "warnings"],
-      events: ["module_opened", "file_selected", "conversion_validated", "conversion_exported"],
+      inputs: ["scanned_pdf_path", "school_year", "template_type", "ai_processing_consent"],
+      validations: ["pdf_file", "supported_template", "page_count", "credit_policy", "review_required"],
+      outputs: ["excel_path", "conversion_report_path", "review_report_path", "warnings"],
+      events: ["validate_form_pdf", "start_form_conversion", "save_review_edits", "export_converted_excel"],
     },
   },
   {

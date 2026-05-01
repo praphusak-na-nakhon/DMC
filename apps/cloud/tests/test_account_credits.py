@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import sys
+import json
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+import base64
+import hashlib
 
 from app.config import settings
 from app.db import connect
@@ -384,3 +387,426 @@ def test_telemetry_accepts_account_session_but_rejects_email_pii(monkeypatch, tm
     )
     assert response.status_code == 422
     assert store.count() == 0
+
+
+def test_form_converter_ocr_requires_login_and_returns_mock_records(monkeypatch, tmp_path: Path) -> None:
+    user_id = _create_user(monkeypatch, tmp_path)
+    topup = client.post(
+        f"/v1/admin/users/{user_id}/credits/topup",
+        headers=_admin_headers(),
+        json={"amount": 5, "idempotency_key": "topup-ocr"},
+    )
+    assert topup.status_code == 200
+    token = _login()
+    reservation = client.post(
+        "/v1/credits/reservations",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "job_id": "form-job-cloud-1",
+            "module": "formConverter",
+            "units": 1,
+            "idempotency_key": "reserve-ocr",
+        },
+    )
+    assert reservation.status_code == 200
+    document = b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n%%EOF"
+    payload = {
+        "job_id": "form-job-cloud-1",
+        "module": "formConverter",
+        "template_type": "student_history_v1",
+        "page_count": 1,
+        "credit_reservation_id": reservation.json()["reservation_id"],
+        "document_sha256": hashlib.sha256(document).hexdigest(),
+        "document_base64": base64.b64encode(document).decode("ascii"),
+    }
+    telemetry = TelemetryStore(settings.sqlite_path)
+
+    unauthenticated = client.post("/v1/ocr/form-converter", json=payload)
+    assert unauthenticated.status_code == 401
+
+    response = client.post("/v1/ocr/form-converter", headers={"Authorization": f"Bearer {token}"}, json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["module"] == "formConverter"
+    assert body["provider"] == "mock-form-ocr-v1"
+    assert body["records"][0]["status"] == "needs_review"
+    assert {field["field_name"] for field in body["records"][0]["fields"]} >= {
+        "student_id",
+        "first_name",
+        "last_name",
+    }
+    assert telemetry.count() == 0
+
+
+def test_form_converter_ocr_openai_provider_uses_pdf_file_input(monkeypatch, tmp_path: Path) -> None:
+    user_id = _create_user(monkeypatch, tmp_path)
+    assert (
+        client.post(
+            f"/v1/admin/users/{user_id}/credits/topup",
+            headers=_admin_headers(),
+            json={"amount": 5, "idempotency_key": "topup-openai-ocr"},
+        ).status_code
+        == 200
+    )
+    token = _login()
+    reservation = client.post(
+        "/v1/credits/reservations",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "job_id": "form-job-openai-1",
+            "module": "formConverter",
+            "units": 1,
+            "idempotency_key": "reserve-openai-ocr",
+        },
+    ).json()
+    document = b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n%%EOF"
+    captured_payloads: list[dict[str, object]] = []
+
+    class FakeOpenAiResponse:
+        def __enter__(self) -> "FakeOpenAiResponse":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "output_text": json.dumps(
+                        {
+                            "records": [
+                                {
+                                    "record_id": "page-1",
+                                    "page_number": 1,
+                                    "status": "needs_review",
+                                    "fields": [
+                                        {
+                                            "field_name": "student_id",
+                                            "label_th": "เลขประจำตัวนักเรียน",
+                                            "value": "12345",
+                                            "confidence": 0.92,
+                                            "status": "needs_review",
+                                            "alternatives": [],
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    )
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout: int) -> FakeOpenAiResponse:
+        assert timeout == 90
+        captured_payloads.append(json.loads(request.data.decode("utf-8")))
+        return FakeOpenAiResponse()
+
+    monkeypatch.setattr(settings, "ocr_provider", "openai")
+    monkeypatch.setattr(settings, "ocr_openai_api_key", "test-openai-key")
+    monkeypatch.setattr("app.ocr_service.urllib.request.urlopen", fake_urlopen)
+
+    response = client.post(
+        "/v1/ocr/form-converter",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "job_id": "form-job-openai-1",
+            "module": "formConverter",
+            "template_type": "student_history_v1",
+            "page_count": 1,
+            "credit_reservation_id": reservation["reservation_id"],
+            "document_sha256": hashlib.sha256(document).hexdigest(),
+            "document_base64": base64.b64encode(document).decode("ascii"),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["provider"].startswith("openai-responses:")
+    content = captured_payloads[0]["input"][0]["content"]  # type: ignore[index]
+    file_item = content[0]  # type: ignore[index]
+    assert file_item["type"] == "input_file"  # type: ignore[index]
+    assert file_item["file_data"].startswith("data:application/pdf;base64,")  # type: ignore[index]
+
+
+def test_form_converter_ocr_gemini_provider_uploads_pdf_and_deletes_file(monkeypatch, tmp_path: Path) -> None:
+    user_id = _create_user(monkeypatch, tmp_path)
+    assert (
+        client.post(
+            f"/v1/admin/users/{user_id}/credits/topup",
+            headers=_admin_headers(),
+            json={"amount": 5, "idempotency_key": "topup-gemini-ocr"},
+        ).status_code
+        == 200
+    )
+    token = _login()
+    reservation = client.post(
+        "/v1/credits/reservations",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "job_id": "form-job-gemini-1",
+            "module": "formConverter",
+            "units": 1,
+            "idempotency_key": "reserve-gemini-ocr",
+        },
+    ).json()
+    document = b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n%%EOF"
+    calls: list[tuple[str, str, bytes | None]] = []
+    generate_payloads: list[dict[str, object]] = []
+
+    class FakeGeminiResponse:
+        def __init__(self, payload: dict[str, object], headers: dict[str, str] | None = None) -> None:
+            self._payload = payload
+            self.headers = headers or {}
+
+        def __enter__(self) -> "FakeGeminiResponse":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(self._payload).encode("utf-8")
+
+    def fake_urlopen(request, timeout: int) -> FakeGeminiResponse:
+        assert timeout in {20, 90}
+        method = request.get_method()
+        url = request.full_url
+        data = request.data
+        calls.append((method, url, data))
+        if "/upload/v1beta/files" in url:
+            headers = dict(request.header_items())
+            assert headers["X-goog-upload-protocol"] == "resumable"
+            assert headers["X-goog-upload-header-content-type"] == "application/pdf"
+            return FakeGeminiResponse({}, {"X-Goog-Upload-URL": "https://upload.example.test/session"})
+        if url == "https://upload.example.test/session":
+            assert data == document
+            return FakeGeminiResponse(
+                {
+                    "file": {
+                        "name": "files/form-test",
+                        "uri": "https://generativelanguage.googleapis.com/v1beta/files/form-test",
+                    }
+                }
+            )
+        if ":generateContent" in url:
+            assert data is not None
+            payload = json.loads(data.decode("utf-8"))
+            generate_payloads.append(payload)
+            return FakeGeminiResponse(
+                {
+                    "candidates": [
+                        {
+                            "content": {
+                                "parts": [
+                                    {
+                                        "text": json.dumps(
+                                            {
+                                                "records": [
+                                                    {
+                                                        "record_id": "page-1",
+                                                        "page_number": 1,
+                                                        "status": "needs_review",
+                                                        "fields": [
+                                                            {
+                                                                "field_name": "student_id",
+                                                                "label_th": "เลขประจำตัวนักเรียน",
+                                                                "value": "12345",
+                                                                "confidence": 0.92,
+                                                                "status": "needs_review",
+                                                                "alternatives": [],
+                                                            }
+                                                        ],
+                                                    }
+                                                ]
+                                            }
+                                        )
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            )
+        if method == "DELETE" and "/v1beta/files/form-test" in url:
+            return FakeGeminiResponse({})
+        raise AssertionError(f"Unexpected Gemini request: {method} {url}")
+
+    monkeypatch.setattr(settings, "ocr_provider", "gemini")
+    monkeypatch.setattr(settings, "ocr_gemini_api_key", "test-gemini-key")
+    monkeypatch.setattr(settings, "ocr_gemini_model", "gemini-2.5-flash-lite")
+    monkeypatch.setattr("app.ocr_service.urllib.request.urlopen", fake_urlopen)
+
+    response = client.post(
+        "/v1/ocr/form-converter",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "job_id": "form-job-gemini-1",
+            "module": "formConverter",
+            "template_type": "student_history_v1",
+            "page_count": 1,
+            "credit_reservation_id": reservation["reservation_id"],
+            "document_sha256": hashlib.sha256(document).hexdigest(),
+            "document_base64": base64.b64encode(document).decode("ascii"),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["provider"].startswith("gemini-generate-content:")
+    assert [call[0] for call in calls] == ["POST", "POST", "POST", "DELETE"]
+    parts = generate_payloads[0]["contents"][0]["parts"]  # type: ignore[index]
+    assert parts[0]["text"].startswith("Read the scanned Thai DMC student history form PDF.")  # type: ignore[index]
+    assert parts[1]["fileData"] == {  # type: ignore[index]
+        "mimeType": "application/pdf",
+        "fileUri": "https://generativelanguage.googleapis.com/v1beta/files/form-test",
+    }
+
+
+def test_form_converter_ocr_gemini_provider_requires_api_key(monkeypatch, tmp_path: Path) -> None:
+    user_id = _create_user(monkeypatch, tmp_path)
+    assert (
+        client.post(
+            f"/v1/admin/users/{user_id}/credits/topup",
+            headers=_admin_headers(),
+            json={"amount": 5, "idempotency_key": "topup-gemini-key"},
+        ).status_code
+        == 200
+    )
+    token = _login()
+    reservation = client.post(
+        "/v1/credits/reservations",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "job_id": "form-job-gemini-missing-key",
+            "module": "formConverter",
+            "units": 1,
+            "idempotency_key": "reserve-gemini-key",
+        },
+    ).json()
+    document = b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n%%EOF"
+    monkeypatch.setattr(settings, "ocr_provider", "gemini")
+    monkeypatch.setattr(settings, "ocr_gemini_api_key", "")
+
+    response = client.post(
+        "/v1/ocr/form-converter",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "job_id": "form-job-gemini-missing-key",
+            "module": "formConverter",
+            "template_type": "student_history_v1",
+            "page_count": 1,
+            "credit_reservation_id": reservation["reservation_id"],
+            "document_sha256": hashlib.sha256(document).hexdigest(),
+            "document_base64": base64.b64encode(document).decode("ascii"),
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "OCR_GEMINI_API_KEY_MISSING"
+
+
+def test_form_converter_ocr_enforces_pdf_limits(monkeypatch, tmp_path: Path) -> None:
+    user_id = _create_user(monkeypatch, tmp_path)
+    assert (
+        client.post(
+            f"/v1/admin/users/{user_id}/credits/topup",
+            headers=_admin_headers(),
+            json={"amount": 5, "idempotency_key": "topup-ocr-limits"},
+        ).status_code
+        == 200
+    )
+    token = _login()
+    reservation = client.post(
+        "/v1/credits/reservations",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "job_id": "form-job-limits-1",
+            "module": "formConverter",
+            "units": 2,
+            "idempotency_key": "reserve-ocr-limits",
+        },
+    ).json()
+    document = b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n%%EOF"
+    payload = {
+        "job_id": "form-job-limits-1",
+        "module": "formConverter",
+        "template_type": "student_history_v1",
+        "page_count": 2,
+        "credit_reservation_id": reservation["reservation_id"],
+        "document_sha256": hashlib.sha256(document).hexdigest(),
+        "document_base64": base64.b64encode(document).decode("ascii"),
+    }
+
+    monkeypatch.setattr(settings, "ocr_max_pages_per_job", 1)
+    response = client.post("/v1/ocr/form-converter", headers={"Authorization": f"Bearer {token}"}, json=payload)
+    assert response.status_code == 413
+    assert response.json()["detail"] == "OCR_PAGE_LIMIT_EXCEEDED"
+
+    monkeypatch.setattr(settings, "ocr_max_pages_per_job", 100)
+    monkeypatch.setattr(settings, "ocr_max_pdf_bytes", 4)
+    payload["page_count"] = 1
+    response = client.post("/v1/ocr/form-converter", headers={"Authorization": f"Bearer {token}"}, json=payload)
+    assert response.status_code == 413
+    assert response.json()["detail"] == "OCR_DOCUMENT_TOO_LARGE"
+
+
+def test_form_converter_ocr_credit_ledger_end_to_end(monkeypatch, tmp_path: Path) -> None:
+    user_id = _create_user(monkeypatch, tmp_path)
+    assert (
+        client.post(
+            f"/v1/admin/users/{user_id}/credits/topup",
+            headers=_admin_headers(),
+            json={"amount": 3, "idempotency_key": "topup-form-e2e"},
+        ).status_code
+        == 200
+    )
+    token = _login()
+    headers = {"Authorization": f"Bearer {token}"}
+    reservation = client.post(
+        "/v1/credits/reservations",
+        headers=headers,
+        json={
+            "job_id": "form-job-ledger-1",
+            "module": "formConverter",
+            "units": 2,
+            "idempotency_key": "reserve-form-ledger-1",
+        },
+    ).json()
+    document = b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n2 0 obj << /Type /Page >> endobj\n%%EOF"
+    ocr = client.post(
+        "/v1/ocr/form-converter",
+        headers=headers,
+        json={
+            "job_id": "form-job-ledger-1",
+            "module": "formConverter",
+            "template_type": "student_history_v1",
+            "page_count": 2,
+            "credit_reservation_id": reservation["reservation_id"],
+            "document_sha256": hashlib.sha256(document).hexdigest(),
+            "document_base64": base64.b64encode(document).decode("ascii"),
+        },
+    )
+    assert ocr.status_code == 200
+    assert len(ocr.json()["records"]) == 2
+
+    capture = client.post(
+        f"/v1/credits/reservations/{reservation['reservation_id']}/capture",
+        headers=headers,
+        json={"units": 1, "idempotency_key": "capture-form-ledger-1"},
+    )
+    assert capture.status_code == 200
+    release = client.post(
+        f"/v1/credits/reservations/{reservation['reservation_id']}/release",
+        headers=headers,
+        json={"units": 1, "idempotency_key": "release-form-ledger-1"},
+    )
+    assert release.status_code == 200
+    assert release.json()["wallet"] == {"user_id": user_id, "balance": 2, "reserved": 0, "available": 2}
+
+    ledger = client.get(f"/v1/admin/users/{user_id}/ledger", headers=_admin_headers())
+    assert ledger.status_code == 200
+    ledger_pairs = {(entry["type"], entry["module"]) for entry in ledger.json()}
+    assert ledger_pairs == {
+        ("topup", None),
+        ("reserve", "formConverter"),
+        ("capture", "formConverter"),
+        ("release", "formConverter"),
+    }

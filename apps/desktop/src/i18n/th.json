@@ -163,6 +163,67 @@
       "openLatestCsv": "เปิด CSV ล่าสุด",
       "openReview": "เปิด review",
       "openFolder": "เปิดโฟลเดอร์ report"
+    },
+    "formConverter": {
+      "backHome": "กลับหน้าหลัก",
+      "readyBadge": "พร้อมทดสอบ",
+      "title": "แปลงแบบฟอร์มนักเรียนจาก PDF เป็น Excel",
+      "description": "นำ PDF จากเครื่องสแกนเข้า AI เพื่ออ่านลายมือ แล้วให้ผู้ใช้ตรวจทานทุกช่องก่อนสร้างไฟล์ Excel",
+      "pdfPath": "ไฟล์ PDF แบบฟอร์มที่สแกนแล้ว",
+      "pdfPlaceholder": "C:\\dmc\\student-history.pdf",
+      "browsePdf": "เลือก PDF",
+      "schoolYear": "ปีการศึกษา",
+      "validatePdf": "ตรวจ PDF",
+      "startAiRead": "ให้ AI อ่านแบบฟอร์ม",
+      "cloudConsent": "ยืนยันว่าอนุญาตให้ส่งข้อมูลใน PDF นี้ไปประมวลผลด้วย cloud AI และผู้ใช้จะตรวจทานข้อมูลก่อน export Excel",
+      "confirmTitle": "ยืนยันเริ่มอ่านแบบฟอร์มด้วย AI?",
+      "fileLabel": "ไฟล์",
+      "pageCount": "จำนวนหน้า",
+      "recordEstimate": "จำนวนรายการโดยประมาณ",
+      "creditEstimate": "เครดิตที่จะกันไว้",
+      "preflightTitle": "สรุปก่อนอ่านเอกสาร",
+      "preflightDescription": "ระบบคิด 1 หน้าเป็น 1 รายการใน v1",
+      "steps": {
+        "uploadTitle": "1. เลือก PDF และยืนยันการประมวลผล",
+        "uploadDescription": "รองรับ PDF จากเครื่องสแกนก่อน ยังไม่เน้นภาพถ่ายมือถือ"
+      },
+      "reviewTitle": "2. ตรวจทานข้อมูลที่ AI อ่านได้",
+      "reviewDescription": "ทุกช่องต้องผ่านการตรวจจากผู้ใช้ก่อนสร้าง Excel",
+      "provider": "AI provider",
+      "pageLabel": "หน้า {page}",
+      "saveReview": "บันทึกผลตรวจทาน",
+      "exportExcel": "สร้าง Excel",
+      "outputTitle": "ไฟล์ผลลัพธ์",
+      "outputDescription": "Excel และ report ถูกเก็บไว้ในเครื่องนี้",
+      "openExcel": "เปิด Excel",
+      "openReport": "เปิด report",
+      "summary": {
+        "total": "ทั้งหมด",
+        "ready": "พร้อม export",
+        "needsReview": "ต้องตรวจ",
+        "invalid": "ยังไม่ถูกต้อง"
+      },
+      "errors": {
+        "selectPdf": "กรุณาเลือกไฟล์ PDF ก่อน",
+        "validateFirst": "กรุณาตรวจ PDF ก่อนเริ่มอ่านด้วย AI",
+        "consentRequired": "ต้องยืนยันการประมวลผลด้วย cloud AI ก่อน",
+        "OCR_DOCUMENT_TOO_LARGE": "ไฟล์ PDF ใหญ่เกินขนาดที่ระบบกำหนด กรุณาแยกไฟล์เป็นชุดเล็กลง",
+        "OCR_PAGE_LIMIT_EXCEEDED": "จำนวนหน้า PDF เกินขีดจำกัดต่อครั้ง กรุณาแยกไฟล์เป็นหลายชุด",
+        "OCR_OPENAI_API_KEY_MISSING": "ยังไม่ได้ตั้งค่า AI provider สำหรับอ่านฟอร์ม กรุณาติดต่อผู้ดูแลระบบ",
+        "OCR_OPENAI_UNREACHABLE": "เชื่อมต่อผู้ให้บริการ AI ไม่ได้ กรุณาลองใหม่ภายหลัง",
+        "OCR_OPENAI_TIMEOUT": "AI อ่านเอกสารนานเกินไป กรุณาลองใหม่หรือแยกไฟล์ให้เล็กลง",
+        "OCR_GEMINI_API_KEY_MISSING": "ยังไม่ได้ตั้งค่า Gemini API key สำหรับอ่านฟอร์ม กรุณาติดต่อผู้ดูแลระบบ",
+        "OCR_GEMINI_UNREACHABLE": "เชื่อมต่อ Gemini ไม่ได้ กรุณาลองใหม่ภายหลัง",
+        "OCR_GEMINI_TIMEOUT": "Gemini อ่านเอกสารนานเกินไป กรุณาลองใหม่หรือแยกไฟล์ PDF ให้เล็กลง",
+        "OCR_GEMINI_UPLOAD_FAILED": "อัปโหลด PDF ไปยัง Gemini ไม่สำเร็จ กรุณาลองใหม่",
+        "OCR_GEMINI_HTTP_403": "Gemini ปฏิเสธ API key หรือ project นี้ กรุณาตรวจว่า key ถูกต้อง เปิดใช้ Gemini API แล้ว และโมเดลนี้ใช้ได้ใน project",
+        "OCR_GEMINI_HTTP_403_PERMISSION_DENIED": "Gemini ปฏิเสธสิทธิ์ของ API key กรุณาตรวจว่า key ถูกต้องและเปิดใช้ Gemini API แล้ว",
+        "OCR_GEMINI_UPLOAD_START_HTTP_403_PERMISSION_DENIED": "Gemini ปฏิเสธสิทธิ์ตั้งแต่ขั้นเริ่มอัปโหลด PDF กรุณาตรวจ API key และสิทธิ์ Files API",
+        "OCR_GEMINI_UPLOAD_FINALIZE_HTTP_403_PERMISSION_DENIED": "Gemini ปฏิเสธสิทธิ์ตอนส่งไฟล์ PDF กรุณาตรวจ API key และ project",
+        "OCR_GEMINI_GENERATE_HTTP_403_PERMISSION_DENIED": "Gemini ปฏิเสธสิทธิ์ตอนเรียกโมเดล กรุณาตรวจว่าโมเดลนี้ใช้ได้กับ API key/project นี้",
+        "OCR_GEMINI_HTTP_403_API_KEY_SERVICE_BLOCKED": "API key นี้ยังไม่ได้รับอนุญาตให้ใช้ Gemini API กรุณาเปิดใช้งาน Generative Language API ใน Google Cloud/AI Studio",
+        "OCR_PROVIDER_RESPONSE_INVALID": "ผลลัพธ์จาก AI ไม่อยู่ในรูปแบบที่ระบบอ่านได้ กรุณาลองใหม่หรือส่ง diagnostics"
+      }
     }
   }
 }
