@@ -98,6 +98,7 @@ describe("ModuleHome", () => {
     expect(screen.getByText("บัญชีและเครดิต")).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.formConverter.title)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.studentBasicInfo.title)).toBeInTheDocument();
+    expect(screen.getByText(messages.app.home.modules.psar.title)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.currentStudents.title)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.graduation.title)).toBeInTheDocument();
     expect(screen.getAllByText(/ใช้เครดิต 1\/รายการ/)).toHaveLength(3);

@@ -82,6 +82,7 @@ Copy-Item -LiteralPath (Join-Path $sidecarDist "dmc-sidecar.exe") -Destination $
 Copy-Item -LiteralPath (Join-Path $repoRoot "packages\\module-configs") -Destination (Join-Path $resourceRoot "module-configs") -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "packages\\shared-schemas\\config-signing") -Destination (Join-Path $resourceRoot "shared-schemas\\config-signing") -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "student_basic_info_form.xlsx") -Destination (Join-Path $resourceRoot "templates\\student_basic_info_form.xlsx") -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot "P-SAR-form.docx") -Destination (Join-Path $resourceRoot "templates\\P-SAR-form.docx") -Force
 
 $gitSha = ""
 try {

@@ -45,6 +45,7 @@ import { GraduationWizard } from "./components/GraduationWizard";
 import { FormConverterPage } from "./components/FormConverterPage";
 import { ModuleHome } from "./components/ModuleHome";
 import { ModuleSkeletonPage } from "./components/ModuleSkeletonPage";
+import { PsarReadinessPage } from "./components/PsarReadinessPage";
 import { StudentBasicInfoPage } from "./components/StudentBasicInfoPage";
 import type { ModuleId } from "./lib/moduleCatalog";
 import type {
@@ -839,6 +840,11 @@ export function App() {
           />
         ) : activeModule === "studentBasicInfo" ? (
           <StudentBasicInfoPage
+            onBackHome={() => setActiveModule("home")}
+            onRevealPath={(path) => void handleRevealPath(path)}
+          />
+        ) : activeModule === "psar" ? (
+          <PsarReadinessPage
             onBackHome={() => setActiveModule("home")}
             onRevealPath={(path) => void handleRevealPath(path)}
           />

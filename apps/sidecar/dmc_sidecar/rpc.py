@@ -31,13 +31,16 @@ from .license_client import activate_license, build_license_status_snapshot, ref
 from .license_store import LicenseStore
 from .module_config import load_effective_config, sync_module_config
 from .modules import get_module
+from .p_sar_readiness import PsarReadinessService
 from .runtime import JobManager, build_event_notification
 from .schemas import (
     ActivateLicenseRequest,
+    AddPsarEvidenceRequest,
     ArchiveJobsRequest,
     ExportStudentBasicInfoFormRequest,
     ExportFormExcelRequest,
     FilePathRequest,
+    GeneratePsarReportRequest,
     SaveFormReviewEditsRequest,
     StartFormConversionRequest,
     StartFormConversionResponse,
@@ -45,6 +48,7 @@ from .schemas import (
     ModuleConfigRequest,
     ModuleConfigStatus,
     PingResponse,
+    PsarReadinessRequest,
     RpcErrorData,
     RpcErrorResponse,
     RpcRequest,
@@ -66,6 +70,7 @@ class RpcServer:
         self.account_store = AccountSessionStore()
         self.telemetry = TelemetryClient(account_store=self.account_store, license_store=self.license_store)
         self.form_conversion = FormConversionService(account_store=self.account_store)
+        self.psar_readiness = PsarReadinessService()
         self.job_manager = JobManager(
             job_store=self.job_store,
             license_store=self.license_store,
@@ -324,6 +329,24 @@ class RpcServer:
                         else None
                     ),
                 ).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "get_psar_readiness":
+                psar_params = PsarReadinessRequest.model_validate(request.params)
+                result = self.psar_readiness.get_readiness(psar_params.project_id).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "add_psar_evidence":
+                evidence_params = AddPsarEvidenceRequest.model_validate(request.params)
+                result = self.psar_readiness.add_evidence(
+                    project_id=evidence_params.project_id,
+                    file_path=evidence_params.file_path,
+                ).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "generate_psar_report":
+                report_params = GeneratePsarReportRequest.model_validate(request.params)
+                result = self.psar_readiness.generate_report(report_params.project_id).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "get_job_status":

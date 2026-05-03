@@ -729,6 +729,14 @@ fn open_pdf_dialog() -> Option<String> {
 }
 
 #[tauri::command]
+fn open_evidence_dialog() -> Option<String> {
+    rfd::FileDialog::new()
+        .add_filter("Evidence", &["pdf", "docx", "xlsx", "xlsm", "xls", "png", "jpg", "jpeg"])
+        .pick_file()
+        .map(|path| path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 fn open_backup_archive_dialog() -> Option<String> {
     rfd::FileDialog::new()
         .add_filter("Backup Archive", &["zip"])
@@ -950,6 +958,7 @@ fn main() {
             shutdown_sidecar,
             open_excel_dialog,
             open_pdf_dialog,
+            open_evidence_dialog,
             open_backup_archive_dialog,
             save_backup_dialog,
             save_diagnostics_dialog,

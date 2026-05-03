@@ -296,6 +296,155 @@ class ExportStudentBasicInfoFormResponse(BaseModel):
     classes: list[StudentBasicInfoClassSummary]
 
 
+EvidenceMappingStatus = Literal["accepted", "suggested", "rejected", "needs_review"]
+ReadinessRequirementStatus = Literal["complete", "partial", "missing", "needs_review"]
+ReadinessPriority = Literal["high", "medium", "low"]
+
+
+class PsarReadinessRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: str = "default"
+
+
+class AddPsarEvidenceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: str = "default"
+    file_path: str
+
+
+class GeneratePsarReportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: str = "default"
+
+
+class PsarRequirement(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requirement_id: str
+    section_id: str
+    section_title: str
+    section_order: int
+    title: str
+    category: str
+    required_evidence: list[str]
+    optional_evidence: list[str] = Field(default_factory=list)
+    weight: float = Field(gt=0)
+    minimum_required_items: int = Field(ge=1)
+    description: str
+
+
+class PsarUploadedFile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    file_id: str
+    file_name: str
+    file_path: str
+    file_type: str
+    extracted_summary: str
+    created_at: str
+    updated_at: str
+
+
+class PsarEvidenceMapping(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requirement_id: str
+    evidence_type: str
+    source_file_id: str
+    source_file_name: str
+    extracted_summary: str
+    confidence_score: float = Field(ge=0, le=1)
+    page_number: int | None = None
+    location: str | None = None
+    status: EvidenceMappingStatus
+    created_at: str
+    updated_at: str
+
+
+class PsarReadinessRequirement(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requirement_id: str
+    requirement_title: str
+    category: str
+    description: str
+    required_evidence: list[str]
+    optional_evidence: list[str]
+    weight: float
+    minimum_required_items: int
+    status: ReadinessRequirementStatus
+    completion_score: float = Field(ge=0, le=1)
+    missing_evidence: list[str]
+    found_evidence: list[PsarEvidenceMapping]
+    recommendation: str
+    priority: ReadinessPriority
+
+
+class PsarReadinessSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    section_id: str
+    section_title: str
+    completion_score: float = Field(ge=0, le=1)
+    complete_count: int
+    partial_count: int
+    missing_count: int
+    needs_review_count: int
+    requirements: list[PsarReadinessRequirement]
+
+
+class PsarMissingEvidenceRecommendation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_name: str
+    requirement_id: str
+    requirement_title: str
+    section_id: str
+    section_title: str
+    why_needed: str
+    priority: ReadinessPriority
+    suggested_file_types: list[str]
+
+
+class PsarReadinessResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: str
+    overall_completion_score: float = Field(ge=0, le=1)
+    warning_threshold: float = Field(ge=0, le=1)
+    confidence_threshold: float = Field(ge=0, le=1)
+    total_requirements: int
+    complete_count: int
+    partial_count: int
+    missing_count: int
+    needs_review_count: int
+    sections: list[PsarReadinessSection]
+    missing_evidence_recommendations: list[PsarMissingEvidenceRecommendation]
+    mapped_files: list[PsarEvidenceMapping]
+    uploaded_files: list[PsarUploadedFile]
+
+
+class AddPsarEvidenceResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: str
+    file: PsarUploadedFile
+    mappings: list[PsarEvidenceMapping]
+    readiness: PsarReadinessResponse
+
+
+class GeneratePsarReportResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: str
+    report_path: str
+    readiness: PsarReadinessResponse
+    generated_at: str
+
+
 class ValidationWarning(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

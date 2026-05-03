@@ -21,11 +21,15 @@ import type {
   ExportFormExcelResponse,
   FormConversionRecord,
   FormConversionStatusResponse,
+  AddPsarEvidenceResponse,
+  GeneratePsarReportResponse,
+  PsarReadinessResponse,
   StartFormConversionResponse,
   ValidateFormPdfResponse,
   ValidateExcelResponse,
 } from "../types/contracts";
 import {
+  parseAddPsarEvidenceResponse,
   parseAvailableUpdate,
   parseAccountStatus,
   parseArchiveJobsResponse,
@@ -35,12 +39,14 @@ import {
   parseExportFormExcelResponse,
   parseExportStudentBasicInfoFormResponse,
   parseFormConversionStatusResponse,
+  parseGeneratePsarReportResponse,
   parseJobActionResponse,
   parseJobStatusSnapshot,
   parseLicenseStatus,
   parseListJobsResponse,
   parseModuleCatalogResponse,
   parseModuleConfigStatus,
+  parsePsarReadinessResponse,
   parseRestoreBackupResponse,
   parseResumeExistingJobResponse,
   parseSidecarEvent,
@@ -111,6 +117,10 @@ export async function openExcelDialog(): Promise<string | null> {
 
 export async function openPdfDialog(): Promise<string | null> {
   return invoke<string | null>("open_pdf_dialog");
+}
+
+export async function openEvidenceDialog(): Promise<string | null> {
+  return invoke<string | null>("open_evidence_dialog");
 }
 
 export async function openBackupArchiveDialog(): Promise<string | null> {
@@ -218,6 +228,31 @@ export async function exportStudentBasicInfoForm(
     excel_path: excelPath,
   });
   return parseExportStudentBasicInfoFormResponse(result);
+}
+
+export async function getPsarReadiness(projectId = "default"): Promise<PsarReadinessResponse> {
+  const result = await sidecarRequest<unknown>("get_psar_readiness", {
+    project_id: projectId,
+  });
+  return parsePsarReadinessResponse(result);
+}
+
+export async function addPsarEvidence(
+  projectId: string,
+  filePath: string,
+): Promise<AddPsarEvidenceResponse> {
+  const result = await sidecarRequest<unknown>("add_psar_evidence", {
+    project_id: projectId,
+    file_path: filePath,
+  });
+  return parseAddPsarEvidenceResponse(result);
+}
+
+export async function generatePsarReport(projectId: string): Promise<GeneratePsarReportResponse> {
+  const result = await sidecarRequest<unknown>("generate_psar_report", {
+    project_id: projectId,
+  });
+  return parseGeneratePsarReportResponse(result);
 }
 
 export async function getModuleConfigStatus(
