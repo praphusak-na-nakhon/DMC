@@ -265,6 +265,37 @@ class ExportFormExcelResponse(BaseModel):
     credits_refunded: int
 
 
+class ExportStudentBasicInfoFormRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    excel_path: str
+    template_path: str | None = None
+
+
+class StudentBasicInfoClassSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    level: str
+    room: str
+    sheet_name: str
+    students: int
+
+
+class ExportStudentBasicInfoFormResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    module: Literal["studentBasicInfo"]
+    source_path: str
+    output_path: str
+    school_name: str | None
+    school_year: str | None
+    term: str | None
+    rows_total: int
+    students_exported: int
+    classes_exported: int
+    classes: list[StudentBasicInfoClassSummary]
+
+
 class ValidationWarning(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

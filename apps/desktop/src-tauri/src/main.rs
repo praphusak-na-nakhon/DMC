@@ -546,7 +546,10 @@ fn extract_request_method(request_json: &str) -> Result<String, String> {
 fn rpc_timeout_secs(method: &str) -> u64 {
     match method {
         "ping" => RPC_TIMEOUT_STANDARD_SECS,
-        "start_job" | "resume_existing_job" | "install_browser_runtime" => RPC_TIMEOUT_LONG_SECS,
+        "start_job"
+        | "resume_existing_job"
+        | "install_browser_runtime"
+        | "export_student_basic_info_form" => RPC_TIMEOUT_LONG_SECS,
         _ => RPC_TIMEOUT_STANDARD_SECS,
     }
 }

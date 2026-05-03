@@ -262,6 +262,26 @@ export type ExportFormExcelResponse = {
   credits_refunded: number;
 };
 
+export type StudentBasicInfoClassSummary = {
+  level: string;
+  room: string;
+  sheet_name: string;
+  students: number;
+};
+
+export type ExportStudentBasicInfoFormResponse = {
+  module: "studentBasicInfo";
+  source_path: string;
+  output_path: string;
+  school_name: string | null;
+  school_year: string | null;
+  term: string | null;
+  rows_total: number;
+  students_exported: number;
+  classes_exported: number;
+  classes: StudentBasicInfoClassSummary[];
+};
+
 export type ModuleConfigStatus = {
   module: "graduation";
   version: string;
@@ -735,6 +755,38 @@ export function parseExportFormExcelResponse(value: unknown): ExportFormExcelRes
     credit_reservation_id: readOptionalString(record, "credit_reservation_id", "export_form_excel_response"),
     credits_captured: readNumber(record, "credits_captured", "export_form_excel_response"),
     credits_refunded: readNumber(record, "credits_refunded", "export_form_excel_response"),
+  };
+}
+
+function parseStudentBasicInfoClassSummary(value: unknown, index: number): StudentBasicInfoClassSummary {
+  const record = asRecord(value, `student_basic_info_class[${index}]`);
+  return {
+    level: readString(record, "level", "student_basic_info_class"),
+    room: readString(record, "room", "student_basic_info_class"),
+    sheet_name: readString(record, "sheet_name", "student_basic_info_class"),
+    students: readNumber(record, "students", "student_basic_info_class"),
+  };
+}
+
+export function parseExportStudentBasicInfoFormResponse(value: unknown): ExportStudentBasicInfoFormResponse {
+  const record = asRecord(value, "export_student_basic_info_form_response");
+  const module = readString(record, "module", "export_student_basic_info_form_response");
+  if (module !== "studentBasicInfo") {
+    throw new Error("export_student_basic_info_form_response.module must be studentBasicInfo");
+  }
+  return {
+    module,
+    source_path: readString(record, "source_path", "export_student_basic_info_form_response"),
+    output_path: readString(record, "output_path", "export_student_basic_info_form_response"),
+    school_name: readOptionalString(record, "school_name", "export_student_basic_info_form_response"),
+    school_year: readOptionalString(record, "school_year", "export_student_basic_info_form_response"),
+    term: readOptionalString(record, "term", "export_student_basic_info_form_response"),
+    rows_total: readNumber(record, "rows_total", "export_student_basic_info_form_response"),
+    students_exported: readNumber(record, "students_exported", "export_student_basic_info_form_response"),
+    classes_exported: readNumber(record, "classes_exported", "export_student_basic_info_form_response"),
+    classes: readArray(record, "classes", "export_student_basic_info_form_response").map(
+      parseStudentBasicInfoClassSummary,
+    ),
   };
 }
 

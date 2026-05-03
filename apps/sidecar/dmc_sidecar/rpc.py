@@ -35,6 +35,7 @@ from .runtime import JobManager, build_event_notification
 from .schemas import (
     ActivateLicenseRequest,
     ArchiveJobsRequest,
+    ExportStudentBasicInfoFormRequest,
     ExportFormExcelRequest,
     FilePathRequest,
     SaveFormReviewEditsRequest,
@@ -53,6 +54,7 @@ from .schemas import (
     ValidateFormPdfRequest,
     ValidateExcelRequest,
 )
+from .student_basic_info import export_student_basic_info_form
 from .telemetry import TelemetryClient
 
 
@@ -310,6 +312,18 @@ class RpcServer:
             if request.method == "export_converted_excel":
                 export_params = ExportFormExcelRequest.model_validate(request.params)
                 result = self.form_conversion.export_excel(export_params.job_id).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "export_student_basic_info_form":
+                student_form_params = ExportStudentBasicInfoFormRequest.model_validate(request.params)
+                result = export_student_basic_info_form(
+                    excel_path=Path(student_form_params.excel_path),
+                    template_path=(
+                        Path(student_form_params.template_path)
+                        if student_form_params.template_path is not None
+                        else None
+                    ),
+                ).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "get_job_status":

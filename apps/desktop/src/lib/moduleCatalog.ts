@@ -1,6 +1,6 @@
-import { FileSpreadsheet, GraduationCap, UserPlus } from "lucide-react";
+import { ClipboardList, FileSpreadsheet, GraduationCap, UserPlus } from "lucide-react";
 
-export type ModuleId = "formConverter" | "currentStudents" | "graduation";
+export type ModuleId = "formConverter" | "studentBasicInfo" | "currentStudents" | "graduation";
 export type ModuleStatus = "skeleton" | "ready";
 
 export type ModuleContract = {
@@ -37,6 +37,22 @@ export const moduleDefinitions: ModuleDefinition[] = [
       validations: ["pdf_file", "supported_template", "page_count", "credit_policy", "review_required"],
       outputs: ["excel_path", "conversion_report_path", "review_report_path", "warnings"],
       events: ["validate_form_pdf", "start_form_conversion", "save_review_edits", "export_converted_excel"],
+    },
+  },
+  {
+    id: "studentBasicInfo",
+    status: "ready",
+    icon: ClipboardList,
+    requiresCredits: false,
+    pricingMode: "per_billable_record",
+    creditPerUnit: 0,
+    productionDryRunEnabled: false,
+    contract: {
+      version: "0.1",
+      inputs: ["dmc_student_excel_path", "student_basic_info_template"],
+      validations: ["dmc_header_row", "required_columns_present", "classroom_grouping"],
+      outputs: ["student_basic_info_workbook_path", "class_sheets", "export_summary"],
+      events: ["export_student_basic_info_form"],
     },
   },
   {

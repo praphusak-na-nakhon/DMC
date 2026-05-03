@@ -17,6 +17,7 @@ import type {
   UpdaterEvent,
   UpdaterStatus,
   StartJobResponse,
+  ExportStudentBasicInfoFormResponse,
   ExportFormExcelResponse,
   FormConversionRecord,
   FormConversionStatusResponse,
@@ -32,6 +33,7 @@ import {
   parseBrowserRuntimeStatus,
   parseDatabaseStatus,
   parseExportFormExcelResponse,
+  parseExportStudentBasicInfoFormResponse,
   parseFormConversionStatusResponse,
   parseJobActionResponse,
   parseJobStatusSnapshot,
@@ -207,6 +209,15 @@ export async function saveReviewEdits(
 export async function exportConvertedExcel(jobId: string): Promise<ExportFormExcelResponse> {
   const result = await sidecarRequest<unknown>("export_converted_excel", { job_id: jobId });
   return parseExportFormExcelResponse(result);
+}
+
+export async function exportStudentBasicInfoForm(
+  excelPath: string,
+): Promise<ExportStudentBasicInfoFormResponse> {
+  const result = await sidecarRequest<unknown>("export_student_basic_info_form", {
+    excel_path: excelPath,
+  });
+  return parseExportStudentBasicInfoFormResponse(result);
 }
 
 export async function getModuleConfigStatus(

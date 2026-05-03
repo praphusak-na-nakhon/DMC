@@ -45,6 +45,7 @@ import { GraduationWizard } from "./components/GraduationWizard";
 import { FormConverterPage } from "./components/FormConverterPage";
 import { ModuleHome } from "./components/ModuleHome";
 import { ModuleSkeletonPage } from "./components/ModuleSkeletonPage";
+import { StudentBasicInfoPage } from "./components/StudentBasicInfoPage";
 import type { ModuleId } from "./lib/moduleCatalog";
 import type {
   AvailableUpdate,
@@ -834,6 +835,11 @@ export function App() {
             accountStatus={accountStatus}
             onBackHome={() => setActiveModule("home")}
             onRefreshWallet={() => void handleRefreshAccount(true)}
+            onRevealPath={(path) => void handleRevealPath(path)}
+          />
+        ) : activeModule === "studentBasicInfo" ? (
+          <StudentBasicInfoPage
+            onBackHome={() => setActiveModule("home")}
             onRevealPath={(path) => void handleRevealPath(path)}
           />
         ) : activeModule === "currentStudents" ? (
