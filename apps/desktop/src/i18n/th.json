@@ -132,8 +132,8 @@
       "downloadProgress": "ดาวน์โหลดแล้ว",
       "modules": {
         "formConverter": {
-          "title": "แปลงเอกสารแบบฟอร์ม DMC เป็น Excel",
-          "description": "เตรียมข้อมูลจากเอกสารแบบฟอร์มให้เป็นไฟล์ Excel สำหรับนำไปใช้ต่อในงาน DMC"
+          "title": "แปลงเอกสารแบบฟอร์ม DMC เป็น JSON",
+          "description": "เตรียมข้อมูลจากเอกสารแบบฟอร์มให้เป็นไฟล์ JSON กลางสำหรับนำไปใช้ต่อในงาน DMC"
         },
         "studentBasicInfo": {
           "title": "บันทึกข้อมูลพื้นฐานนักเรียน(งานพยาบาล)",
@@ -175,15 +175,15 @@
     "formConverter": {
       "backHome": "กลับหน้าหลัก",
       "readyBadge": "พร้อมทดสอบ",
-      "title": "แปลงแบบฟอร์มนักเรียนจาก PDF เป็น Excel",
-      "description": "นำ PDF จากเครื่องสแกนเข้า AI เพื่ออ่านลายมือ แล้วให้ผู้ใช้ตรวจทานทุกช่องก่อนสร้างไฟล์ Excel",
+      "title": "แปลงแบบฟอร์มนักเรียนเป็น JSON",
+      "description": "นำข้อมูล OCR จากแบบฟอร์มนักเรียนมาจัดรูปเป็นไฟล์ JSON กลางสำหรับใช้ต่อใน DMC",
       "pdfPath": "ไฟล์ PDF แบบฟอร์มที่สแกนแล้ว",
       "pdfPlaceholder": "C:\\dmc\\student-history.pdf",
       "browsePdf": "เลือก PDF",
       "schoolYear": "ปีการศึกษา",
       "validatePdf": "ตรวจ PDF",
       "startAiRead": "ให้ AI อ่านแบบฟอร์ม",
-      "cloudConsent": "ยืนยันว่าอนุญาตให้ส่งข้อมูลใน PDF นี้ไปประมวลผลด้วย cloud AI และผู้ใช้จะตรวจทานข้อมูลก่อน export Excel",
+      "cloudConsent": "ยืนยันว่าอนุญาตให้ส่งข้อมูลใน PDF นี้ไปประมวลผลด้วย cloud AI และผู้ใช้จะตรวจทานข้อมูลก่อน export JSON",
       "confirmTitle": "ยืนยันเริ่มอ่านแบบฟอร์มด้วย AI?",
       "fileLabel": "ไฟล์",
       "pageCount": "จำนวนหน้า",
@@ -196,14 +196,14 @@
         "uploadDescription": "รองรับ PDF จากเครื่องสแกนก่อน ยังไม่เน้นภาพถ่ายมือถือ"
       },
       "reviewTitle": "2. ตรวจทานข้อมูลที่ AI อ่านได้",
-      "reviewDescription": "ทุกช่องต้องผ่านการตรวจจากผู้ใช้ก่อนสร้าง Excel",
+      "reviewDescription": "ทุกช่องต้องผ่านการตรวจจากผู้ใช้ก่อนสร้าง JSON",
       "provider": "AI provider",
       "pageLabel": "หน้า {page}",
       "saveReview": "บันทึกผลตรวจทาน",
-      "exportExcel": "สร้าง Excel",
+      "exportExcel": "สร้าง JSON",
       "outputTitle": "ไฟล์ผลลัพธ์",
-      "outputDescription": "Excel และ report ถูกเก็บไว้ในเครื่องนี้",
-      "openExcel": "เปิด Excel",
+      "outputDescription": "JSON และ report ถูกเก็บไว้ในเครื่องนี้",
+      "openExcel": "เปิด JSON",
       "openReport": "เปิด report",
       "summary": {
         "total": "ทั้งหมด",

@@ -25,7 +25,18 @@ from .browser_runtime import bootstrap_browser_runtime, get_browser_runtime_stat
 from .config import sqlite_path
 from .db import get_database_metadata
 from .errors import DomainError
-from .form_conversion import FormConversionService, validate_form_pdf
+from .current_students import (
+    ExportDmcFormJsonRequest,
+    ExportCurrentStudentsBlankFormRequest,
+    ExportCurrentStudentsImportExcelRequest,
+    ReconcileCurrentStudentsRequest,
+    ValidateCurrentStudentsImportFormRequest,
+    export_dmc_form_json,
+    export_current_students_blank_form,
+    export_current_students_import_excel,
+    reconcile_current_students,
+    validate_current_students_import_form,
+)
 from .job_store import JobStore
 from .license_client import activate_license, build_license_status_snapshot, refresh_license_status
 from .license_store import LicenseStore
@@ -38,12 +49,8 @@ from .schemas import (
     AddPsarEvidenceRequest,
     ArchiveJobsRequest,
     ExportStudentBasicInfoFormRequest,
-    ExportFormExcelRequest,
     FilePathRequest,
     GeneratePsarReportRequest,
-    SaveFormReviewEditsRequest,
-    StartFormConversionRequest,
-    StartFormConversionResponse,
     JobIdRequest,
     ModuleConfigRequest,
     ModuleConfigStatus,
@@ -55,7 +62,6 @@ from .schemas import (
     RpcSuccessResponse,
     SignInRequest,
     StartJobRequest,
-    ValidateFormPdfRequest,
     ValidateExcelRequest,
 )
 from .student_basic_info import export_student_basic_info_form
@@ -69,7 +75,6 @@ class RpcServer:
         self.license_store = LicenseStore()
         self.account_store = AccountSessionStore()
         self.telemetry = TelemetryClient(account_store=self.account_store, license_store=self.license_store)
-        self.form_conversion = FormConversionService(account_store=self.account_store)
         self.psar_readiness = PsarReadinessService()
         self.job_manager = JobManager(
             job_store=self.job_store,
@@ -115,12 +120,29 @@ class RpcServer:
                     raise
                 return RpcSuccessResponse(id=request.id, result=result)
 
-            if request.method == "validate_form_pdf":
-                form_validate_params = ValidateFormPdfRequest.model_validate(request.params)
-                result = validate_form_pdf(
-                    Path(form_validate_params.path),
-                    template_type=form_validate_params.template_type,
-                ).model_dump()
+            if request.method == "validate_current_student_sources":
+                current_students_params = ReconcileCurrentStudentsRequest.model_validate(request.params)
+                result = reconcile_current_students(current_students_params).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "export_current_student_import_excel":
+                current_students_export_params = ExportCurrentStudentsImportExcelRequest.model_validate(request.params)
+                result = export_current_students_import_excel(current_students_export_params).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "export_dmc_form_json":
+                form_json_export_params = ExportDmcFormJsonRequest.model_validate(request.params)
+                result = export_dmc_form_json(form_json_export_params).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "export_current_student_blank_form":
+                current_students_blank_params = ExportCurrentStudentsBlankFormRequest.model_validate(request.params)
+                result = export_current_students_blank_form(current_students_blank_params).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "validate_current_student_import_form":
+                current_students_import_params = ValidateCurrentStudentsImportFormRequest.model_validate(request.params)
+                result = validate_current_students_import_form(current_students_import_params).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "get_module_config_status":
@@ -295,29 +317,6 @@ class RpcServer:
                         "credits_reserved": credits_reserved,
                     },
                 )
-
-            if request.method == "start_form_conversion":
-                form_start_params = StartFormConversionRequest.model_validate(request.params)
-                result = self.form_conversion.start_conversion(form_start_params).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
-
-            if request.method == "get_conversion_status":
-                job_params = JobIdRequest.model_validate(request.params)
-                result = self.form_conversion.get_status(job_params.job_id).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
-
-            if request.method == "save_review_edits":
-                review_params = SaveFormReviewEditsRequest.model_validate(request.params)
-                result = self.form_conversion.save_review_edits(
-                    job_id=review_params.job_id,
-                    records=review_params.records,
-                ).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
-
-            if request.method == "export_converted_excel":
-                export_params = ExportFormExcelRequest.model_validate(request.params)
-                result = self.form_conversion.export_excel(export_params.job_id).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "export_student_basic_info_form":
                 student_form_params = ExportStudentBasicInfoFormRequest.model_validate(request.params)

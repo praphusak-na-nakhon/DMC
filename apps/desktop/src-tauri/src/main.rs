@@ -721,9 +721,17 @@ fn open_excel_dialog() -> Option<String> {
 }
 
 #[tauri::command]
-fn open_pdf_dialog() -> Option<String> {
+fn open_csv_dialog() -> Option<String> {
     rfd::FileDialog::new()
-        .add_filter("PDF", &["pdf"])
+        .add_filter("CSV", &["csv"])
+        .pick_file()
+        .map(|path| path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn open_markdown_dialog() -> Option<String> {
+    rfd::FileDialog::new()
+        .add_filter("Markdown/Text", &["md", "txt"])
         .pick_file()
         .map(|path| path.to_string_lossy().to_string())
 }
@@ -957,7 +965,8 @@ fn main() {
             rpc_request,
             shutdown_sidecar,
             open_excel_dialog,
-            open_pdf_dialog,
+            open_csv_dialog,
+            open_markdown_dialog,
             open_evidence_dialog,
             open_backup_archive_dialog,
             save_backup_dialog,

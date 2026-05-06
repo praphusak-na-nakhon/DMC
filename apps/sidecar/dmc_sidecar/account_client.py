@@ -1,12 +1,8 @@
 from __future__ import annotations
 
 import json
-import base64
-import hashlib
 import re
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -18,17 +14,10 @@ from .errors import DomainError
 from .schemas import (
     AccountSnapshot,
     CreditReservationSnapshot,
-    FormConversionRecord,
     ModuleCatalogItem,
     ModuleCatalogResponse,
     WalletSnapshot,
 )
-
-
-@dataclass(frozen=True)
-class FormConverterOcrResult:
-    provider: str
-    records: list[FormConversionRecord]
 
 
 def utc_now() -> str:
@@ -296,9 +285,9 @@ def cached_module_catalog(store: AccountSessionStore) -> ModuleCatalogResponse:
                 ModuleCatalogItem(
                     id="formConverter",
                     enabled=True,
-                    requires_credits=True,
+                    requires_credits=False,
                     pricing_mode="per_billable_record",
-                    credit_per_unit=1,
+                    credit_per_unit=0,
                     production_dry_run_enabled=False,
                 ),
                 ModuleCatalogItem(
@@ -328,41 +317,3 @@ def cached_module_catalog(store: AccountSessionStore) -> ModuleCatalogResponse:
             ]
         )
     return ModuleCatalogResponse(modules=session.module_catalog)
-
-
-def request_form_converter_ocr(
-    store: AccountSessionStore,
-    *,
-    job_id: str,
-    pdf_path: Path,
-    template_type: str,
-    page_count: int,
-    credit_reservation_id: str,
-) -> FormConverterOcrResult:
-    session = store.get_session()
-    if session is None:
-        raise DomainError("SIGN_IN_REQUIRED")
-    document_bytes = pdf_path.read_bytes()
-    payload = _json_request(
-        "/v1/ocr/form-converter",
-        method="POST",
-        token=session.token,
-        payload={
-            "job_id": job_id,
-            "module": "formConverter",
-            "template_type": template_type,
-            "page_count": page_count,
-            "credit_reservation_id": credit_reservation_id,
-            "document_sha256": hashlib.sha256(document_bytes).hexdigest(),
-            "document_base64": base64.b64encode(document_bytes).decode("ascii"),
-        },
-        timeout_sec=60,
-    )
-    records = payload.get("records")
-    if not isinstance(records, list):
-        raise DomainError("OCR_RESPONSE_INVALID")
-    provider = payload.get("provider")
-    return FormConverterOcrResult(
-        provider=provider if isinstance(provider, str) and provider else "unknown",
-        records=[FormConversionRecord.model_validate(record) for record in records],
-    )

@@ -6,6 +6,11 @@ import type {
   ArchiveJobsResponse,
   BackupCreateResponse,
   BrowserRuntimeStatus,
+  CurrentStudentOperationType,
+  ExportDmcFormJsonResponse,
+  ExportCurrentStudentsBlankFormResponse,
+  ExportCurrentStudentsImportExcelResponse,
+  CurrentStudentsReconciliationResponse,
   DatabaseStatus,
   JobStatusSnapshot,
   LicenseStatus,
@@ -18,14 +23,10 @@ import type {
   UpdaterStatus,
   StartJobResponse,
   ExportStudentBasicInfoFormResponse,
-  ExportFormExcelResponse,
-  FormConversionRecord,
-  FormConversionStatusResponse,
   AddPsarEvidenceResponse,
   GeneratePsarReportResponse,
   PsarReadinessResponse,
-  StartFormConversionResponse,
-  ValidateFormPdfResponse,
+  ValidateCurrentStudentsImportFormResponse,
   ValidateExcelResponse,
 } from "../types/contracts";
 import {
@@ -35,10 +36,12 @@ import {
   parseArchiveJobsResponse,
   parseBackupCreateResponse,
   parseBrowserRuntimeStatus,
+  parseExportDmcFormJsonResponse,
+  parseExportCurrentStudentsBlankFormResponse,
+  parseExportCurrentStudentsImportExcelResponse,
+  parseCurrentStudentsReconciliationResponse,
   parseDatabaseStatus,
-  parseExportFormExcelResponse,
   parseExportStudentBasicInfoFormResponse,
-  parseFormConversionStatusResponse,
   parseGeneratePsarReportResponse,
   parseJobActionResponse,
   parseJobStatusSnapshot,
@@ -51,10 +54,9 @@ import {
   parseResumeExistingJobResponse,
   parseSidecarEvent,
   parseStartJobResponse,
-  parseStartFormConversionResponse,
   parseUpdaterEvent,
   parseUpdaterStatus,
-  parseValidateFormPdfResponse,
+  parseValidateCurrentStudentsImportFormResponse,
   parseValidateExcelResponse,
 } from "../types/contracts";
 
@@ -115,8 +117,12 @@ export async function openExcelDialog(): Promise<string | null> {
   return invoke<string | null>("open_excel_dialog");
 }
 
-export async function openPdfDialog(): Promise<string | null> {
-  return invoke<string | null>("open_pdf_dialog");
+export async function openCsvDialog(): Promise<string | null> {
+  return invoke<string | null>("open_csv_dialog");
+}
+
+export async function openMarkdownDialog(): Promise<string | null> {
+  return invoke<string | null>("open_markdown_dialog");
 }
 
 export async function openEvidenceDialog(): Promise<string | null> {
@@ -173,54 +179,6 @@ export async function validateExcel(
   return parseValidateExcelResponse(result);
 }
 
-export async function validateFormPdf(
-  path: string,
-  templateType = "student_history_v1",
-): Promise<ValidateFormPdfResponse> {
-  const result = await sidecarRequest<unknown>("validate_form_pdf", {
-    path,
-    module: "formConverter",
-    template_type: templateType,
-  });
-  return parseValidateFormPdfResponse(result);
-}
-
-export async function startFormConversion(input: {
-  jobId: string;
-  pdfPath: string;
-  templateType: string;
-  schoolYear: string | null;
-  confirmedAiProcessing: boolean;
-}): Promise<StartFormConversionResponse> {
-  const result = await sidecarRequest<unknown>("start_form_conversion", {
-    job_id: input.jobId,
-    module: "formConverter",
-    pdf_path: input.pdfPath,
-    template_type: input.templateType,
-    school_year: input.schoolYear,
-    confirmed_ai_processing: input.confirmedAiProcessing,
-  });
-  return parseStartFormConversionResponse(result);
-}
-
-export async function getConversionStatus(jobId: string): Promise<FormConversionStatusResponse> {
-  const result = await sidecarRequest<unknown>("get_conversion_status", { job_id: jobId });
-  return parseFormConversionStatusResponse(result);
-}
-
-export async function saveReviewEdits(
-  jobId: string,
-  records: FormConversionRecord[],
-): Promise<FormConversionStatusResponse> {
-  const result = await sidecarRequest<unknown>("save_review_edits", { job_id: jobId, records });
-  return parseFormConversionStatusResponse(result);
-}
-
-export async function exportConvertedExcel(jobId: string): Promise<ExportFormExcelResponse> {
-  const result = await sidecarRequest<unknown>("export_converted_excel", { job_id: jobId });
-  return parseExportFormExcelResponse(result);
-}
-
 export async function exportStudentBasicInfoForm(
   excelPath: string,
 ): Promise<ExportStudentBasicInfoFormResponse> {
@@ -228,6 +186,83 @@ export async function exportStudentBasicInfoForm(
     excel_path: excelPath,
   });
   return parseExportStudentBasicInfoFormResponse(result);
+}
+
+export async function validateCurrentStudentSources(input: {
+  rosterExcelPath: string;
+  thaiIdCsvPath: string | null;
+  ocrMarkdownPaths: string[];
+  schoolYear: number;
+  gradeLevels: number[] | null;
+  operationType: CurrentStudentOperationType;
+}): Promise<CurrentStudentsReconciliationResponse> {
+  const result = await sidecarRequest<unknown>("validate_current_student_sources", {
+    roster_excel_path: input.rosterExcelPath,
+    thai_id_csv_path: input.thaiIdCsvPath,
+    ocr_markdown_paths: input.ocrMarkdownPaths,
+    school_year: input.schoolYear,
+    grade_levels: input.gradeLevels,
+    operation_type: input.operationType,
+  });
+  return parseCurrentStudentsReconciliationResponse(result);
+}
+
+export async function exportCurrentStudentImportExcel(input: {
+  rosterExcelPath: string;
+  thaiIdCsvPath: string | null;
+  ocrMarkdownPaths: string[];
+  schoolYear: number;
+  gradeLevels: number[] | null;
+  operationType: CurrentStudentOperationType;
+  outputPath: string | null;
+}): Promise<ExportCurrentStudentsImportExcelResponse> {
+  const result = await sidecarRequest<unknown>("export_current_student_import_excel", {
+    roster_excel_path: input.rosterExcelPath,
+    thai_id_csv_path: input.thaiIdCsvPath,
+    ocr_markdown_paths: input.ocrMarkdownPaths,
+    school_year: input.schoolYear,
+    grade_levels: input.gradeLevels,
+    operation_type: input.operationType,
+    output_path: input.outputPath,
+  });
+  return parseExportCurrentStudentsImportExcelResponse(result);
+}
+
+export async function exportDmcFormJson(input: {
+  rosterExcelPath: string;
+  thaiIdCsvPath: string | null;
+  ocrMarkdownPaths: string[];
+  schoolYear: number;
+  gradeLevels: number[] | null;
+  outputPath: string | null;
+}): Promise<ExportDmcFormJsonResponse> {
+  const result = await sidecarRequest<unknown>("export_dmc_form_json", {
+    roster_excel_path: input.rosterExcelPath,
+    thai_id_csv_path: input.thaiIdCsvPath,
+    ocr_markdown_paths: input.ocrMarkdownPaths,
+    school_year: input.schoolYear,
+    grade_levels: input.gradeLevels,
+    output_path: input.outputPath,
+  });
+  return parseExportDmcFormJsonResponse(result);
+}
+
+export async function exportCurrentStudentBlankForm(
+  outputPath: string,
+): Promise<ExportCurrentStudentsBlankFormResponse> {
+  const result = await sidecarRequest<unknown>("export_current_student_blank_form", {
+    output_path: outputPath,
+  });
+  return parseExportCurrentStudentsBlankFormResponse(result);
+}
+
+export async function validateCurrentStudentImportForm(
+  excelPath: string,
+): Promise<ValidateCurrentStudentsImportFormResponse> {
+  const result = await sidecarRequest<unknown>("validate_current_student_import_form", {
+    excel_path: excelPath,
+  });
+  return parseValidateCurrentStudentsImportFormResponse(result);
 }
 
 export async function getPsarReadiness(projectId = "default"): Promise<PsarReadinessResponse> {

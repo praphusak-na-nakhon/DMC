@@ -43,8 +43,8 @@ import { useJobStatusReconciliation } from "./hooks/useJobStatusReconciliation";
 import { useJobStore } from "./stores/useJobStore";
 import { GraduationWizard } from "./components/GraduationWizard";
 import { FormConverterPage } from "./components/FormConverterPage";
+import { CurrentStudentsPage } from "./components/CurrentStudentsPage";
 import { ModuleHome } from "./components/ModuleHome";
-import { ModuleSkeletonPage } from "./components/ModuleSkeletonPage";
 import { PsarReadinessPage } from "./components/PsarReadinessPage";
 import { StudentBasicInfoPage } from "./components/StudentBasicInfoPage";
 import type { ModuleId } from "./lib/moduleCatalog";
@@ -833,9 +833,7 @@ export function App() {
           />
         ) : activeModule === "formConverter" ? (
           <FormConverterPage
-            accountStatus={accountStatus}
             onBackHome={() => setActiveModule("home")}
-            onRefreshWallet={() => void handleRefreshAccount(true)}
             onRevealPath={(path) => void handleRevealPath(path)}
           />
         ) : activeModule === "studentBasicInfo" ? (
@@ -849,9 +847,9 @@ export function App() {
             onRevealPath={(path) => void handleRevealPath(path)}
           />
         ) : activeModule === "currentStudents" ? (
-          <ModuleSkeletonPage
-            moduleId={activeModule}
+          <CurrentStudentsPage
             onBackHome={() => setActiveModule("home")}
+            onRevealPath={(path) => void handleRevealPath(path)}
           />
         ) : (
           <GraduationWizard

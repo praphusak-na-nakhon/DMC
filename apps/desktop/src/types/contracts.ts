@@ -176,92 +176,6 @@ export type ModuleCatalogResponse = {
   modules: ModuleCatalogItem[];
 };
 
-export type FormPdfValidationWarning = {
-  code: string;
-  message_th: string;
-};
-
-export type ValidateFormPdfResponse = {
-  module: "formConverter";
-  path: string;
-  file_name: string;
-  template_type: string;
-  page_count: number;
-  estimated_records: number;
-  credit_estimate: number;
-  supported_template: boolean;
-  requires_ai_consent: boolean;
-  warnings: FormPdfValidationWarning[];
-};
-
-export type FormConversionField = {
-  field_name: string;
-  label_th: string;
-  value: string;
-  confidence: number;
-  status: "ready" | "needs_review" | "invalid";
-  alternatives: string[];
-  edited: boolean;
-};
-
-export type FormConversionRecord = {
-  record_id: string;
-  page_number: number;
-  status: "ready" | "needs_review" | "invalid";
-  fields: FormConversionField[];
-};
-
-export type FormConversionSummary = {
-  records_total: number;
-  ready_records: number;
-  needs_review_records: number;
-  invalid_records: number;
-  exported_records: number;
-};
-
-export type StartFormConversionResponse = {
-  accepted: boolean;
-  job_id: string;
-  credit_reservation_id: string | null;
-  credits_reserved: number;
-};
-
-export type FormConversionStatusResponse = {
-  job_id: string;
-  module: "formConverter";
-  status: "pending" | "processing" | "needs_review" | "reviewed" | "done" | "failed";
-  pdf_path: string;
-  template_type: string;
-  ocr_provider: string | null;
-  school_year: string | null;
-  page_count: number;
-  processed: number;
-  total: number;
-  records: FormConversionRecord[];
-  summary: FormConversionSummary;
-  excel_path: string | null;
-  report_path: string | null;
-  review_report_path: string | null;
-  credit_reservation_id: string | null;
-  credits_reserved: number;
-  credits_captured: number;
-  credits_refunded: number;
-  credit_status: string | null;
-  last_error: string | null;
-  review_confirmed: boolean;
-};
-
-export type ExportFormExcelResponse = {
-  job_id: string;
-  excel_path: string;
-  report_path: string;
-  review_report_path: string;
-  exported_records: number;
-  credit_reservation_id: string | null;
-  credits_captured: number;
-  credits_refunded: number;
-};
-
 export type StudentBasicInfoClassSummary = {
   level: string;
   room: string;
@@ -280,6 +194,209 @@ export type ExportStudentBasicInfoFormResponse = {
   students_exported: number;
   classes_exported: number;
   classes: StudentBasicInfoClassSummary[];
+};
+
+export type CurrentStudentSourceType = "roster" | "thai_id_scan" | "ocr_form" | "manual";
+export type CurrentStudentFieldConfidence = "authoritative" | "high" | "review" | "missing";
+export type CurrentStudentFieldValue = string | number | boolean | null;
+export type CurrentStudentOperationType = "current" | "transfer_in" | "add_new";
+export type CurrentStudentMatchStatus =
+  | "auto_matched"
+  | "needs_review"
+  | "duplicate"
+  | "invalid_id"
+  | "new_or_transfer_candidate";
+
+export type CurrentStudentsWarning = {
+  code: string;
+  message: string;
+  source: CurrentStudentSourceType | null;
+  source_path: string | null;
+  row_index: number | null;
+  sheet_name: string | null;
+};
+
+export type CurrentStudentField = {
+  value: CurrentStudentFieldValue;
+  source: CurrentStudentSourceType;
+  confidence: CurrentStudentFieldConfidence;
+  raw_value: string | null;
+};
+
+export type CurrentStudentsConflictValue = {
+  source: CurrentStudentSourceType;
+  value: CurrentStudentFieldValue;
+  confidence: CurrentStudentFieldConfidence;
+  raw_value: string | null;
+  source_path: string | null;
+  row_index: number | null;
+  sheet_name: string | null;
+};
+
+export type CurrentStudentsFieldConflict = {
+  record_id: string;
+  full_name: string | null;
+  student_no: string | null;
+  citizen_id: string | null;
+  field_name: string;
+  field_label: string;
+  selected_value: CurrentStudentFieldValue;
+  selected_source: CurrentStudentSourceType | null;
+  selected_basis: string;
+  reason: string;
+  source_values: CurrentStudentsConflictValue[];
+};
+
+export type CurrentStudentSourceReference = {
+  source: CurrentStudentSourceType;
+  source_path: string;
+  row_index: number | null;
+  sheet_name: string | null;
+};
+
+export type CurrentStudentMatchSuggestion = {
+  student_no: string;
+  full_name: string;
+  grade: number;
+  room: number;
+  score: number;
+  source_path: string;
+  sheet_name: string;
+  row_index: number;
+};
+
+export type CurrentStudentRecord = {
+  record_id: string;
+  operation_type: CurrentStudentOperationType;
+  match_status: CurrentStudentMatchStatus;
+  student_no: string | null;
+  citizen_id: string | null;
+  grade: number | null;
+  room: number | null;
+  seat_no: number | null;
+  prefix: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  full_name: string | null;
+  match_score: number | null;
+  review_reasons: string[];
+  suggestions: CurrentStudentMatchSuggestion[];
+  dmc_fields: Record<string, CurrentStudentField>;
+  sources: CurrentStudentSourceReference[];
+};
+
+export type CurrentStudentsSummary = {
+  roster_records: number;
+  thai_id_scan_records: number;
+  ocr_form_records: number;
+  records_total: number;
+  auto_matched: number;
+  needs_review: number;
+  duplicate_records: number;
+  duplicate_scan_records: number;
+  invalid_id_records: number;
+  new_or_transfer_candidates: number;
+  roster_without_thai_id: number;
+  ocr_attached_records: number;
+  ocr_unmatched_records: number;
+  review_queue_records: number;
+  warnings_total: number;
+};
+
+export type CurrentStudentsReconciliationResponse = {
+  module: "currentStudents";
+  school_year: number;
+  grade_levels: number[] | null;
+  operation_type: CurrentStudentOperationType;
+  roster_excel_path: string;
+  thai_id_csv_path: string | null;
+  ocr_markdown_paths: string[];
+  summary: CurrentStudentsSummary;
+  records: CurrentStudentRecord[];
+  review_queue: CurrentStudentRecord[];
+  warnings: CurrentStudentsWarning[];
+};
+
+export type ExportCurrentStudentsBlankFormResponse = {
+  module: "currentStudents";
+  output_path: string;
+  field_count: number;
+  required_fields: string[];
+};
+
+export type ExportCurrentStudentsImportExcelResponse = {
+  module: "formConverter";
+  output_path: string;
+  school_year: number;
+  operation_type: CurrentStudentOperationType;
+  rows_exported: number;
+  summary: CurrentStudentsSummary;
+  warnings: CurrentStudentsWarning[];
+  conflicts: CurrentStudentsFieldConflict[];
+};
+
+export type DmcFormJsonRecord = {
+  record_id: string;
+  match_status: CurrentStudentMatchStatus;
+  student_no: string | null;
+  citizen_id: string | null;
+  grade: number | null;
+  room: number | null;
+  seat_no: number | null;
+  prefix: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  full_name: string | null;
+  match_score: number | null;
+  review_reasons: string[];
+  suggestions: CurrentStudentMatchSuggestion[];
+  sources: CurrentStudentSourceReference[];
+  fields: Record<string, CurrentStudentFieldValue>;
+  field_details: Record<string, CurrentStudentField>;
+};
+
+export type ExportDmcFormJsonResponse = {
+  module: "formConverter";
+  schema_version: "dmc_form_json.v1";
+  generated_at: string;
+  output_path: string;
+  school_year: number;
+  grade_levels: number[] | null;
+  records_exported: number;
+  field_labels: Record<string, string>;
+  summary: CurrentStudentsSummary;
+  warnings: CurrentStudentsWarning[];
+  conflicts: CurrentStudentsFieldConflict[];
+  records: DmcFormJsonRecord[];
+};
+
+export type CurrentStudentsImportRowStatus = "ready" | "needs_review" | "invalid";
+
+export type CurrentStudentsImportRowPreview = {
+  row_index: number;
+  status: CurrentStudentsImportRowStatus;
+  operation_type: string | null;
+  student_no: string | null;
+  citizen_id: string | null;
+  full_name: string;
+  issues: string[];
+};
+
+export type CurrentStudentsImportSummary = {
+  rows_total: number;
+  ready_rows: number;
+  needs_review_rows: number;
+  invalid_rows: number;
+  duplicate_citizen_ids: number;
+  warnings_total: number;
+};
+
+export type ValidateCurrentStudentsImportFormResponse = {
+  module: "currentStudents";
+  excel_path: string;
+  summary: CurrentStudentsImportSummary;
+  preview: CurrentStudentsImportRowPreview[];
+  warnings: CurrentStudentsWarning[];
 };
 
 export type EvidenceMappingStatus = "accepted" | "suggested" | "rejected" | "needs_review";
@@ -727,148 +844,6 @@ export function parseModuleCatalogResponse(value: unknown): ModuleCatalogRespons
   };
 }
 
-function parseFormPdfValidationWarning(value: unknown, index: number): FormPdfValidationWarning {
-  const record = asRecord(value, `form_pdf_warning[${index}]`);
-  return {
-    code: readString(record, "code", "form_pdf_warning"),
-    message_th: readString(record, "message_th", "form_pdf_warning"),
-  };
-}
-
-export function parseValidateFormPdfResponse(value: unknown): ValidateFormPdfResponse {
-  const record = asRecord(value, "validate_form_pdf_response");
-  const module = readString(record, "module", "validate_form_pdf_response");
-  if (module !== "formConverter") {
-    throw new Error("validate_form_pdf_response.module must be formConverter");
-  }
-  return {
-    module,
-    path: readString(record, "path", "validate_form_pdf_response"),
-    file_name: readString(record, "file_name", "validate_form_pdf_response"),
-    template_type: readString(record, "template_type", "validate_form_pdf_response"),
-    page_count: readNumber(record, "page_count", "validate_form_pdf_response"),
-    estimated_records: readNumber(record, "estimated_records", "validate_form_pdf_response"),
-    credit_estimate: readNumber(record, "credit_estimate", "validate_form_pdf_response"),
-    supported_template: readBoolean(record, "supported_template", "validate_form_pdf_response"),
-    requires_ai_consent: readBoolean(record, "requires_ai_consent", "validate_form_pdf_response"),
-    warnings: readArray(record, "warnings", "validate_form_pdf_response").map(parseFormPdfValidationWarning),
-  };
-}
-
-function parseFormConversionField(value: unknown, index: number): FormConversionField {
-  const record = asRecord(value, `form_conversion_field[${index}]`);
-  const status = readString(record, "status", "form_conversion_field");
-  if (status !== "ready" && status !== "needs_review" && status !== "invalid") {
-    throw new Error("form_conversion_field.status is invalid");
-  }
-  return {
-    field_name: readString(record, "field_name", "form_conversion_field"),
-    label_th: readString(record, "label_th", "form_conversion_field"),
-    value: readString(record, "value", "form_conversion_field"),
-    confidence: readNumber(record, "confidence", "form_conversion_field"),
-    status,
-    alternatives: readArray(record, "alternatives", "form_conversion_field").map((item, itemIndex) => {
-      if (typeof item !== "string") {
-        throw new Error(`form_conversion_field.alternatives[${itemIndex}] must be a string`);
-      }
-      return item;
-    }),
-    edited: readBoolean(record, "edited", "form_conversion_field"),
-  };
-}
-
-function parseFormConversionRecord(value: unknown, index: number): FormConversionRecord {
-  const record = asRecord(value, `form_conversion_record[${index}]`);
-  const status = readString(record, "status", "form_conversion_record");
-  if (status !== "ready" && status !== "needs_review" && status !== "invalid") {
-    throw new Error("form_conversion_record.status is invalid");
-  }
-  return {
-    record_id: readString(record, "record_id", "form_conversion_record"),
-    page_number: readNumber(record, "page_number", "form_conversion_record"),
-    status,
-    fields: readArray(record, "fields", "form_conversion_record").map(parseFormConversionField),
-  };
-}
-
-function parseFormConversionSummary(value: unknown): FormConversionSummary {
-  const record = asRecord(value, "form_conversion_summary");
-  return {
-    records_total: readNumber(record, "records_total", "form_conversion_summary"),
-    ready_records: readNumber(record, "ready_records", "form_conversion_summary"),
-    needs_review_records: readNumber(record, "needs_review_records", "form_conversion_summary"),
-    invalid_records: readNumber(record, "invalid_records", "form_conversion_summary"),
-    exported_records: readNumber(record, "exported_records", "form_conversion_summary"),
-  };
-}
-
-export function parseStartFormConversionResponse(value: unknown): StartFormConversionResponse {
-  const record = asRecord(value, "start_form_conversion_response");
-  return {
-    accepted: readBoolean(record, "accepted", "start_form_conversion_response"),
-    job_id: readString(record, "job_id", "start_form_conversion_response"),
-    credit_reservation_id: readOptionalString(record, "credit_reservation_id", "start_form_conversion_response"),
-    credits_reserved: readNumber(record, "credits_reserved", "start_form_conversion_response"),
-  };
-}
-
-export function parseFormConversionStatusResponse(value: unknown): FormConversionStatusResponse {
-  const record = asRecord(value, "form_conversion_status");
-  const module = readString(record, "module", "form_conversion_status");
-  if (module !== "formConverter") {
-    throw new Error("form_conversion_status.module must be formConverter");
-  }
-  const status = readString(record, "status", "form_conversion_status");
-  if (
-    status !== "pending" &&
-    status !== "processing" &&
-    status !== "needs_review" &&
-    status !== "reviewed" &&
-    status !== "done" &&
-    status !== "failed"
-  ) {
-    throw new Error("form_conversion_status.status is invalid");
-  }
-  return {
-    job_id: readString(record, "job_id", "form_conversion_status"),
-    module,
-    status,
-    pdf_path: readString(record, "pdf_path", "form_conversion_status"),
-    template_type: readString(record, "template_type", "form_conversion_status"),
-    ocr_provider: readOptionalString(record, "ocr_provider", "form_conversion_status"),
-    school_year: readOptionalString(record, "school_year", "form_conversion_status"),
-    page_count: readNumber(record, "page_count", "form_conversion_status"),
-    processed: readNumber(record, "processed", "form_conversion_status"),
-    total: readNumber(record, "total", "form_conversion_status"),
-    records: readArray(record, "records", "form_conversion_status").map(parseFormConversionRecord),
-    summary: parseFormConversionSummary(record.summary),
-    excel_path: readOptionalString(record, "excel_path", "form_conversion_status"),
-    report_path: readOptionalString(record, "report_path", "form_conversion_status"),
-    review_report_path: readOptionalString(record, "review_report_path", "form_conversion_status"),
-    credit_reservation_id: readOptionalString(record, "credit_reservation_id", "form_conversion_status"),
-    credits_reserved: readNumber(record, "credits_reserved", "form_conversion_status"),
-    credits_captured: readNumber(record, "credits_captured", "form_conversion_status"),
-    credits_refunded: readNumber(record, "credits_refunded", "form_conversion_status"),
-    credit_status: readOptionalString(record, "credit_status", "form_conversion_status"),
-    last_error: readOptionalString(record, "last_error", "form_conversion_status"),
-    review_confirmed: readBoolean(record, "review_confirmed", "form_conversion_status"),
-  };
-}
-
-export function parseExportFormExcelResponse(value: unknown): ExportFormExcelResponse {
-  const record = asRecord(value, "export_form_excel_response");
-  return {
-    job_id: readString(record, "job_id", "export_form_excel_response"),
-    excel_path: readString(record, "excel_path", "export_form_excel_response"),
-    report_path: readString(record, "report_path", "export_form_excel_response"),
-    review_report_path: readString(record, "review_report_path", "export_form_excel_response"),
-    exported_records: readNumber(record, "exported_records", "export_form_excel_response"),
-    credit_reservation_id: readOptionalString(record, "credit_reservation_id", "export_form_excel_response"),
-    credits_captured: readNumber(record, "credits_captured", "export_form_excel_response"),
-    credits_refunded: readNumber(record, "credits_refunded", "export_form_excel_response"),
-  };
-}
-
 function parseStudentBasicInfoClassSummary(value: unknown, index: number): StudentBasicInfoClassSummary {
   const record = asRecord(value, `student_basic_info_class[${index}]`);
   return {
@@ -897,6 +872,399 @@ export function parseExportStudentBasicInfoFormResponse(value: unknown): ExportS
     classes_exported: readNumber(record, "classes_exported", "export_student_basic_info_form_response"),
     classes: readArray(record, "classes", "export_student_basic_info_form_response").map(
       parseStudentBasicInfoClassSummary,
+    ),
+  };
+}
+
+function parseCurrentStudentSourceType(value: string, context: string): CurrentStudentSourceType {
+  if (value !== "roster" && value !== "thai_id_scan" && value !== "ocr_form" && value !== "manual") {
+    throw new Error(`${context}.source is invalid`);
+  }
+  return value;
+}
+
+function parseCurrentStudentFieldConfidence(value: string, context: string): CurrentStudentFieldConfidence {
+  if (value !== "authoritative" && value !== "high" && value !== "review" && value !== "missing") {
+    throw new Error(`${context}.confidence is invalid`);
+  }
+  return value;
+}
+
+function parseCurrentStudentOperationType(value: string, context: string): CurrentStudentOperationType {
+  if (value !== "current" && value !== "transfer_in" && value !== "add_new") {
+    throw new Error(`${context}.operation_type is invalid`);
+  }
+  return value;
+}
+
+function parseCurrentStudentMatchStatus(value: string, context: string): CurrentStudentMatchStatus {
+  if (
+    value !== "auto_matched" &&
+    value !== "needs_review" &&
+    value !== "duplicate" &&
+    value !== "invalid_id" &&
+    value !== "new_or_transfer_candidate"
+  ) {
+    throw new Error(`${context}.match_status is invalid`);
+  }
+  return value;
+}
+
+function parseCurrentStudentFieldValue(value: unknown, context: string): string | number | boolean | null {
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  throw new Error(`${context}.value must be a string, number, boolean, or null`);
+}
+
+function parseCurrentStudentsWarning(value: unknown, index: number): CurrentStudentsWarning {
+  const context = `current_students_warning[${index}]`;
+  const record = asRecord(value, context);
+  const source = readOptionalString(record, "source", context);
+  return {
+    code: readString(record, "code", context),
+    message: readString(record, "message", context),
+    source: source ? parseCurrentStudentSourceType(source, context) : null,
+    source_path: readOptionalString(record, "source_path", context),
+    row_index: readOptionalNumber(record, "row_index", context),
+    sheet_name: readOptionalString(record, "sheet_name", context),
+  };
+}
+
+function parseCurrentStudentField(value: unknown, context = "current_student_field"): CurrentStudentField {
+  const record = asRecord(value, context);
+  return {
+    value: parseCurrentStudentFieldValue(record.value, context),
+    source: parseCurrentStudentSourceType(readString(record, "source", context), context),
+    confidence: parseCurrentStudentFieldConfidence(readString(record, "confidence", context), context),
+    raw_value: readOptionalString(record, "raw_value", context),
+  };
+}
+
+function parseCurrentStudentsConflictValue(value: unknown, index: number): CurrentStudentsConflictValue {
+  const context = `current_students_conflict_value[${index}]`;
+  const record = asRecord(value, context);
+  return {
+    source: parseCurrentStudentSourceType(readString(record, "source", context), context),
+    value: parseCurrentStudentFieldValue(record.value, context),
+    confidence: parseCurrentStudentFieldConfidence(readString(record, "confidence", context), context),
+    raw_value: readOptionalString(record, "raw_value", context),
+    source_path: readOptionalString(record, "source_path", context),
+    row_index: readOptionalNumber(record, "row_index", context),
+    sheet_name: readOptionalString(record, "sheet_name", context),
+  };
+}
+
+function parseCurrentStudentsFieldConflict(value: unknown, index: number): CurrentStudentsFieldConflict {
+  const context = `current_students_field_conflict[${index}]`;
+  const record = asRecord(value, context);
+  const selectedSource = readOptionalString(record, "selected_source", context);
+  return {
+    record_id: readString(record, "record_id", context),
+    full_name: readOptionalString(record, "full_name", context),
+    student_no: readOptionalString(record, "student_no", context),
+    citizen_id: readOptionalString(record, "citizen_id", context),
+    field_name: readString(record, "field_name", context),
+    field_label: readString(record, "field_label", context),
+    selected_value: parseCurrentStudentFieldValue(record.selected_value, context),
+    selected_source: selectedSource ? parseCurrentStudentSourceType(selectedSource, context) : null,
+    selected_basis: readString(record, "selected_basis", context),
+    reason: readString(record, "reason", context),
+    source_values: readArray(record, "source_values", context).map(parseCurrentStudentsConflictValue),
+  };
+}
+
+function parseCurrentStudentDmcFields(value: unknown, context: string): Record<string, CurrentStudentField> {
+  const record = asRecord(value, context);
+  return Object.fromEntries(
+    Object.entries(record).map(([key, fieldValue]) => [key, parseCurrentStudentField(fieldValue, `${context}.${key}`)]),
+  );
+}
+
+function parseCurrentStudentFieldValueMap(value: unknown, context: string): Record<string, CurrentStudentFieldValue> {
+  const record = asRecord(value, context);
+  return Object.fromEntries(
+    Object.entries(record).map(([key, fieldValue]) => [
+      key,
+      parseCurrentStudentFieldValue(fieldValue, `${context}.${key}`),
+    ]),
+  );
+}
+
+function parseStringMap(value: unknown, context: string): Record<string, string> {
+  const record = asRecord(value, context);
+  return Object.fromEntries(
+    Object.entries(record).map(([key, fieldValue]) => {
+      if (typeof fieldValue !== "string") {
+        throw new Error(`${context}.${key} must be a string`);
+      }
+      return [key, fieldValue];
+    }),
+  );
+}
+
+function parseCurrentStudentSourceReference(value: unknown, index: number): CurrentStudentSourceReference {
+  const context = `current_student_source[${index}]`;
+  const record = asRecord(value, context);
+  return {
+    source: parseCurrentStudentSourceType(readString(record, "source", context), context),
+    source_path: readString(record, "source_path", context),
+    row_index: readOptionalNumber(record, "row_index", context),
+    sheet_name: readOptionalString(record, "sheet_name", context),
+  };
+}
+
+function parseCurrentStudentMatchSuggestion(value: unknown, index: number): CurrentStudentMatchSuggestion {
+  const context = `current_student_suggestion[${index}]`;
+  const record = asRecord(value, context);
+  return {
+    student_no: readString(record, "student_no", context),
+    full_name: readString(record, "full_name", context),
+    grade: readNumber(record, "grade", context),
+    room: readNumber(record, "room", context),
+    score: readNumber(record, "score", context),
+    source_path: readString(record, "source_path", context),
+    sheet_name: readString(record, "sheet_name", context),
+    row_index: readNumber(record, "row_index", context),
+  };
+}
+
+function parseCurrentStudentRecord(value: unknown, index: number): CurrentStudentRecord {
+  const context = `current_student_record[${index}]`;
+  const record = asRecord(value, context);
+  const operationType = parseCurrentStudentOperationType(readString(record, "operation_type", context), context);
+  const matchStatus = parseCurrentStudentMatchStatus(readString(record, "match_status", context), context);
+  return {
+    record_id: readString(record, "record_id", context),
+    operation_type: operationType,
+    match_status: matchStatus,
+    student_no: readOptionalString(record, "student_no", context),
+    citizen_id: readOptionalString(record, "citizen_id", context),
+    grade: readOptionalNumber(record, "grade", context),
+    room: readOptionalNumber(record, "room", context),
+    seat_no: readOptionalNumber(record, "seat_no", context),
+    prefix: readOptionalString(record, "prefix", context),
+    first_name: readOptionalString(record, "first_name", context),
+    last_name: readOptionalString(record, "last_name", context),
+    full_name: readOptionalString(record, "full_name", context),
+    match_score: readOptionalNumber(record, "match_score", context),
+    review_reasons: readStringArray(record, "review_reasons", context),
+    suggestions: readArray(record, "suggestions", context).map(parseCurrentStudentMatchSuggestion),
+    dmc_fields: parseCurrentStudentDmcFields(record.dmc_fields, `${context}.dmc_fields`),
+    sources: readArray(record, "sources", context).map(parseCurrentStudentSourceReference),
+  };
+}
+
+function parseDmcFormJsonRecord(value: unknown, index: number): DmcFormJsonRecord {
+  const context = `dmc_form_json_record[${index}]`;
+  const record = asRecord(value, context);
+  return {
+    record_id: readString(record, "record_id", context),
+    match_status: parseCurrentStudentMatchStatus(readString(record, "match_status", context), context),
+    student_no: readOptionalString(record, "student_no", context),
+    citizen_id: readOptionalString(record, "citizen_id", context),
+    grade: readOptionalNumber(record, "grade", context),
+    room: readOptionalNumber(record, "room", context),
+    seat_no: readOptionalNumber(record, "seat_no", context),
+    prefix: readOptionalString(record, "prefix", context),
+    first_name: readOptionalString(record, "first_name", context),
+    last_name: readOptionalString(record, "last_name", context),
+    full_name: readOptionalString(record, "full_name", context),
+    match_score: readOptionalNumber(record, "match_score", context),
+    review_reasons: readStringArray(record, "review_reasons", context),
+    suggestions: readArray(record, "suggestions", context).map(parseCurrentStudentMatchSuggestion),
+    sources: readArray(record, "sources", context).map(parseCurrentStudentSourceReference),
+    fields: parseCurrentStudentFieldValueMap(record.fields, `${context}.fields`),
+    field_details: parseCurrentStudentDmcFields(record.field_details, `${context}.field_details`),
+  };
+}
+
+function parseCurrentStudentsSummary(value: unknown): CurrentStudentsSummary {
+  const record = asRecord(value, "current_students_summary");
+  return {
+    roster_records: readNumber(record, "roster_records", "current_students_summary"),
+    thai_id_scan_records: readNumber(record, "thai_id_scan_records", "current_students_summary"),
+    ocr_form_records: readNumber(record, "ocr_form_records", "current_students_summary"),
+    records_total: readNumber(record, "records_total", "current_students_summary"),
+    auto_matched: readNumber(record, "auto_matched", "current_students_summary"),
+    needs_review: readNumber(record, "needs_review", "current_students_summary"),
+    duplicate_records: readNumber(record, "duplicate_records", "current_students_summary"),
+    duplicate_scan_records: readNumber(record, "duplicate_scan_records", "current_students_summary"),
+    invalid_id_records: readNumber(record, "invalid_id_records", "current_students_summary"),
+    new_or_transfer_candidates: readNumber(record, "new_or_transfer_candidates", "current_students_summary"),
+    roster_without_thai_id: readNumber(record, "roster_without_thai_id", "current_students_summary"),
+    ocr_attached_records: readNumber(record, "ocr_attached_records", "current_students_summary"),
+    ocr_unmatched_records: readNumber(record, "ocr_unmatched_records", "current_students_summary"),
+    review_queue_records: readNumber(record, "review_queue_records", "current_students_summary"),
+    warnings_total: readNumber(record, "warnings_total", "current_students_summary"),
+  };
+}
+
+export function parseCurrentStudentsReconciliationResponse(value: unknown): CurrentStudentsReconciliationResponse {
+  const record = asRecord(value, "current_students_reconciliation_response");
+  const module = readString(record, "module", "current_students_reconciliation_response");
+  if (module !== "currentStudents") {
+    throw new Error("current_students_reconciliation_response.module must be currentStudents");
+  }
+  const gradeLevelsValue = record.grade_levels;
+  const gradeLevels =
+    gradeLevelsValue === null || gradeLevelsValue === undefined
+      ? null
+      : readArray(record, "grade_levels", "current_students_reconciliation_response").map((item, index) => {
+          if (typeof item !== "number" || Number.isNaN(item)) {
+            throw new Error(`current_students_reconciliation_response.grade_levels[${index}] must be a number`);
+          }
+          return item;
+        });
+  return {
+    module,
+    school_year: readNumber(record, "school_year", "current_students_reconciliation_response"),
+    grade_levels: gradeLevels,
+    operation_type: parseCurrentStudentOperationType(
+      readString(record, "operation_type", "current_students_reconciliation_response"),
+      "current_students_reconciliation_response",
+    ),
+    roster_excel_path: readString(record, "roster_excel_path", "current_students_reconciliation_response"),
+    thai_id_csv_path: readOptionalString(record, "thai_id_csv_path", "current_students_reconciliation_response"),
+    ocr_markdown_paths: readStringArray(record, "ocr_markdown_paths", "current_students_reconciliation_response"),
+    summary: parseCurrentStudentsSummary(record.summary),
+    records: readArray(record, "records", "current_students_reconciliation_response").map(parseCurrentStudentRecord),
+    review_queue: readArray(record, "review_queue", "current_students_reconciliation_response").map(
+      parseCurrentStudentRecord,
+    ),
+    warnings: readArray(record, "warnings", "current_students_reconciliation_response").map(
+      parseCurrentStudentsWarning,
+    ),
+  };
+}
+
+export function parseExportCurrentStudentsBlankFormResponse(value: unknown): ExportCurrentStudentsBlankFormResponse {
+  const record = asRecord(value, "export_current_students_blank_form_response");
+  const module = readString(record, "module", "export_current_students_blank_form_response");
+  if (module !== "currentStudents") {
+    throw new Error("export_current_students_blank_form_response.module must be currentStudents");
+  }
+  return {
+    module,
+    output_path: readString(record, "output_path", "export_current_students_blank_form_response"),
+    field_count: readNumber(record, "field_count", "export_current_students_blank_form_response"),
+    required_fields: readStringArray(record, "required_fields", "export_current_students_blank_form_response"),
+  };
+}
+
+export function parseExportDmcFormJsonResponse(value: unknown): ExportDmcFormJsonResponse {
+  const record = asRecord(value, "export_dmc_form_json_response");
+  const module = readString(record, "module", "export_dmc_form_json_response");
+  if (module !== "formConverter") {
+    throw new Error("export_dmc_form_json_response.module must be formConverter");
+  }
+  const schemaVersion = readString(record, "schema_version", "export_dmc_form_json_response");
+  if (schemaVersion !== "dmc_form_json.v1") {
+    throw new Error("export_dmc_form_json_response.schema_version must be dmc_form_json.v1");
+  }
+  const gradeLevelsValue = record.grade_levels;
+  const gradeLevels =
+    gradeLevelsValue === null || gradeLevelsValue === undefined
+      ? null
+      : readArray(record, "grade_levels", "export_dmc_form_json_response").map((item, index) => {
+          if (typeof item !== "number" || Number.isNaN(item)) {
+            throw new Error(`export_dmc_form_json_response.grade_levels[${index}] must be a number`);
+          }
+          return item;
+        });
+  return {
+    module,
+    schema_version: schemaVersion,
+    generated_at: readString(record, "generated_at", "export_dmc_form_json_response"),
+    output_path: readString(record, "output_path", "export_dmc_form_json_response"),
+    school_year: readNumber(record, "school_year", "export_dmc_form_json_response"),
+    grade_levels: gradeLevels,
+    records_exported: readNumber(record, "records_exported", "export_dmc_form_json_response"),
+    field_labels: parseStringMap(record.field_labels, "export_dmc_form_json_response.field_labels"),
+    summary: parseCurrentStudentsSummary(record.summary),
+    warnings: readArray(record, "warnings", "export_dmc_form_json_response").map(parseCurrentStudentsWarning),
+    conflicts: readArray(record, "conflicts", "export_dmc_form_json_response").map(parseCurrentStudentsFieldConflict),
+    records: readArray(record, "records", "export_dmc_form_json_response").map(parseDmcFormJsonRecord),
+  };
+}
+
+export function parseExportCurrentStudentsImportExcelResponse(
+  value: unknown,
+): ExportCurrentStudentsImportExcelResponse {
+  const record = asRecord(value, "export_current_students_import_excel_response");
+  const module = readString(record, "module", "export_current_students_import_excel_response");
+  if (module !== "formConverter") {
+    throw new Error("export_current_students_import_excel_response.module must be formConverter");
+  }
+  return {
+    module,
+    output_path: readString(record, "output_path", "export_current_students_import_excel_response"),
+    school_year: readNumber(record, "school_year", "export_current_students_import_excel_response"),
+    operation_type: parseCurrentStudentOperationType(
+      readString(record, "operation_type", "export_current_students_import_excel_response"),
+      "export_current_students_import_excel_response",
+    ),
+    rows_exported: readNumber(record, "rows_exported", "export_current_students_import_excel_response"),
+    summary: parseCurrentStudentsSummary(record.summary),
+    warnings: readArray(record, "warnings", "export_current_students_import_excel_response").map(
+      parseCurrentStudentsWarning,
+    ),
+    conflicts: readArray(record, "conflicts", "export_current_students_import_excel_response").map(
+      parseCurrentStudentsFieldConflict,
+    ),
+  };
+}
+
+function parseCurrentStudentsImportRowStatus(value: string, context: string): CurrentStudentsImportRowStatus {
+  if (value !== "ready" && value !== "needs_review" && value !== "invalid") {
+    throw new Error(`${context}.status is invalid`);
+  }
+  return value;
+}
+
+function parseCurrentStudentsImportRowPreview(value: unknown, index: number): CurrentStudentsImportRowPreview {
+  const context = `current_students_import_row[${index}]`;
+  const record = asRecord(value, context);
+  return {
+    row_index: readNumber(record, "row_index", context),
+    status: parseCurrentStudentsImportRowStatus(readString(record, "status", context), context),
+    operation_type: readOptionalString(record, "operation_type", context),
+    student_no: readOptionalString(record, "student_no", context),
+    citizen_id: readOptionalString(record, "citizen_id", context),
+    full_name: readString(record, "full_name", context),
+    issues: readStringArray(record, "issues", context),
+  };
+}
+
+function parseCurrentStudentsImportSummary(value: unknown): CurrentStudentsImportSummary {
+  const record = asRecord(value, "current_students_import_summary");
+  return {
+    rows_total: readNumber(record, "rows_total", "current_students_import_summary"),
+    ready_rows: readNumber(record, "ready_rows", "current_students_import_summary"),
+    needs_review_rows: readNumber(record, "needs_review_rows", "current_students_import_summary"),
+    invalid_rows: readNumber(record, "invalid_rows", "current_students_import_summary"),
+    duplicate_citizen_ids: readNumber(record, "duplicate_citizen_ids", "current_students_import_summary"),
+    warnings_total: readNumber(record, "warnings_total", "current_students_import_summary"),
+  };
+}
+
+export function parseValidateCurrentStudentsImportFormResponse(
+  value: unknown,
+): ValidateCurrentStudentsImportFormResponse {
+  const record = asRecord(value, "validate_current_students_import_form_response");
+  const module = readString(record, "module", "validate_current_students_import_form_response");
+  if (module !== "currentStudents") {
+    throw new Error("validate_current_students_import_form_response.module must be currentStudents");
+  }
+  return {
+    module,
+    excel_path: readString(record, "excel_path", "validate_current_students_import_form_response"),
+    summary: parseCurrentStudentsImportSummary(record.summary),
+    preview: readArray(record, "preview", "validate_current_students_import_form_response").map(
+      parseCurrentStudentsImportRowPreview,
+    ),
+    warnings: readArray(record, "warnings", "validate_current_students_import_form_response").map(
+      parseCurrentStudentsWarning,
     ),
   };
 }

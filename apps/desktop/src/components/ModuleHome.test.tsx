@@ -101,11 +101,11 @@ describe("ModuleHome", () => {
     expect(screen.getByText(messages.app.home.modules.psar.title)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.currentStudents.title)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.graduation.title)).toBeInTheDocument();
-    expect(screen.getAllByText(/ใช้เครดิต 1\/รายการ/)).toHaveLength(3);
+    expect(screen.getAllByText(/ใช้เครดิต 1\/รายการ/)).toHaveLength(2);
     expect(screen.queryByText("License Activation")).not.toBeInTheDocument();
   });
 
-  it("opens ready and skeleton modules instead of disabling them", () => {
+  it("opens currentStudents from the ready module list", () => {
     const onOpenModule = vi.fn();
     renderHome(onOpenModule);
 
@@ -113,7 +113,7 @@ describe("ModuleHome", () => {
 
     expect(onOpenModule).toHaveBeenCalledWith("formConverter");
 
-    fireEvent.click(screen.getAllByRole("button", { name: messages.app.home.openSkeleton })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: messages.app.home.openModule })[3]);
 
     expect(onOpenModule).toHaveBeenCalledWith("currentStudents");
   });
