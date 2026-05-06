@@ -10,11 +10,13 @@ from dmc_sidecar.current_students import (
     ExportDmcFormJsonRequest,
     ExportCurrentStudentsBlankFormRequest,
     ExportCurrentStudentsImportExcelRequest,
+    PreviewDmcFormJsonRequest,
     ReconcileCurrentStudentsRequest,
     ValidateCurrentStudentsImportFormRequest,
     export_dmc_form_json,
     export_current_students_blank_form,
     export_current_students_import_excel,
+    preview_dmc_form_json,
     reconcile_current_students,
     validate_current_students_import_form,
 )
@@ -296,6 +298,51 @@ def test_export_dmc_form_json_writes_operation_neutral_json(tmp_path: Path) -> N
     assert "operation_type" not in payload
     assert "operation_type" not in payload["records"][0]
     assert "operation_type" not in payload["records"][0]["fields"]
+
+
+def test_preview_dmc_form_json_reports_missing_required_data_read_only(tmp_path: Path) -> None:
+    roster_path = tmp_path / "studentListM1-M4 2569.xlsx"
+    thai_id_path = tmp_path / "ThaiID M1-2569.CSV"
+    ocr_path = tmp_path / "1-3ex.md"
+    output_path = tmp_path / "dmc-form-data-2569.json"
+    _write_roster(roster_path)
+    _write_thai_id_csv(thai_id_path)
+    _write_ocr_markdown(ocr_path)
+
+    preview = preview_dmc_form_json(
+        PreviewDmcFormJsonRequest(
+            roster_excel_path=str(roster_path),
+            thai_id_csv_path=str(thai_id_path),
+            ocr_markdown_paths=[str(ocr_path)],
+            school_year=2569,
+            grade_levels=[1],
+        )
+    )
+
+    assert preview.records_previewed == 1
+    assert preview.records[0].fields["citizen_id"] == "1819900905157"
+    assert {"mother.first_name", "mother.last_name"}.issubset(
+        {conflict.field_name for conflict in preview.conflicts}
+    )
+    assert "operation_type" not in preview.records[0].fields
+
+    result = export_dmc_form_json(
+        ExportDmcFormJsonRequest(
+            roster_excel_path=str(roster_path),
+            thai_id_csv_path=str(thai_id_path),
+            ocr_markdown_paths=[str(ocr_path)],
+            school_year=2569,
+            grade_levels=[1],
+            output_path=str(output_path),
+        )
+    )
+
+    assert {"mother.first_name", "mother.last_name"}.issubset(
+        {conflict.field_name for conflict in result.conflicts}
+    )
+    assert result.records[0].fields["mother.first_name"] is None
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["records"][0]["fields"]["mother.last_name"] is None
 
 
 UPLOAD_TEST_DIR = Path(__file__).parents[3] / "uploadTest"

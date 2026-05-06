@@ -10,6 +10,7 @@ import type {
   ExportDmcFormJsonResponse,
   ExportCurrentStudentsBlankFormResponse,
   ExportCurrentStudentsImportExcelResponse,
+  PreviewDmcFormJsonResponse,
   CurrentStudentsReconciliationResponse,
   DatabaseStatus,
   JobStatusSnapshot,
@@ -39,6 +40,7 @@ import {
   parseExportDmcFormJsonResponse,
   parseExportCurrentStudentsBlankFormResponse,
   parseExportCurrentStudentsImportExcelResponse,
+  parsePreviewDmcFormJsonResponse,
   parseCurrentStudentsReconciliationResponse,
   parseDatabaseStatus,
   parseExportStudentBasicInfoFormResponse,
@@ -226,6 +228,23 @@ export async function exportCurrentStudentImportExcel(input: {
     output_path: input.outputPath,
   });
   return parseExportCurrentStudentsImportExcelResponse(result);
+}
+
+export async function previewDmcFormJson(input: {
+  rosterExcelPath: string;
+  thaiIdCsvPath: string | null;
+  ocrMarkdownPaths: string[];
+  schoolYear: number;
+  gradeLevels: number[] | null;
+}): Promise<PreviewDmcFormJsonResponse> {
+  const result = await sidecarRequest<unknown>("preview_dmc_form_json", {
+    roster_excel_path: input.rosterExcelPath,
+    thai_id_csv_path: input.thaiIdCsvPath,
+    ocr_markdown_paths: input.ocrMarkdownPaths,
+    school_year: input.schoolYear,
+    grade_levels: input.gradeLevels,
+  });
+  return parsePreviewDmcFormJsonResponse(result);
 }
 
 export async function exportDmcFormJson(input: {

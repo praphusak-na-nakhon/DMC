@@ -415,6 +415,32 @@ class DmcFormJsonRecord(BaseModel):
     field_details: dict[str, CurrentStudentField]
 
 
+class PreviewDmcFormJsonRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    roster_excel_path: str
+    thai_id_csv_path: str | None = None
+    ocr_markdown_paths: list[str] = Field(default_factory=list)
+    school_year: int
+    grade_levels: list[int] | None = None
+
+
+class PreviewDmcFormJsonResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    module: Literal["formConverter"]
+    schema_version: Literal["dmc_form_json.v1"]
+    generated_at: str
+    school_year: int
+    grade_levels: list[int] | None
+    records_previewed: int
+    field_labels: dict[str, str]
+    summary: CurrentStudentsSummary
+    warnings: list[CurrentStudentsWarning]
+    conflicts: list[CurrentStudentsFieldConflict]
+    records: list[DmcFormJsonRecord]
+
+
 class ExportDmcFormJsonRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -594,28 +620,37 @@ def export_current_students_import_excel(
     )
 
 
-def export_dmc_form_json(request: ExportDmcFormJsonRequest) -> ExportDmcFormJsonResponse:
-    if not request.ocr_markdown_paths:
-        raise DomainError(
-            "CURRENT_STUDENTS_OCR_REQUIRED",
-            "At least one OCR markdown form is required for DMC form conversion export.",
-        )
-    reconciliation = reconcile_current_students(
-        ReconcileCurrentStudentsRequest(
-            roster_excel_path=request.roster_excel_path,
-            thai_id_csv_path=request.thai_id_csv_path,
-            ocr_markdown_paths=request.ocr_markdown_paths,
-            school_year=request.school_year,
-            grade_levels=request.grade_levels,
-            operation_type="current",
-        )
+def preview_dmc_form_json(request: PreviewDmcFormJsonRequest) -> PreviewDmcFormJsonResponse:
+    payload = _build_dmc_form_json_payload(
+        roster_excel_path=request.roster_excel_path,
+        thai_id_csv_path=request.thai_id_csv_path,
+        ocr_markdown_paths=request.ocr_markdown_paths,
+        school_year=request.school_year,
+        grade_levels=request.grade_levels,
     )
-    export_records = [record for record in reconciliation.records if _has_source(record, "ocr_form")]
-    if not export_records:
-        raise DomainError(
-            "CURRENT_STUDENTS_OCR_NO_RECORDS",
-            "No OCR markdown student records were found for DMC form conversion export.",
-        )
+    return PreviewDmcFormJsonResponse(
+        module="formConverter",
+        schema_version="dmc_form_json.v1",
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        school_year=request.school_year,
+        grade_levels=request.grade_levels,
+        records_previewed=len(payload.records),
+        field_labels=payload.field_labels,
+        summary=payload.summary,
+        warnings=payload.warnings,
+        conflicts=payload.conflicts,
+        records=payload.records,
+    )
+
+
+def export_dmc_form_json(request: ExportDmcFormJsonRequest) -> ExportDmcFormJsonResponse:
+    payload = _build_dmc_form_json_payload(
+        roster_excel_path=request.roster_excel_path,
+        thai_id_csv_path=request.thai_id_csv_path,
+        ocr_markdown_paths=request.ocr_markdown_paths,
+        school_year=request.school_year,
+        grade_levels=request.grade_levels,
+    )
     output_path = Path(request.output_path) if request.output_path else _default_form_json_output_path(request.school_year)
     if output_path.suffix.lower() != ".json":
         raise DomainError("DMC_FORM_JSON_EXPORT_UNSUPPORTED_TYPE", "DMC form conversion output file must be .json.")
@@ -627,15 +662,12 @@ def export_dmc_form_json(request: ExportDmcFormJsonRequest) -> ExportDmcFormJson
         output_path=str(output_path),
         school_year=request.school_year,
         grade_levels=request.grade_levels,
-        records_exported=len(export_records),
-        field_labels={field_name: IMPORT_FIELD_LABELS[field_name] for field_name in FORM_JSON_FIELD_NAMES},
-        summary=_export_summary(reconciliation.summary, export_records, warnings=reconciliation.warnings),
-        warnings=reconciliation.warnings,
-        conflicts=_export_missing_blockers(export_records, default_school_year=request.school_year),
-        records=[
-            _json_record(record, default_school_year=request.school_year)
-            for record in export_records
-        ],
+        records_exported=len(payload.records),
+        field_labels=payload.field_labels,
+        summary=payload.summary,
+        warnings=payload.warnings,
+        conflicts=payload.conflicts,
+        records=payload.records,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
@@ -643,6 +675,55 @@ def export_dmc_form_json(request: ExportDmcFormJsonRequest) -> ExportDmcFormJson
         encoding="utf-8",
     )
     return response
+
+
+class _DmcFormJsonPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field_labels: dict[str, str]
+    summary: CurrentStudentsSummary
+    warnings: list[CurrentStudentsWarning]
+    conflicts: list[CurrentStudentsFieldConflict]
+    records: list[DmcFormJsonRecord]
+
+
+def _build_dmc_form_json_payload(
+    *,
+    roster_excel_path: str,
+    thai_id_csv_path: str | None,
+    ocr_markdown_paths: list[str],
+    school_year: int,
+    grade_levels: list[int] | None,
+) -> _DmcFormJsonPayload:
+    if not ocr_markdown_paths:
+        raise DomainError(
+            "CURRENT_STUDENTS_OCR_REQUIRED",
+            "At least one OCR markdown form is required for DMC form conversion export.",
+        )
+    reconciliation = reconcile_current_students(
+        ReconcileCurrentStudentsRequest(
+            roster_excel_path=roster_excel_path,
+            thai_id_csv_path=thai_id_csv_path,
+            ocr_markdown_paths=ocr_markdown_paths,
+            school_year=school_year,
+            grade_levels=grade_levels,
+            operation_type="current",
+        )
+    )
+    export_records = [record for record in reconciliation.records if _has_source(record, "ocr_form")]
+    if not export_records:
+        raise DomainError(
+            "CURRENT_STUDENTS_OCR_NO_RECORDS",
+            "No OCR markdown student records were found for DMC form conversion export.",
+        )
+
+    return _DmcFormJsonPayload(
+        field_labels={field_name: IMPORT_FIELD_LABELS[field_name] for field_name in FORM_JSON_FIELD_NAMES},
+        summary=_export_summary(reconciliation.summary, export_records, warnings=reconciliation.warnings),
+        warnings=reconciliation.warnings,
+        conflicts=_export_missing_blockers(export_records, default_school_year=school_year),
+        records=[_json_record(record, default_school_year=school_year) for record in export_records],
+    )
 
 
 def validate_current_students_import_form(

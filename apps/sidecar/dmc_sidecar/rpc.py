@@ -29,11 +29,13 @@ from .current_students import (
     ExportDmcFormJsonRequest,
     ExportCurrentStudentsBlankFormRequest,
     ExportCurrentStudentsImportExcelRequest,
+    PreviewDmcFormJsonRequest,
     ReconcileCurrentStudentsRequest,
     ValidateCurrentStudentsImportFormRequest,
     export_dmc_form_json,
     export_current_students_blank_form,
     export_current_students_import_excel,
+    preview_dmc_form_json,
     reconcile_current_students,
     validate_current_students_import_form,
 )
@@ -128,6 +130,11 @@ class RpcServer:
             if request.method == "export_current_student_import_excel":
                 current_students_export_params = ExportCurrentStudentsImportExcelRequest.model_validate(request.params)
                 result = export_current_students_import_excel(current_students_export_params).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "preview_dmc_form_json":
+                form_json_preview_params = PreviewDmcFormJsonRequest.model_validate(request.params)
+                result = preview_dmc_form_json(form_json_preview_params).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "export_dmc_form_json":

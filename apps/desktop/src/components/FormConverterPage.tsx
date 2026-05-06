@@ -5,10 +5,13 @@ import {
   openCsvDialog,
   openExcelDialog,
   openMarkdownDialog,
+  previewDmcFormJson,
 } from "../lib/rpcClient";
 import type {
+  DmcFormJsonRecord,
   CurrentStudentsFieldConflict,
   ExportDmcFormJsonResponse,
+  PreviewDmcFormJsonResponse,
 } from "../types/contracts";
 import { Alert, AlertDescription } from "./ui/alert";
 import { Badge } from "./ui/badge";
@@ -33,16 +36,98 @@ const errorMessages: Record<string, string> = {
   CURRENT_STUDENTS_OCR_NO_RECORDS: "ไม่พบข้อมูลนักเรียนจากไฟล์ OCR markdown ที่เลือก",
 };
 
+type PreviewColumn = {
+  fieldName: string;
+  label: string;
+  groupLabel: string;
+};
+
+type PreviewColumnDefinition = {
+  fieldName: string;
+  label: string;
+  required?: boolean;
+};
+
+type PreviewColumnGroupDefinition = {
+  label: string;
+  columns: PreviewColumnDefinition[];
+};
+
+type PreviewColumnGroup = {
+  label: string;
+  colSpan: number;
+};
+
+const priorityPreviewColumnGroups: PreviewColumnGroupDefinition[] = [
+  {
+    label: "ข้อมูลนักเรียน",
+    columns: [
+      { fieldName: "student_no", label: "เลขประจำตัวนักเรียน", required: true },
+      { fieldName: "citizen_id", label: "เลขประจำตัวประชาชน", required: true },
+      { fieldName: "grade", label: "ชั้น", required: true },
+      { fieldName: "room", label: "ห้อง", required: true },
+      { fieldName: "seat_no", label: "เลขที่", required: true },
+      { fieldName: "sex", label: "เพศ", required: true },
+      { fieldName: "prefix", label: "คำนำหน้าชื่อ", required: true },
+      { fieldName: "first_name", label: "ชื่อ", required: true },
+      { fieldName: "last_name", label: "นามสกุล", required: true },
+      { fieldName: "birth_date", label: "วันเกิด", required: true },
+      { fieldName: "birth_province", label: "จังหวัดที่เกิด", required: true },
+      { fieldName: "weight_kg", label: "น้ำหนัก", required: true },
+      { fieldName: "height_cm", label: "ส่วนสูง", required: true },
+      { fieldName: "religion", label: "ศาสนา", required: true },
+      { fieldName: "race", label: "เชื้อชาติ", required: true },
+      { fieldName: "nationality", label: "สัญชาติ", required: true },
+    ],
+  },
+  {
+    label: "ที่อยู่ตามทะเบียนบ้าน",
+    columns: [
+      { fieldName: "registered_address.house_id", label: "รหัสประจำบ้าน", required: true },
+      { fieldName: "registered_address.house_no", label: "บ้านเลขที่", required: true },
+      { fieldName: "registered_address.subdistrict", label: "ตำบล", required: true },
+      { fieldName: "registered_address.district", label: "อำเภอ", required: true },
+      { fieldName: "registered_address.province", label: "จังหวัด", required: true },
+      { fieldName: "registered_address.postal_code", label: "รหัสไปรษณีย์", required: true },
+    ],
+  },
+  {
+    label: "ข้อมูลบิดา",
+    columns: [
+      { fieldName: "father.first_name", label: "ชื่อบิดา", required: true },
+      { fieldName: "father.last_name", label: "นามสกุลบิดา", required: true },
+    ],
+  },
+  {
+    label: "ข้อมูลมารดา",
+    columns: [
+      { fieldName: "mother.first_name", label: "ชื่อมารดา", required: true },
+      { fieldName: "mother.last_name", label: "นามสกุลมารดา", required: true },
+    ],
+  },
+  {
+    label: "ข้อมูลผู้ปกครอง",
+    columns: [
+      { fieldName: "guardian.first_name", label: "ชื่อผู้ปกครอง", required: true },
+      { fieldName: "guardian.last_name", label: "นามสกุลผู้ปกครอง", required: true },
+    ],
+  },
+];
+
 export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPageProps) {
   const [rosterPath, setRosterPath] = useState("");
   const [thaiIdCsvPath, setThaiIdCsvPath] = useState("");
   const [ocrMarkdownPaths, setOcrMarkdownPaths] = useState("");
   const [schoolYear, setSchoolYear] = useState("2569");
   const [gradeLevels, setGradeLevels] = useState("1");
-  const [currentStudentExport, setCurrentStudentExport] =
-    useState<ExportDmcFormJsonResponse | null>(null);
+  const [jsonPreview, setJsonPreview] = useState<PreviewDmcFormJsonResponse | null>(null);
+  const [jsonExport, setJsonExport] = useState<ExportDmcFormJsonResponse | null>(null);
+  const [showTablePreview, setShowTablePreview] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isPreviewing, setIsPreviewing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const activeResult = jsonExport ?? jsonPreview;
+  const activeConflicts = activeResult?.conflicts ?? [];
 
   async function handleBrowseRoster() {
     const selected = await openExcelDialog();
@@ -68,36 +153,68 @@ export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPag
     }
   }
 
-  async function handleExportDmcFormJson() {
+  function readFormInput() {
     const selectedRosterPath = rosterPath.trim();
     const selectedOcrPaths = markdownPaths(ocrMarkdownPaths);
     if (!selectedRosterPath) {
       setErrorMessage("กรุณาเลือกไฟล์บัญชีรายชื่อก่อนสร้าง JSON");
-      return;
+      return null;
     }
     if (!selectedOcrPaths.length) {
       setErrorMessage("กรุณาเพิ่มไฟล์ OCR markdown อย่างน้อย 1 ไฟล์");
-      return;
+      return null;
     }
     const parsedSchoolYear = Number.parseInt(schoolYear.trim(), 10);
     if (!Number.isInteger(parsedSchoolYear)) {
       setErrorMessage("ปีการศึกษาต้องเป็นตัวเลข เช่น 2569");
+      return null;
+    }
+    return {
+      rosterExcelPath: selectedRosterPath,
+      thaiIdCsvPath: thaiIdCsvPath.trim() || null,
+      ocrMarkdownPaths: selectedOcrPaths,
+      schoolYear: parsedSchoolYear,
+      gradeLevels: parseGradeLevels(gradeLevels),
+    };
+  }
+
+  async function handlePreviewDmcFormJson() {
+    const input = readFormInput();
+    if (!input) {
       return;
     }
 
+    setIsPreviewing(true);
+    setErrorMessage(null);
+    setJsonPreview(null);
+    setJsonExport(null);
+    try {
+      const result = await previewDmcFormJson({
+        ...input,
+      });
+      setJsonPreview(result);
+      setShowTablePreview(false);
+    } catch (error) {
+      setErrorMessage(readableError(error));
+    } finally {
+      setIsPreviewing(false);
+    }
+  }
+
+  async function handleExportDmcFormJson() {
+    const input = readFormInput();
+    if (!input) {
+      return;
+    }
     setIsExporting(true);
     setErrorMessage(null);
-    setCurrentStudentExport(null);
+    setJsonExport(null);
     try {
       const result = await exportDmcFormJson({
-        rosterExcelPath: selectedRosterPath,
-        thaiIdCsvPath: thaiIdCsvPath.trim() || null,
-        ocrMarkdownPaths: selectedOcrPaths,
-        schoolYear: parsedSchoolYear,
-        gradeLevels: parseGradeLevels(gradeLevels),
+        ...input,
         outputPath: null,
       });
-      setCurrentStudentExport(result);
+      setJsonExport(result);
     } catch (error) {
       setErrorMessage(readableError(error));
     } finally {
@@ -106,7 +223,9 @@ export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPag
   }
 
   function resetResult() {
-    setCurrentStudentExport(null);
+    setJsonPreview(null);
+    setJsonExport(null);
+    setShowTablePreview(false);
     setErrorMessage(null);
   }
 
@@ -240,30 +359,49 @@ export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPag
                 />
               </div>
               <Button
-                disabled={isExporting || !rosterPath.trim() || markdownPaths(ocrMarkdownPaths).length === 0}
-                onClick={() => void handleExportDmcFormJson()}
+                disabled={isPreviewing || !rosterPath.trim() || markdownPaths(ocrMarkdownPaths).length === 0}
+                onClick={() => void handlePreviewDmcFormJson()}
               >
-                {isExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileOutput className="h-4 w-4" />}
-                สร้าง JSON
+                {isPreviewing ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileOutput className="h-4 w-4" />}
+                ตรวจและแสดงตัวอย่าง
               </Button>
             </div>
           </div>
 
-          {currentStudentExport ? (
+          {activeResult ? (
             <div className="grid gap-4 rounded-md border bg-muted/30 p-4 lg:grid-cols-[minmax(0,1fr)_auto]">
               <div className="grid gap-3 sm:grid-cols-5">
-                <SummaryItem label="รายการที่สร้าง" value={currentStudentExport.records_exported} />
-                <SummaryItem label="จับคู่ได้" value={currentStudentExport.summary.auto_matched} />
-                <SummaryItem label="ต้องตรวจ" value={currentStudentExport.summary.review_queue_records} />
-                <SummaryItem label="ข้อมูลจำเป็นขาด" value={currentStudentExport.conflicts.length} />
-                <SummaryItem label="คำเตือน" value={currentStudentExport.summary.warnings_total} />
+                <SummaryItem label="รายการที่พบ" value={jsonExport?.records_exported ?? jsonPreview?.records_previewed ?? 0} />
+                <SummaryItem label="จับคู่ได้" value={activeResult.summary.auto_matched} />
+                <SummaryItem label="ต้องตรวจ" value={activeResult.summary.review_queue_records} />
+                <SummaryItem label="ข้อมูลจำเป็นขาด" value={activeConflicts.length} />
+                <SummaryItem label="คำเตือน" value={activeResult.summary.warnings_total} />
               </div>
-              <Button variant="outline" onClick={() => onRevealPath(currentStudentExport.output_path)}>
-                <FileOutput className="h-4 w-4" />
-                เปิดไฟล์ JSON
-              </Button>
+              <div className="flex flex-wrap gap-2 lg:justify-end">
+                <Button variant="outline" onClick={() => setShowTablePreview((current) => !current)}>
+                  <FileText className="h-4 w-4" />
+                  {showTablePreview ? "ซ่อนตัวอย่างข้อมูล" : "แสดงตัวอย่างข้อมูล"}
+                </Button>
+                <Button disabled={isExporting} onClick={() => void handleExportDmcFormJson()}>
+                  {isExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileOutput className="h-4 w-4" />}
+                  สร้าง JSON
+                </Button>
+                {jsonExport ? (
+                  <Button variant="outline" onClick={() => onRevealPath(jsonExport.output_path)}>
+                    <FileOutput className="h-4 w-4" />
+                    เปิดไฟล์ JSON
+                  </Button>
+                ) : null}
+              </div>
               <div className="lg:col-span-2">
-                <ConflictAudit conflicts={currentStudentExport.conflicts} />
+                <ConflictAudit conflicts={activeConflicts} />
+                {showTablePreview ? (
+                  <DmcFormTablePreview
+                    records={activeResult.records}
+                    fieldLabels={activeResult.field_labels}
+                    conflicts={activeConflicts}
+                  />
+                ) : null}
               </div>
             </div>
           ) : null}
@@ -326,6 +464,128 @@ function FieldConflictRow({ conflict }: { conflict: CurrentStudentsFieldConflict
       </div>
     </div>
   );
+}
+
+function DmcFormTablePreview({
+  records,
+  fieldLabels,
+  conflicts,
+}: {
+  records: DmcFormJsonRecord[];
+  fieldLabels: Record<string, string>;
+  conflicts: CurrentStudentsFieldConflict[];
+}) {
+  const columns = previewColumnsFromRecords(records, fieldLabels);
+  const columnGroups = previewColumnGroupsFromColumns(columns);
+  const tableMinWidth = Math.max(1280, columns.length * 160 + 140);
+
+  return (
+    <div className="mt-4 overflow-x-auto rounded-md border bg-background">
+      <table className="w-full border-collapse text-sm" style={{ minWidth: tableMinWidth }}>
+        <thead className="bg-muted/60 text-left">
+          <tr>
+            <th rowSpan={2} className="whitespace-nowrap border-b px-3 py-2 font-medium">
+              สถานะ
+            </th>
+            {columnGroups.map((group) => (
+              <th
+                key={group.label}
+                colSpan={group.colSpan}
+                className="whitespace-nowrap border-b border-l px-3 py-2 text-center text-xs font-semibold text-muted-foreground"
+              >
+                {group.label}
+              </th>
+            ))}
+          </tr>
+          <tr>
+            {columns.map(({ fieldName, label }) => (
+              <th key={fieldName} className="whitespace-nowrap border-b px-3 py-2 font-medium">
+                {label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {records.map((record) => {
+            const missingCount = unresolvedConflictCount(record.record_id, conflicts);
+            return (
+              <tr key={record.record_id} className="align-top">
+                <td className="border-b px-3 py-2">
+                  <span className={missingCount ? "font-medium text-amber-800" : "font-medium text-emerald-700"}>
+                    {missingCount ? `ขาด ${missingCount} ช่อง` : "พร้อม"}
+                  </span>
+                </td>
+                {columns.map(({ fieldName }) => (
+                  <td key={`${record.record_id}-${fieldName}`} className="whitespace-nowrap border-b px-3 py-2">
+                    {formatFieldValue(recordFieldValue(record, fieldName))}
+                  </td>
+                ))}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function previewColumnsFromRecords(
+  records: DmcFormJsonRecord[],
+  fieldLabels: Record<string, string>,
+): PreviewColumn[] {
+  const fieldNames = new Set(Object.keys(fieldLabels));
+  for (const record of records) {
+    for (const fieldName of Object.keys(record.fields)) {
+      fieldNames.add(fieldName);
+    }
+  }
+
+  const columns: PreviewColumn[] = [];
+  for (const group of priorityPreviewColumnGroups) {
+    for (const column of group.columns) {
+      if (!fieldNames.delete(column.fieldName)) {
+        continue;
+      }
+      columns.push({
+        fieldName: column.fieldName,
+        label: column.required ? `${column.label}*` : column.label,
+        groupLabel: group.label,
+      });
+    }
+  }
+
+  for (const fieldName of fieldNames) {
+    columns.push({
+      fieldName,
+      label: fieldLabels[fieldName] ?? fieldName,
+      groupLabel: "ข้อมูลอื่น",
+    });
+  }
+  return columns;
+}
+
+function previewColumnGroupsFromColumns(columns: PreviewColumn[]): PreviewColumnGroup[] {
+  const groups: PreviewColumnGroup[] = [];
+  for (const column of columns) {
+    const lastGroup = groups[groups.length - 1];
+    if (lastGroup?.label === column.groupLabel) {
+      lastGroup.colSpan += 1;
+      continue;
+    }
+    groups.push({ label: column.groupLabel, colSpan: 1 });
+  }
+  return groups;
+}
+
+function recordFieldValue(record: DmcFormJsonRecord, fieldName: string): string | number | boolean | null {
+  return record.fields[fieldName] ?? null;
+}
+
+function unresolvedConflictCount(
+  recordId: string,
+  conflicts: CurrentStudentsFieldConflict[],
+): number {
+  return conflicts.filter((conflict) => conflict.record_id === recordId).length;
 }
 
 function formatFieldValue(value: string | number | boolean | null): string {

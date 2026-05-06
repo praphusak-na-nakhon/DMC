@@ -355,6 +355,20 @@ export type DmcFormJsonRecord = {
   field_details: Record<string, CurrentStudentField>;
 };
 
+export type PreviewDmcFormJsonResponse = {
+  module: "formConverter";
+  schema_version: "dmc_form_json.v1";
+  generated_at: string;
+  school_year: number;
+  grade_levels: number[] | null;
+  records_previewed: number;
+  field_labels: Record<string, string>;
+  summary: CurrentStudentsSummary;
+  warnings: CurrentStudentsWarning[];
+  conflicts: CurrentStudentsFieldConflict[];
+  records: DmcFormJsonRecord[];
+};
+
 export type ExportDmcFormJsonResponse = {
   module: "formConverter";
   schema_version: "dmc_form_json.v1";
@@ -1149,6 +1163,41 @@ export function parseExportCurrentStudentsBlankFormResponse(value: unknown): Exp
     output_path: readString(record, "output_path", "export_current_students_blank_form_response"),
     field_count: readNumber(record, "field_count", "export_current_students_blank_form_response"),
     required_fields: readStringArray(record, "required_fields", "export_current_students_blank_form_response"),
+  };
+}
+
+export function parsePreviewDmcFormJsonResponse(value: unknown): PreviewDmcFormJsonResponse {
+  const record = asRecord(value, "preview_dmc_form_json_response");
+  const module = readString(record, "module", "preview_dmc_form_json_response");
+  if (module !== "formConverter") {
+    throw new Error("preview_dmc_form_json_response.module must be formConverter");
+  }
+  const schemaVersion = readString(record, "schema_version", "preview_dmc_form_json_response");
+  if (schemaVersion !== "dmc_form_json.v1") {
+    throw new Error("preview_dmc_form_json_response.schema_version must be dmc_form_json.v1");
+  }
+  const gradeLevelsValue = record.grade_levels;
+  const gradeLevels =
+    gradeLevelsValue === null || gradeLevelsValue === undefined
+      ? null
+      : readArray(record, "grade_levels", "preview_dmc_form_json_response").map((item, index) => {
+          if (typeof item !== "number" || Number.isNaN(item)) {
+            throw new Error(`preview_dmc_form_json_response.grade_levels[${index}] must be a number`);
+          }
+          return item;
+        });
+  return {
+    module,
+    schema_version: schemaVersion,
+    generated_at: readString(record, "generated_at", "preview_dmc_form_json_response"),
+    school_year: readNumber(record, "school_year", "preview_dmc_form_json_response"),
+    grade_levels: gradeLevels,
+    records_previewed: readNumber(record, "records_previewed", "preview_dmc_form_json_response"),
+    field_labels: parseStringMap(record.field_labels, "preview_dmc_form_json_response.field_labels"),
+    summary: parseCurrentStudentsSummary(record.summary),
+    warnings: readArray(record, "warnings", "preview_dmc_form_json_response").map(parseCurrentStudentsWarning),
+    conflicts: readArray(record, "conflicts", "preview_dmc_form_json_response").map(parseCurrentStudentsFieldConflict),
+    records: readArray(record, "records", "preview_dmc_form_json_response").map(parseDmcFormJsonRecord),
   };
 }
 
