@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { FolderOpen, PlayCircle, RotateCcw, Search, Trash2 } from "lucide-react";
 import messages from "../i18n/th.json";
-import { formatTimestamp } from "../lib/appUi";
+import { describeJobStatus, formatTimestamp } from "../lib/appUi";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -101,7 +101,7 @@ export function ExistingJobsPanel({
                   <div className="flex min-w-0 items-start justify-between gap-2">
                     <div className="min-w-0 truncate font-semibold">{job.job_id}</div>
                     <Badge variant="outline" className={jobBadgeClass(job.status)}>
-                      {job.status}
+                      {describeJobStatus(job.status)}
                     </Badge>
                   </div>
                   <div className="mt-1 text-sm text-muted-foreground">

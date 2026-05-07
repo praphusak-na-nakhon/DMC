@@ -85,9 +85,6 @@ export function CurrentStudentsPage({ onBackHome, onRevealPath }: CurrentStudent
     setValidation(null);
     setErrorMessage(null);
     setProgress(20);
-    const timer = window.setInterval(() => {
-      setProgress((current) => Math.min(current + 12, 88));
-    }, 250);
     try {
       const result = await validateCurrentStudentImportForm(selectedPath);
       setValidation(result);
@@ -96,7 +93,6 @@ export function CurrentStudentsPage({ onBackHome, onRevealPath }: CurrentStudent
       setProgress(0);
       setErrorMessage(readableError(error));
     } finally {
-      window.clearInterval(timer);
       setIsValidating(false);
     }
   }
@@ -187,7 +183,10 @@ export function CurrentStudentsPage({ onBackHome, onRevealPath }: CurrentStudent
         <Card>
           <CardHeader>
             <CardTitle>สถานะ</CardTitle>
-            <CardDescription>{validation ? "ผลตรวจไฟล์ล่าสุด" : "รออัปโหลดฟอร์ม"}</CardDescription>
+            <CardDescription className="flex items-center gap-2">
+              {isValidating ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {validation ? "ผลตรวจไฟล์ล่าสุด" : isValidating ? "กำลังตรวจไฟล์นำเข้า" : "รออัปโหลดฟอร์ม"}
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <Progress value={progress} />

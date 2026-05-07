@@ -7,6 +7,7 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Alert, AlertDescription } from "./ui/alert";
+import { Input } from "./ui/input";
 import { SupportToolsPanel } from "./SupportToolsPanel";
 import type { AccountStatus, AvailableUpdate, DatabaseStatus, UpdaterStatus } from "../types/contracts";
 
@@ -139,15 +140,13 @@ export function ModuleHome({
             </div>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
-              <input
-                className="h-10 rounded-md border bg-background px-3 text-sm"
+              <Input
                 type="email"
                 value={accountEmail}
                 onChange={(event) => onAccountEmailChange(event.target.value)}
                 placeholder={account.emailPlaceholder}
               />
-              <input
-                className="h-10 rounded-md border bg-background px-3 text-sm"
+              <Input
                 type="password"
                 value={accountPassword}
                 onChange={(event) => onAccountPasswordChange(event.target.value)}

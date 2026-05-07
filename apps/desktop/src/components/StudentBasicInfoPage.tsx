@@ -58,9 +58,6 @@ export function StudentBasicInfoPage({ onBackHome, onRevealPath }: StudentBasicI
     setErrorMessage(null);
     setProgress(12);
     setStageLabel("กำลังอ่านไฟล์ DMC");
-    const timer = window.setInterval(() => {
-      setProgress((current) => Math.min(current + 9, 88));
-    }, 300);
 
     try {
       const response = await exportStudentBasicInfoForm(selectedPath);
@@ -72,7 +69,6 @@ export function StudentBasicInfoPage({ onBackHome, onRevealPath }: StudentBasicI
       setStageLabel("ประมวลผลไม่สำเร็จ");
       setErrorMessage(readableError(error));
     } finally {
-      window.clearInterval(timer);
       setIsProcessing(false);
     }
   }
@@ -156,7 +152,10 @@ export function StudentBasicInfoPage({ onBackHome, onRevealPath }: StudentBasicI
         <Card>
           <CardHeader>
             <CardTitle>สถานะ</CardTitle>
-            <CardDescription>{stageLabel}</CardDescription>
+            <CardDescription className="flex items-center gap-2">
+              {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {stageLabel}
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <Progress value={progress} />

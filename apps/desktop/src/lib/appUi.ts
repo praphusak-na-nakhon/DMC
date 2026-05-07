@@ -61,16 +61,99 @@ export function describeBrowserRuntimePhase(
 ): string {
   switch (phase) {
     case "checking":
-      return "Check installer prerequisites";
+      return "กำลังตรวจความพร้อมก่อนติดตั้ง";
     case "installing":
-      return "Download and install Chromium runtime";
+      return "กำลังดาวน์โหลดและติดตั้ง Chromium";
     case "verifying":
-      return "Verify installed browser runtime";
+      return "กำลังตรวจสอบ Chromium ที่ติดตั้งแล้ว";
     case "ready":
-      return "Browser runtime is ready";
+      return "Chromium พร้อมใช้งาน";
     case "failed":
-      return "Browser runtime setup failed";
+      return "ติดตั้ง Chromium ไม่สำเร็จ";
   }
+}
+
+export function describeJobStatus(status: string | null | undefined): string {
+  switch (status) {
+    case "running":
+      return "กำลังทำงาน";
+    case "pending":
+      return "รอเริ่มงาน";
+    case "paused":
+      return "พักงาน";
+    case "stopped_on_review":
+      return "หยุดเพื่อให้ตรวจทาน";
+    case "failed":
+      return "ล้มเหลว";
+    case "done":
+      return "เสร็จแล้ว";
+    case "cancelled":
+      return "ยกเลิกแล้ว";
+    default:
+      return status ?? "-";
+  }
+}
+
+export function isActiveJobStatus(status: string | null | undefined): boolean {
+  return status === "running" || status === "pending" || status === "paused" || status === "stopped_on_review";
+}
+
+export function describeCreditStatus(status: string | null | undefined): {
+  tone: "info" | "warning" | "danger" | "success";
+  title: string;
+  message: string;
+} | null {
+  if (!status) {
+    return null;
+  }
+  if (status === "reserving") {
+    return {
+      tone: "info",
+      title: "กำลังกันเครดิต",
+      message: "ระบบกำลังติดต่อ cloud เพื่อกันเครดิตก่อนเริ่มงานจริง กรุณารอสักครู่",
+    };
+  }
+  if (status === "reserved") {
+    return {
+      tone: "success",
+      title: "กันเครดิตแล้ว",
+      message: "ระบบกันเครดิตสำหรับงานนี้เรียบร้อย และจะคืนเครดิตส่วนที่ไม่ได้ใช้หลังจบงาน",
+    };
+  }
+  if (status === "finalized") {
+    return {
+      tone: "success",
+      title: "สรุปเครดิตแล้ว",
+      message: "ระบบตัดเครดิตที่ใช้จริงและคืนเครดิตที่เหลือเรียบร้อย",
+    };
+  }
+  if (status.startsWith("start_failed:")) {
+    const code = status.slice("start_failed:".length);
+    if (code === "INSUFFICIENT_CREDITS") {
+      return {
+        tone: "danger",
+        title: "เครดิตไม่พอ",
+        message: "ระบบกันเครดิตไม่สำเร็จเพราะเครดิตไม่พอ กรุณาเติมเครดิตแล้วลองเริ่มงานอีกครั้ง",
+      };
+    }
+    if (code === "ACCOUNT_CLOUD_UNAVAILABLE") {
+      return {
+        tone: "danger",
+        title: "เชื่อมต่อ cloud ไม่ได้",
+        message: "ระบบยังกันเครดิตไม่ได้เพราะติดต่อ cloud ไม่สำเร็จ กรุณาตรวจอินเทอร์เน็ตแล้วลองใหม่",
+      };
+    }
+    return {
+      tone: "danger",
+      title: "เริ่มงานไม่สำเร็จ",
+      message: `ระบบกันเครดิตหรือเตรียมงานไม่สำเร็จ (${code}) กรุณาลองใหม่หรือติดต่อผู้ดูแล`,
+    };
+  }
+  return {
+    tone: "warning",
+    title: "สถานะเครดิต",
+    message: status,
+  };
 }
 
 export const cardStyle: CSSProperties = {

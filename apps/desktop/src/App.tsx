@@ -37,7 +37,7 @@ import {
   resumeJob,
   cancelJob,
 } from "./lib/rpcClient";
-import { buildDraftJob, buildJobId, buildSupportDiagnostics, buildTimestampSlug } from "./lib/appUi";
+import { buildDraftJob, buildJobId, buildSupportDiagnostics, buildTimestampSlug, isActiveJobStatus } from "./lib/appUi";
 import { describeUserFacingError } from "./lib/errorMessages";
 import { useJobStatusReconciliation } from "./hooks/useJobStatusReconciliation";
 import { useJobStore } from "./stores/useJobStore";
@@ -47,6 +47,7 @@ import { CurrentStudentsPage } from "./components/CurrentStudentsPage";
 import { ModuleHome } from "./components/ModuleHome";
 import { PsarReadinessPage } from "./components/PsarReadinessPage";
 import { StudentBasicInfoPage } from "./components/StudentBasicInfoPage";
+import { AlertDialog } from "./components/ui/alert-dialog";
 import type { ModuleId } from "./lib/moduleCatalog";
 import type {
   AvailableUpdate,
@@ -58,6 +59,47 @@ import type {
 
 function toUserError(error: unknown): string {
   return describeUserFacingError(error);
+}
+
+type ConfirmDialogState = {
+  type: "archive_old_jobs" | "start_live" | "cancel_job" | "close_active_job";
+  title: string;
+  description: string;
+  confirmLabel: string;
+  cancelLabel?: string;
+  variant?: "default" | "destructive";
+};
+
+async function requestWindowAttention(): Promise<void> {
+  try {
+    const { getCurrentWindow, UserAttentionType } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().requestUserAttention(UserAttentionType.Informational);
+  } catch {
+    // Browser preview and test runs do not expose a Tauri window.
+  }
+}
+
+async function notifyLongRunningJob(title: string, body: string): Promise<void> {
+  if (typeof window !== "undefined" && "Notification" in window) {
+    try {
+      if (Notification.permission === "granted") {
+        new Notification(title, { body });
+      } else if (Notification.permission === "default") {
+        const permission = await Notification.requestPermission();
+        if (permission === "granted") {
+          new Notification(title, { body });
+        }
+      }
+    } catch {
+      // Some WebView environments expose Notification but block it at runtime.
+    }
+  }
+  await requestWindowAttention();
+}
+
+async function destroyCurrentWindow(): Promise<void> {
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  await getCurrentWindow().destroy();
 }
 
 export function App() {
@@ -121,7 +163,12 @@ export function App() {
     null,
   );
   const [activeModule, setActiveModule] = useState<"home" | ModuleId>("home");
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const mountedRef = useRef(false);
+  const activeJobRef = useRef(false);
+  const notifiedDoneJobRef = useRef<string | null>(null);
+  const notifiedFailedJobRef = useRef<string | null>(null);
+  const notifiedNeedsAuthJobRef = useRef<string | null>(null);
 
   const validationBlocksStart =
     !preview || preview.rows_accepted <= 0 || validatedExcelPath !== excelPath.trim();
@@ -133,6 +180,7 @@ export function App() {
     !accountStatus?.signed_in ||
     !accountStatus.can_start_credit_jobs ||
     (estimatedCredits > 0 && (accountStatus.wallet?.available ?? 0) < estimatedCredits);
+  const hasActiveJob = Boolean(currentJob && isActiveJobStatus(currentJob.status));
 
   const handleLoadJobs = useCallback(async () => {
     try {
@@ -206,14 +254,14 @@ export function App() {
       if (status.installed) {
         setBrowserRuntimeProgress({
           phase: "ready",
-          message: status.message ?? "Chromium browser runtime is ready.",
+          message: status.message ?? "Chromium พร้อมใช้งาน",
           percent: 100,
           detail: status.executable_path,
         });
       } else if (status.last_error) {
         setBrowserRuntimeProgress({
           phase: "failed",
-          message: status.message ?? "Chromium browser runtime is not ready yet.",
+          message: status.message ?? "Chromium ยังไม่พร้อมใช้งาน",
           percent: null,
           detail: status.last_error,
         });
@@ -423,8 +471,16 @@ export function App() {
     }
   }
 
-  async function handleArchiveOldJobs() {
-    if (typeof window !== "undefined" && !window.confirm("ล้างประวัติงานเก่าที่จบแล้ว โดยเก็บ 20 รายการล่าสุดไว้?")) {
+  async function handleArchiveOldJobs(confirmed = false) {
+    if (!confirmed) {
+      setConfirmDialog({
+        type: "archive_old_jobs",
+        title: "ล้างประวัติงานเก่า",
+        description: "ระบบจะล้างงานเก่าที่จบแล้ว โดยเก็บ 20 รายการล่าสุดไว้ใน local checkpoint",
+        confirmLabel: "ล้างประวัติ",
+        cancelLabel: "ยกเลิก",
+        variant: "destructive",
+      });
       return;
     }
     try {
@@ -456,6 +512,85 @@ export function App() {
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    activeJobRef.current = hasActiveJob;
+  }, [hasActiveJob]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    function warnBeforeUnload(event: BeforeUnloadEvent) {
+      if (!activeJobRef.current) {
+        return;
+      }
+      event.preventDefault();
+      event.returnValue = "";
+    }
+
+    let disposed = false;
+    let unlistenClose: (() => void) | undefined;
+
+    async function bindCloseGuard() {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        if (disposed) {
+          return;
+        }
+        unlistenClose = await getCurrentWindow().onCloseRequested((event) => {
+          if (!activeJobRef.current) {
+            return;
+          }
+          event.preventDefault();
+          setConfirmDialog({
+            type: "close_active_job",
+            title: "ยังมีงานที่กำลังทำอยู่",
+            description:
+              "งาน automation ยังไม่จบ ถ้าปิดหน้าต่างตอนนี้งานจะหยุดและอาจต้องกลับมาทำต่อจาก checkpoint ภายหลัง",
+            confirmLabel: "ปิดหน้าต่าง",
+            cancelLabel: "ทำงานต่อ",
+            variant: "destructive",
+          });
+        });
+      } catch {
+        // Browser preview and tests do not have a Tauri window.
+      }
+    }
+
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    void bindCloseGuard();
+
+    return () => {
+      disposed = true;
+      window.removeEventListener("beforeunload", warnBeforeUnload);
+      if (unlistenClose) {
+        void unlistenClose();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!currentJob) {
+      return;
+    }
+    if (currentJob.needs_auth && notifiedNeedsAuthJobRef.current !== currentJob.job_id) {
+      notifiedNeedsAuthJobRef.current = currentJob.job_id;
+      void notifyLongRunningJob(
+        "DMC Assistant รอการยืนยันตัวตน",
+        "กรุณา login ใน Chromium ที่เปิดอยู่ แล้วกลับมากดทำต่อหลังยืนยันตัวตน",
+      );
+    }
+    if (currentJob.status === "done" && notifiedDoneJobRef.current !== currentJob.job_id) {
+      notifiedDoneJobRef.current = currentJob.job_id;
+      void notifyLongRunningJob("DMC Assistant ทำงานเสร็จแล้ว", "งานกรอกข้อมูล DMC เสร็จสิ้นแล้ว");
+    }
+    if (currentJob.status === "failed" && notifiedFailedJobRef.current !== currentJob.job_id) {
+      notifiedFailedJobRef.current = currentJob.job_id;
+      void notifyLongRunningJob("DMC Assistant ทำงานไม่สำเร็จ", "กรุณากลับมาตรวจรายละเอียดในแอป");
+    }
+  }, [currentJob]);
 
   useEffect(() => {
     if (typeof navigator === "undefined") {
@@ -603,7 +738,7 @@ export function App() {
     }
   }
 
-  async function handleStart(dryRun: boolean) {
+  async function handleStart(dryRun: boolean, confirmed = false) {
     const selectedExcelPath = excelPath.trim();
     if (!selectedExcelPath) {
       setErrorMessage("กรุณาระบุไฟล์ Excel ก่อน");
@@ -625,20 +760,21 @@ export function App() {
         return;
       }
       const rowsTotal = preview?.rows_total ?? rowsToWrite;
-      const confirmed =
-        typeof window === "undefined" ||
-        window.confirm(
-          [
-            "ยืนยันเริ่มส่งข้อมูลเข้า DMC?",
-            "",
+      if (!confirmed) {
+        setConfirmDialog({
+          type: "start_live",
+          title: "ยืนยันเริ่มส่งข้อมูลเข้า DMC",
+          description: [
             `ไฟล์: ${selectedExcelPath}`,
             `ระบบจะส่งข้อมูล ${rowsToWrite} จาก ${rowsTotal} รายการเข้า DMC`,
             `เครดิตที่จะกันไว้: ${rowsToWrite}`,
             "",
             messages.app.account.reserveNotice,
           ].join("\n"),
-        );
-      if (!confirmed) {
+          confirmLabel: "เริ่มงานจริง",
+          cancelLabel: "ตรวจอีกครั้ง",
+          variant: "destructive",
+        });
         return;
       }
     }
@@ -648,7 +784,7 @@ export function App() {
     try {
       const browserStatus = await handleLoadBrowserRuntime();
       if (!browserStatus.installed) {
-        setErrorMessage(browserStatus.message ?? "Chromium browser runtime is not installed.");
+        setErrorMessage(browserStatus.message ?? "ยังไม่ได้ติดตั้ง Chromium runtime");
         return;
       }
       if (!dryRun) {
@@ -697,7 +833,7 @@ export function App() {
     setIsBootstrappingBrowser(true);
     setBrowserRuntimeProgress({
       phase: "checking",
-      message: "Preparing the Chromium browser runtime installer.",
+      message: "กำลังเตรียมตัวติดตั้ง Chromium runtime",
       percent: 5,
       detail: null,
     });
@@ -706,17 +842,17 @@ export function App() {
       setBrowserRuntimeStatus(status);
       setBrowserRuntimeProgress({
         phase: status.installed ? "ready" : "failed",
-        message: status.message ?? (status.installed ? "Chromium browser runtime is ready." : "Chromium browser runtime setup failed."),
+        message: status.message ?? (status.installed ? "Chromium พร้อมใช้งาน" : "ติดตั้ง Chromium runtime ไม่สำเร็จ"),
         percent: status.installed ? 100 : null,
         detail: status.installed ? status.executable_path : status.last_error,
       });
       pushSidecarMessage(
         status.installed
-          ? `Chromium runtime ready: ${status.install_dir}`
-          : `Chromium runtime install failed: ${status.last_error ?? "unknown error"}`,
+          ? `Chromium runtime พร้อมใช้งาน: ${status.install_dir}`
+          : `ติดตั้ง Chromium runtime ไม่สำเร็จ: ${status.last_error ?? "unknown error"}`,
       );
       if (!status.installed) {
-        setErrorMessage(status.last_error ?? status.message ?? "Chromium browser runtime is not installed.");
+        setErrorMessage(status.last_error ?? status.message ?? "ยังไม่ได้ติดตั้ง Chromium runtime");
       }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -773,11 +909,19 @@ export function App() {
     }
   }
 
-  async function handleCancel() {
+  async function handleCancel(confirmed = false) {
     if (!activeJobId) {
       return;
     }
-    if (typeof window !== "undefined" && !window.confirm("ยืนยันยกเลิกงานนี้?")) {
+    if (!confirmed) {
+      setConfirmDialog({
+        type: "cancel_job",
+        title: "ยกเลิกงานนี้",
+        description: "งานที่กำลังทำอยู่จะหยุดที่ checkpoint ล่าสุด และระบบจะสรุปเครดิตตามรายการที่ทำไปแล้ว",
+        confirmLabel: "ยกเลิกงาน",
+        cancelLabel: "ทำงานต่อ",
+        variant: "destructive",
+      });
       return;
     }
     try {
@@ -842,7 +986,45 @@ export function App() {
     }
   }
 
+  function handleConfirmDialog() {
+    const dialog = confirmDialog;
+    if (!dialog) {
+      return;
+    }
+    setConfirmDialog(null);
+    if (dialog.type === "archive_old_jobs") {
+      void handleArchiveOldJobs(true);
+      return;
+    }
+    if (dialog.type === "start_live") {
+      void handleStart(false, true);
+      return;
+    }
+    if (dialog.type === "cancel_job") {
+      void handleCancel(true);
+      return;
+    }
+    if (dialog.type === "close_active_job") {
+      void destroyCurrentWindow().catch((error) => {
+        setErrorMessage(error instanceof Error ? error.message : String(error));
+      });
+    }
+  }
+
   return (
+    <>
+    {confirmDialog ? (
+      <AlertDialog
+        open
+        title={confirmDialog.title}
+        description={confirmDialog.description}
+        confirmLabel={confirmDialog.confirmLabel}
+        cancelLabel={confirmDialog.cancelLabel}
+        variant={confirmDialog.variant}
+        onCancel={() => setConfirmDialog(null)}
+        onConfirm={handleConfirmDialog}
+      />
+    ) : null}
     <main className="min-h-screen overflow-x-hidden bg-background text-foreground">
       <section className="mx-auto w-full max-w-[1440px] px-3 py-4 sm:px-5 lg:px-6">
         {activeModule === "home" ? (
@@ -960,5 +1142,6 @@ export function App() {
         )}
       </section>
     </main>
+    </>
   );
 }

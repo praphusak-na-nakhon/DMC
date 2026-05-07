@@ -1,5 +1,7 @@
 import { AlertTriangle, ArrowLeft, FileOutput, FileText, Loader2, UploadCloud } from "lucide-react";
 import { useState } from "react";
+import messages from "../i18n/th.json";
+import { describeUserFacingError } from "../lib/errorMessages";
 import {
   exportDmcFormJson,
   openCsvDialog,
@@ -26,6 +28,7 @@ type FormConverterPageProps = {
 };
 
 const errorMessages: Record<string, string> = {
+  ...(messages.app.formConverter.errors as Record<string, string>),
   CURRENT_STUDENTS_INPUT_NOT_FOUND: "ไม่พบไฟล์ที่เลือก",
   CURRENT_STUDENTS_INPUT_NOT_FILE: "พาธที่เลือกไม่ใช่ไฟล์",
   CURRENT_STUDENTS_UNSUPPORTED_INPUT_TYPE: "ชนิดไฟล์ไม่รองรับ",
@@ -236,7 +239,7 @@ export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPag
   function readableError(error: unknown): string {
     const raw = error instanceof Error ? error.message : String(error);
     const code = raw.match(/[A-Z][A-Z0-9_]+/)?.[0] ?? raw;
-    return errorMessages[code] ?? raw;
+    return errorMessages[code] ?? describeUserFacingError(error);
   }
 
   return (
@@ -245,7 +248,7 @@ export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPag
         <div>
           <Button variant="outline" size="sm" onClick={onBackHome}>
             <ArrowLeft className="h-4 w-4" />
-            กลับหน้าหลัก
+            {messages.app.formConverter.backHome}
           </Button>
           <div className="mt-5 flex items-center gap-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl border bg-background">

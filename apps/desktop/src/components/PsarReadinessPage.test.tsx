@@ -144,24 +144,23 @@ describe("PsarReadinessPage", () => {
 
     render(<PsarReadinessPage onBackHome={vi.fn()} onRevealPath={vi.fn()} />);
 
-    await screen.findByText("Your report is 72% ready");
-    expect(screen.getByText("Recommended uploads")).toBeInTheDocument();
+    await screen.findByText("รายงานพร้อม 72%");
+    expect(screen.getByText("หลักฐานที่แนะนำให้อัปโหลด")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Lesson plans and learning design/i }));
-    expect(screen.getByText("Evidence found")).toBeInTheDocument();
+    expect(screen.getByText("หลักฐานที่พบ")).toBeInTheDocument();
     expect(screen.getByText("Lesson plan summary")).toBeInTheDocument();
 
     fireEvent.change(screen.getAllByRole("textbox")[1], {
       target: { value: "C:\\data\\course-plan.docx" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Upload missing evidence/i }));
+    fireEvent.click(screen.getAllByRole("button", { name: /อัปโหลดหลักฐาน/i })[0]);
 
     await waitFor(() => expect(mockRpc.addPsarEvidence).toHaveBeenCalledWith("default", "C:\\data\\course-plan.docx"));
-    await screen.findByText("Your report is 100% ready");
+    await screen.findByText("รายงานพร้อม 100%");
   });
 
   it("generates an official P-SAR form after acknowledging low readiness", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const initial = readiness();
     mockRpc.getPsarReadiness.mockResolvedValue(initial);
     mockRpc.generatePsarReport.mockResolvedValue({
@@ -173,11 +172,12 @@ describe("PsarReadinessPage", () => {
 
     render(<PsarReadinessPage onBackHome={vi.fn()} onRevealPath={vi.fn()} />);
 
-    await screen.findByText("Your report is 72% ready");
-    fireEvent.click(screen.getByRole("button", { name: /Generate anyway/i }));
+    await screen.findByText("รายงานพร้อม 72%");
+    fireEvent.click(screen.getByRole("button", { name: /สร้างต่อ/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /สร้างรายงานต่อ/i }));
 
     await waitFor(() => expect(mockRpc.generatePsarReport).toHaveBeenCalledWith("default"));
-    expect(screen.getByText(/Generated official P-SAR form from template/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Open report/i })).toBeInTheDocument();
+    expect(await screen.findByText(/สร้างแบบฟอร์ม P-SAR จาก template แล้ว/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /เปิดรายงาน/i })).toBeInTheDocument();
   });
 });

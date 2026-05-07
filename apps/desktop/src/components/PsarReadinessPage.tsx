@@ -11,6 +11,7 @@ import {
   UploadCloud,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { describeUserFacingError } from "../lib/errorMessages";
 import { addPsarEvidence, generatePsarReport, getPsarReadiness, openEvidenceDialog } from "../lib/rpcClient";
 import type {
   PsarEvidenceMapping,
@@ -26,6 +27,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Progress } from "./ui/progress";
+import { AlertDialog } from "./ui/alert-dialog";
 
 type PsarReadinessPageProps = {
   onBackHome: () => void;
@@ -60,22 +62,34 @@ function priorityVariant(priority: ReadinessPriority): "default" | "secondary" |
 }
 
 function statusLabel(status: ReadinessRequirementStatus): string {
-  if (status === "needs_review") {
-    return "Needs review";
+  if (status === "complete") {
+    return "ครบ";
   }
-  return status[0].toUpperCase() + status.slice(1);
+  if (status === "partial") {
+    return "บางส่วน";
+  }
+  if (status === "missing") {
+    return "ขาดหลักฐาน";
+  }
+  return "ต้องตรวจทาน";
+}
+
+function priorityLabel(priority: ReadinessPriority): string {
+  if (priority === "high") return "สำคัญมาก";
+  if (priority === "medium") return "สำคัญ";
+  return "ทั่วไป";
 }
 
 function readableError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   const code = raw.match(/[A-Z][A-Z0-9_]+/)?.[0] ?? raw;
   const messages: Record<string, string> = {
-    PSAR_EVIDENCE_FILE_NOT_FOUND: "Evidence file was not found.",
-    PSAR_EVIDENCE_PATH_NOT_FILE: "Selected evidence path is not a file.",
-    PSAR_EVIDENCE_UNSUPPORTED_TYPE: "Evidence must be PDF, DOCX, XLSX, or image.",
-    PSAR_PROJECT_ID_INVALID: "Project ID can use only letters, numbers, dash, underscore, and dot.",
+    PSAR_EVIDENCE_FILE_NOT_FOUND: "ไม่พบไฟล์หลักฐานที่เลือก",
+    PSAR_EVIDENCE_PATH_NOT_FILE: "พาธหลักฐานที่เลือกไม่ใช่ไฟล์",
+    PSAR_EVIDENCE_UNSUPPORTED_TYPE: "หลักฐานต้องเป็นไฟล์ PDF, DOCX, XLSX หรือรูปภาพ",
+    PSAR_PROJECT_ID_INVALID: "รหัสโปรเจกต์ใช้ได้เฉพาะตัวอักษร ตัวเลข ขีดกลาง ขีดล่าง และจุด",
   };
-  return messages[code] ?? raw;
+  return messages[code] ?? describeUserFacingError(error);
 }
 
 export function PsarReadinessPage({ onBackHome, onRevealPath }: PsarReadinessPageProps) {
@@ -90,6 +104,7 @@ export function PsarReadinessPage({ onBackHome, onRevealPath }: PsarReadinessPag
   const [notice, setNotice] = useState<string | null>(null);
   const [generationNotice, setGenerationNotice] = useState<string | null>(null);
   const [reportPath, setReportPath] = useState<string | null>(null);
+  const [showGenerateAnywayDialog, setShowGenerateAnywayDialog] = useState(false);
 
   const loadReadiness = useCallback(async (targetProjectId: string) => {
     setIsLoading(true);
@@ -113,17 +128,17 @@ export function PsarReadinessPage({ onBackHome, onRevealPath }: PsarReadinessPag
   const summaryCards = useMemo(() => {
     if (!readiness) {
       return [
-        ["Complete", "-"],
-        ["Partial", "-"],
-        ["Missing", "-"],
-        ["Needs Review", "-"],
+        ["ครบ", "-"],
+        ["บางส่วน", "-"],
+        ["ขาดหลักฐาน", "-"],
+        ["ต้องตรวจทาน", "-"],
       ] as const;
     }
     return [
-      ["Complete", readiness.complete_count],
-      ["Partial", readiness.partial_count],
-      ["Missing", readiness.missing_count],
-      ["Needs Review", readiness.needs_review_count],
+      ["ครบ", readiness.complete_count],
+      ["บางส่วน", readiness.partial_count],
+      ["ขาดหลักฐาน", readiness.missing_count],
+      ["ต้องตรวจทาน", readiness.needs_review_count],
     ] as const;
   }, [readiness]);
 
@@ -155,7 +170,7 @@ export function PsarReadinessPage({ onBackHome, onRevealPath }: PsarReadinessPag
   async function addEvidencePath(path: string) {
     const selectedPath = path.trim();
     if (!selectedPath) {
-      setErrorMessage("Choose an evidence file first.");
+      setErrorMessage("กรุณาเลือกไฟล์หลักฐานก่อน");
       return;
     }
     setIsAddingEvidence(true);
@@ -168,8 +183,8 @@ export function PsarReadinessPage({ onBackHome, onRevealPath }: PsarReadinessPag
       setReportPath(null);
       setNotice(
         response.mappings.length
-          ? `Evidence found: ${response.mappings.length} mapping(s) from ${response.file.file_name}.`
-          : `No clear P-SAR mapping found for ${response.file.file_name}. The file is saved for review.`,
+          ? `พบหลักฐานที่จับคู่ได้ ${response.mappings.length} รายการจากไฟล์ ${response.file.file_name}`
+          : `ยังจับคู่ P-SAR จากไฟล์ ${response.file.file_name} ไม่ได้ชัดเจน ระบบบันทึกไฟล์ไว้ให้ตรวจทานแล้ว`,
       );
     } catch (error) {
       setErrorMessage(readableError(error));
@@ -194,16 +209,14 @@ export function PsarReadinessPage({ onBackHome, onRevealPath }: PsarReadinessPag
     if (!readiness) {
       return;
     }
-    if (
-      belowThreshold &&
-      typeof window !== "undefined" &&
-      !window.confirm(
-        `Readiness is ${percent(readiness.overall_completion_score)}%, below the ${percent(readiness.warning_threshold)}% warning threshold. Generate the official P-SAR form anyway? Missing fields may remain blank.`,
-      )
-    ) {
+    if (belowThreshold) {
+      setShowGenerateAnywayDialog(true);
       return;
     }
+    await runGenerateReport();
+  }
 
+  async function runGenerateReport() {
     setIsGeneratingReport(true);
     setErrorMessage(null);
     setGenerationNotice(null);
@@ -211,7 +224,7 @@ export function PsarReadinessPage({ onBackHome, onRevealPath }: PsarReadinessPag
       const response = await generatePsarReport(projectId.trim() || "default");
       setReadiness(response.readiness);
       setReportPath(response.report_path);
-      setGenerationNotice(`Generated official P-SAR form from template: ${response.report_path}`);
+      setGenerationNotice(`สร้างแบบฟอร์ม P-SAR จาก template แล้ว: ${response.report_path}`);
     } catch (error) {
       setErrorMessage(readableError(error));
     } finally {
@@ -221,21 +234,38 @@ export function PsarReadinessPage({ onBackHome, onRevealPath }: PsarReadinessPag
 
   return (
     <div className="space-y-6">
+      <AlertDialog
+        open={showGenerateAnywayDialog}
+        title="ยืนยันสร้างรายงานทั้งที่หลักฐานยังไม่ครบ?"
+        description={
+          readiness
+            ? `ความพร้อมตอนนี้อยู่ที่ ${percent(readiness.overall_completion_score)}% ต่ำกว่าเกณฑ์เตือน ${percent(readiness.warning_threshold)}% แบบฟอร์มที่สร้างอาจมีช่องว่างหรือข้อมูลที่ต้องเติมเอง`
+            : ""
+        }
+        confirmLabel="สร้างรายงานต่อ"
+        cancelLabel="กลับไปเพิ่มหลักฐาน"
+        variant="destructive"
+        onCancel={() => setShowGenerateAnywayDialog(false)}
+        onConfirm={() => {
+          setShowGenerateAnywayDialog(false);
+          void runGenerateReport();
+        }}
+      />
       <header className="flex flex-col gap-4 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <Button variant="outline" size="sm" onClick={onBackHome}>
             <ArrowLeft className="h-4 w-4" />
-            Back home
+            กลับหน้าหลัก
           </Button>
           <div className="mt-5 flex items-center gap-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-lg border bg-background">
               <FileSearch className="h-6 w-6 text-primary" />
             </div>
             <div>
-              <Badge variant="default">Assistant dashboard</Badge>
-              <h1 className="mt-2 text-3xl font-bold tracking-normal">P-SAR Readiness</h1>
+              <Badge variant="default">แดชบอร์ดตรวจความพร้อม</Badge>
+              <h1 className="mt-2 text-3xl font-bold tracking-normal">ตรวจความพร้อม P-SAR</h1>
               <p className="mt-2 max-w-3xl text-muted-foreground">
-                Evidence found here is a preparation signal, not an official approval of the final report.
+                ระบบช่วยตรวจว่าหลักฐานที่อัปโหลดครอบคลุมหัวข้อ P-SAR แค่ไหน ผลนี้เป็นตัวช่วยเตรียมงาน ไม่ใช่การอนุมัติรายงานอย่างเป็นทางการ
               </p>
             </div>
           </div>
@@ -259,9 +289,9 @@ export function PsarReadinessPage({ onBackHome, onRevealPath }: PsarReadinessPag
           <CardHeader>
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
-                <CardTitle>Your report is {readiness ? percent(readiness.overall_completion_score) : 0}% ready</CardTitle>
+                <CardTitle>{readiness ? `รายงานพร้อม ${percent(readiness.overall_completion_score)}%` : "กำลังตรวจความพร้อมรายงาน"}</CardTitle>
                 <CardDescription>
-                  Some required evidence may still be missing. Upload the recommended files below to improve report completeness.
+                  อัปโหลดหลักฐานที่ระบบแนะนำเพื่อให้รายงานครบถ้วนขึ้นก่อนสร้างแบบฟอร์ม
                 </CardDescription>
               </div>
               {isLoading ? <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /> : null}
@@ -282,19 +312,19 @@ export function PsarReadinessPage({ onBackHome, onRevealPath }: PsarReadinessPag
                 <div className="flex gap-2">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>
-                    Readiness is below {percent(readiness.warning_threshold)}%. The official form can be generated, but missing fields may remain blank.
+                    ความพร้อมต่ำกว่า {percent(readiness.warning_threshold)}% ยังสร้างแบบฟอร์มได้ แต่บางช่องอาจว่างและต้องเติมเอง
                   </span>
                 </div>
                 <Button variant="outline" size="sm" disabled={isGeneratingReport} onClick={() => void handleGenerateReport()}>
                   {isGeneratingReport ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />}
-                  Generate anyway
+                  สร้างต่อ
                 </Button>
               </div>
             ) : null}
             {!belowThreshold ? (
               <Button disabled={!readiness || isGeneratingReport} onClick={() => void handleGenerateReport()}>
                 {isGeneratingReport ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />}
-                Generate official P-SAR form
+                สร้างแบบฟอร์ม P-SAR
               </Button>
             ) : null}
             {generationNotice ? (
@@ -303,7 +333,7 @@ export function PsarReadinessPage({ onBackHome, onRevealPath }: PsarReadinessPag
                 {reportPath ? (
                   <Button variant="outline" size="sm" onClick={() => onRevealPath(reportPath)}>
                     <FileCheck2 className="h-4 w-4" />
-                    Open report
+                    เปิดรายงาน
                   </Button>
                 ) : null}
               </div>
@@ -313,33 +343,33 @@ export function PsarReadinessPage({ onBackHome, onRevealPath }: PsarReadinessPag
 
         <Card>
           <CardHeader>
-            <CardTitle>Upload evidence</CardTitle>
-            <CardDescription>Supported files: PDF, DOCX, XLSX, and images.</CardDescription>
+            <CardTitle>อัปโหลดหลักฐาน</CardTitle>
+            <CardDescription>รองรับ PDF, DOCX, XLSX และไฟล์รูปภาพ</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4">
             <div className="grid gap-2">
-              <Label>Project ID</Label>
+              <Label>รหัสโปรเจกต์</Label>
               <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                 <Input value={projectId} onChange={(event) => setProjectId(event.target.value)} />
                 <Button variant="outline" disabled={isLoading} onClick={() => void loadReadiness(projectId)}>
                   {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                  Load
+                  โหลดข้อมูล
                 </Button>
               </div>
             </div>
             <div className="grid gap-2">
-              <Label>Evidence file</Label>
+              <Label>ไฟล์หลักฐาน</Label>
               <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                 <Input value={evidencePath} onChange={(event) => setEvidencePath(event.target.value)} placeholder="C:\\dmc\\lesson-plan.docx" />
                 <Button variant="outline" disabled={isAddingEvidence} onClick={() => void handleBrowseEvidence()}>
                   <FolderOpen className="h-4 w-4" />
-                  Browse
+                  เลือกไฟล์
                 </Button>
               </div>
             </div>
             <Button disabled={!evidencePath.trim() || isAddingEvidence} onClick={() => void addEvidencePath(evidencePath)}>
               {isAddingEvidence ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
-              Upload missing evidence
+              อัปโหลดหลักฐาน
             </Button>
           </CardContent>
         </Card>
@@ -353,10 +383,10 @@ export function PsarReadinessPage({ onBackHome, onRevealPath }: PsarReadinessPag
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                   <div>
                     <CardTitle>{section.section_title}</CardTitle>
-                    <CardDescription>{percent(section.completion_score)}% complete</CardDescription>
+                    <CardDescription>พร้อม {percent(section.completion_score)}%</CardDescription>
                   </div>
                   <Badge variant="outline">
-                    {section.complete_count} complete / {section.requirements.length} requirements
+                    ครบ {section.complete_count} / ทั้งหมด {section.requirements.length} รายการ
                   </Badge>
                 </div>
               </CardHeader>
@@ -379,20 +409,20 @@ export function PsarReadinessPage({ onBackHome, onRevealPath }: PsarReadinessPag
         <aside className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Recommended uploads</CardTitle>
-              <CardDescription>Sorted by priority from the P-SAR requirement matrix.</CardDescription>
+              <CardTitle>หลักฐานที่แนะนำให้อัปโหลด</CardTitle>
+              <CardDescription>เรียงตามความสำคัญจากรายการตรวจ P-SAR</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               {readiness && readiness.missing_evidence_recommendations.length === 0 ? (
                 <div className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
-                  No recommended upload is currently missing.
+                  ตอนนี้ไม่มีหลักฐานแนะนำที่ขาดอยู่
                 </div>
               ) : null}
               {readiness?.missing_evidence_recommendations.slice(0, 12).map((item) => (
                 <div key={`${item.requirement_id}-${item.evidence_name}`} className="rounded-lg border p-3">
                   <div className="flex items-start justify-between gap-2">
                     <div className="font-semibold leading-6">{item.evidence_name}</div>
-                    <Badge variant={priorityVariant(item.priority)}>{item.priority}</Badge>
+                    <Badge variant={priorityVariant(item.priority)}>{priorityLabel(item.priority)}</Badge>
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">{item.section_title}</div>
                   <div className="mt-2 text-sm leading-6 text-muted-foreground">{item.why_needed}</div>
@@ -403,7 +433,7 @@ export function PsarReadinessPage({ onBackHome, onRevealPath }: PsarReadinessPag
                   </div>
                   <Button className="mt-3 w-full" variant="outline" size="sm" onClick={() => void handleBrowseEvidence(true)}>
                     <UploadCloud className="h-4 w-4" />
-                    Upload evidence
+                    อัปโหลดหลักฐาน
                   </Button>
                 </div>
               ))}
@@ -412,13 +442,13 @@ export function PsarReadinessPage({ onBackHome, onRevealPath }: PsarReadinessPag
 
           <Card>
             <CardHeader>
-              <CardTitle>Mapped files</CardTitle>
-              <CardDescription>Files currently mapped to P-SAR requirements.</CardDescription>
+              <CardTitle>ไฟล์ที่จับคู่แล้ว</CardTitle>
+              <CardDescription>ไฟล์ที่ระบบจับคู่กับรายการตรวจ P-SAR แล้ว</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               {readiness && readiness.mapped_files.length === 0 ? (
                 <div className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
-                  No mapped files yet.
+                  ยังไม่มีไฟล์ที่จับคู่กับรายการตรวจ
                 </div>
               ) : null}
               {readiness?.mapped_files.slice(0, 12).map((mapping) => (
@@ -426,7 +456,7 @@ export function PsarReadinessPage({ onBackHome, onRevealPath }: PsarReadinessPag
               ))}
               {readiness && readiness.uploaded_files.length > readiness.mapped_files.length ? (
                 <div className="text-xs text-muted-foreground">
-                  {readiness.uploaded_files.length} uploaded file(s), including files with no clear mapping.
+                  อัปโหลดแล้ว {readiness.uploaded_files.length} ไฟล์ รวมไฟล์ที่ยังจับคู่รายการตรวจไม่ได้ชัดเจน
                 </div>
               ) : null}
             </CardContent>
@@ -470,14 +500,14 @@ function RequirementRow({
         <div className="grid gap-2 sm:grid-cols-3 lg:min-w-[360px]">
           <Badge variant={statusVariant(requirement.status)}>{statusLabel(requirement.status)}</Badge>
           <div className="text-sm text-muted-foreground">{percent(requirement.completion_score)}%</div>
-          <div className="text-sm text-muted-foreground">{requirement.found_evidence.length} evidence</div>
+          <div className="text-sm text-muted-foreground">พบ {requirement.found_evidence.length} หลักฐาน</div>
         </div>
       </button>
 
       {expanded ? (
         <div className="space-y-4 border-t p-3">
           <div className="grid gap-2 text-sm">
-            <div className="font-medium">Missing evidence</div>
+            <div className="font-medium">หลักฐานที่ยังขาด</div>
             {requirement.missing_evidence.length ? (
               <div className="flex flex-wrap gap-2">
                 {requirement.missing_evidence.map((item) => (
@@ -485,12 +515,12 @@ function RequirementRow({
                 ))}
               </div>
             ) : (
-              <div className="text-muted-foreground">No missing evidence under the current readiness rule.</div>
+              <div className="text-muted-foreground">ยังไม่มีหลักฐานที่ขาดตามกติกาปัจจุบัน</div>
             )}
           </div>
 
           <div className="grid gap-2 text-sm">
-            <div className="font-medium">Evidence found</div>
+            <div className="font-medium">หลักฐานที่พบ</div>
             {requirement.found_evidence.length ? (
               <div className="space-y-2">
                 {requirement.found_evidence.map((mapping) => (
@@ -518,13 +548,13 @@ function RequirementRow({
                       }}
                     >
                       <FileCheck2 className="h-4 w-4" />
-                      Show mapped file
+                      เปิดไฟล์หลักฐาน
                     </Button>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="text-muted-foreground">Not enough evidence yet.</div>
+              <div className="text-muted-foreground">ยังมีหลักฐานไม่พอ</div>
             )}
           </div>
         </div>

@@ -1,5 +1,6 @@
 import { AlertCircle, CheckCircle2, ExternalLink, FileText, FolderOpen, Loader2 } from "lucide-react";
 import messages from "../i18n/th.json";
+import { describeJobStatus } from "../lib/appUi";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -39,7 +40,7 @@ export function JobProgressPanel({ currentJob, progressPercent, onRevealPath }: 
           </div>
           {currentJob ? (
             <Badge variant="outline" className={statusBadgeClass(currentJob.status)}>
-              {currentJob.status}
+              {describeJobStatus(currentJob.status)}
             </Badge>
           ) : null}
         </div>

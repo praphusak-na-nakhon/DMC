@@ -23,7 +23,13 @@ import {
   UsersRound,
 } from "lucide-react";
 import messages from "../i18n/th.json";
-import { describeBrowserRuntimePhase, formatBytes, formatTimestamp } from "../lib/appUi";
+import {
+  describeBrowserRuntimePhase,
+  describeCreditStatus,
+  describeJobStatus,
+  formatBytes,
+  formatTimestamp,
+} from "../lib/appUi";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -178,10 +184,10 @@ function SystemPill({
   tone?: "success" | "warning" | "danger" | "muted";
 }) {
   const toneClass = {
-    success: "border-emerald-200 bg-emerald-50 text-emerald-800",
-    warning: "border-amber-200 bg-amber-50 text-amber-800",
-    danger: "border-red-200 bg-red-50 text-red-700",
-    muted: "border-slate-200 bg-white text-slate-600",
+    success: "border-primary/20 bg-primary/10 text-primary",
+    warning: "border-amber-500/30 bg-amber-500/10 text-amber-700",
+    danger: "border-destructive/30 bg-destructive/10 text-destructive",
+    muted: "border-border bg-background text-muted-foreground",
   }[tone];
   return (
     <div className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${toneClass}`}>
@@ -283,6 +289,13 @@ export function GraduationWizard({
   const visibleErrorMessage = errorMessage?.includes("transformCallback") ? null : errorMessage;
   const reportTools = messages.app.reportTools;
   const accountCopy = messages.app.account;
+  const creditStatus = describeCreditStatus(currentJob?.credit_status);
+  const creditStatusClass = {
+    info: "border-blue-200 bg-blue-50 text-blue-950",
+    warning: "border-amber-200 bg-amber-50 text-amber-950",
+    danger: "border-destructive/30 bg-destructive/10 text-destructive",
+    success: "border-emerald-200 bg-emerald-50 text-emerald-950",
+  } as const;
 
   useEffect(() => {
     if (currentJob || preview) {
@@ -323,22 +336,22 @@ export function GraduationWizard({
             </div>
             <div className="mt-1 flex flex-wrap gap-2">
               <SystemPill
-                label="Sidecar"
+                label="ตัวเชื่อมระบบ"
                 value={connectionLabel(connectionState)}
                 tone={connectionState === "ready" ? "success" : connectionState === "error" ? "danger" : "warning"}
               />
               <SystemPill
-                label="Account"
+                label="บัญชี"
                 value={accountStatus?.signed_in ? accountStatus.email ?? "signed in" : accountCopy.signInRequired}
                 tone={accountReady ? "success" : "warning"}
               />
               <SystemPill
-                label="Credits"
-                value={accountStatus?.wallet ? `${accountStatus.wallet.available} available` : "-"}
+                label="เครดิต"
+                value={accountStatus?.wallet ? `${accountStatus.wallet.available} พร้อมใช้` : "-"}
                 tone={accountStatus?.wallet && accountStatus.wallet.available > 0 ? "success" : "warning"}
               />
               <SystemPill
-                label="Chromium"
+                label="เบราว์เซอร์"
                 value={runtimeReady ? "พร้อม" : browserRuntimeStatus?.state ?? "ยังไม่ตรวจ"}
                 tone={runtimeReady ? "success" : "warning"}
               />
@@ -556,12 +569,12 @@ export function GraduationWizard({
                   <AlertDescription>{accountCopy.insufficientCredits}</AlertDescription>
                 </Alert>
               ) : null}
-              <Progress value={preview ? 100 : progressPercent} className="h-3" />
+              <Progress value={currentJob ? progressPercent : 0} className="h-3" />
             </div>
 
             <div className="grid gap-3 rounded-xl border bg-slate-50 p-4">
               <div className="grid grid-cols-[1fr_auto] items-center gap-3">
-                <Label htmlFor="wizard-min-score">Minimum score</Label>
+                <Label htmlFor="wizard-min-score">คะแนนจับคู่ขั้นต่ำ</Label>
                 <Input
                   id="wizard-min-score"
                   type="number"
@@ -582,6 +595,22 @@ export function GraduationWizard({
             </div>
 
             <div className="grid gap-3">
+              {creditStatus ? (
+                <Alert className={creditStatusClass[creditStatus.tone]}>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>{creditStatus.title}</AlertTitle>
+                  <AlertDescription>{creditStatus.message}</AlertDescription>
+                </Alert>
+              ) : null}
+              {currentJobNeedsAuth ? (
+                <Alert className="border-amber-200 bg-amber-50 text-amber-950">
+                  <LogIn className="h-4 w-4" />
+                  <AlertTitle>ระบบกำลังรอให้ยืนยันตัวตนใน DMC</AlertTitle>
+                  <AlertDescription>
+                    ระบบเปิด Chromium สำหรับ DMC ไว้แล้ว กรุณา login ให้เสร็จในหน้าต่างนั้น แล้วกลับมากด “ทำต่อหลังยืนยันตัวตน”
+                  </AlertDescription>
+                </Alert>
+              ) : null}
               <Button
                 className="h-16 bg-blue-600 text-lg hover:bg-blue-700"
                 disabled={!canStart}
@@ -609,7 +638,7 @@ export function GraduationWizard({
               <div className="grid gap-2 rounded-xl border bg-white p-4 text-sm">
                 <div className="flex items-center justify-between gap-3">
                   <span className="font-semibold">สถานะ</span>
-                  <Badge variant="outline">{currentJob.status}</Badge>
+                  <Badge variant="outline">{describeJobStatus(currentJob.status)}</Badge>
                 </div>
                 <div>สำเร็จ: {currentJob.succeeded}</div>
                 <div>ต้องตรวจเพิ่ม/ผิดพลาด: {currentJob.failed}</div>
@@ -640,15 +669,15 @@ export function GraduationWizard({
               </Button>
               <Button variant="outline" size="sm" disabled={!activeJobId} onClick={onPause}>
                 <Pause className="h-4 w-4" />
-                Pause
+                พักงาน
               </Button>
               <Button size="sm" variant="secondary" disabled={!currentJobNeedsAuth} onClick={onResume}>
                 <LogIn className="h-4 w-4" />
-                Resume หลัง Login
+                ทำต่อหลังยืนยันตัวตน
               </Button>
               <Button variant="destructive" size="sm" disabled={!activeJobId} onClick={onCancel}>
                 <Square className="h-4 w-4" />
-                Cancel
+                ยกเลิกงาน
               </Button>
             </div>
 
@@ -700,7 +729,7 @@ export function GraduationWizard({
             <div>
               <CardTitle>เครื่องมือเพิ่มเติม</CardTitle>
               <div className="mt-1 text-sm text-slate-600">
-                การตั้งค่า, ประวัติการใช้งาน และข้อความจาก sidecar
+                การตั้งค่า, ประวัติการใช้งาน และข้อความจากตัวเชื่อมระบบ
               </div>
             </div>
             <Button variant="outline" onClick={() => setShowSupportDrawer((value) => !value)}>
@@ -727,14 +756,14 @@ export function GraduationWizard({
                 variant={supportSection === "messages" ? "default" : "outline"}
                 onClick={() => setSupportSection("messages")}
               >
-                ข้อความจาก Sidecar ({sidecarMessages.length})
+                ข้อความจากตัวเชื่อมระบบ ({sidecarMessages.length})
               </Button>
             </div>
 
             {supportSection === "settings" ? (
               <div className="grid gap-4 lg:grid-cols-3">
                 <div className="space-y-3 rounded-xl border bg-slate-50 p-4">
-                  <div className="font-semibold">เชื่อมต่อ Sidecar</div>
+                  <div className="font-semibold">เชื่อมต่อตัวเชื่อมระบบ</div>
                   <div className="text-sm text-slate-600">{connectionLabel(connectionState)}</div>
                   <Button className="w-full" variant="outline" onClick={onConnect} disabled={connectionState === "connecting"}>
                     {connectionState === "connecting" ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
@@ -743,21 +772,21 @@ export function GraduationWizard({
                 </div>
 
                 <div className="space-y-3 rounded-xl border bg-slate-50 p-4">
-                  <div className="font-semibold">Account / Credits</div>
+                  <div className="font-semibold">บัญชีและเครดิต</div>
                   <div className="text-sm text-slate-600">
                     {accountStatus?.signed_in ? accountStatus.email : accountCopy.signInRequired}
                   </div>
                   <div className="grid grid-cols-3 gap-2 text-sm">
                     <div className="rounded-lg border bg-white p-2">
-                      <div className="text-xs text-slate-500">Balance</div>
+                      <div className="text-xs text-slate-500">เครดิตรวม</div>
                       <div className="font-semibold">{accountStatus?.wallet?.balance ?? "-"}</div>
                     </div>
                     <div className="rounded-lg border bg-white p-2">
-                      <div className="text-xs text-slate-500">Reserved</div>
+                      <div className="text-xs text-slate-500">กันไว้</div>
                       <div className="font-semibold">{accountStatus?.wallet?.reserved ?? "-"}</div>
                     </div>
                     <div className="rounded-lg border bg-white p-2">
-                      <div className="text-xs text-slate-500">Available</div>
+                      <div className="text-xs text-slate-500">พร้อมใช้</div>
                       <div className="font-semibold">{accountStatus?.wallet?.available ?? "-"}</div>
                     </div>
                   </div>
@@ -768,12 +797,12 @@ export function GraduationWizard({
                 </div>
 
                 <div className="space-y-3 rounded-xl border bg-slate-50 p-4">
-                  <div className="font-semibold">Config / Chromium</div>
+                  <div className="font-semibold">Config และ Chromium</div>
                   <div className="text-sm text-slate-600">
-                    Config: {moduleConfigStatus ? `${moduleConfigStatus.version} (${moduleConfigStatus.source})` : "-"}
+                    สถานะ config: {moduleConfigStatus ? `${moduleConfigStatus.version} (${moduleConfigStatus.source})` : "-"}
                   </div>
                   <div className="text-sm text-slate-600">
-                    Runtime: {browserRuntimeStatus?.message ?? browserRuntimeStatus?.state ?? "-"}
+                    สถานะ runtime: {browserRuntimeStatus?.message ?? browserRuntimeStatus?.state ?? "-"}
                   </div>
                   {browserRuntimeProgress ? (
                     <div className="rounded-lg border bg-white p-3 text-sm">
@@ -787,7 +816,7 @@ export function GraduationWizard({
                   <div className="flex flex-wrap gap-2">
                     <Button variant="outline" onClick={onSyncConfig}>
                       <CloudCog className="h-4 w-4" />
-                      Sync Config
+                      ซิงก์ config
                     </Button>
                     {browserRuntimeStatus && !browserRuntimeStatus.installed ? (
                       <Button
@@ -795,18 +824,18 @@ export function GraduationWizard({
                         onClick={onBootstrapBrowserRuntime}
                       >
                         {isBootstrappingBrowser ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
-                        Install Chromium
+                        ติดตั้ง Chromium
                       </Button>
                     ) : (
                       <Button variant="outline" onClick={onReloadBrowserRuntime}>
                         <RefreshCw className="h-4 w-4" />
-                        Re-check Runtime
+                        ตรวจ runtime อีกครั้ง
                       </Button>
                     )}
                   </div>
                   {browserRuntimeStatus?.estimated_download_bytes ? (
                     <div className="text-xs text-slate-500">
-                      Download size: {formatBytes(browserRuntimeStatus.estimated_download_bytes)}
+                      ขนาดดาวน์โหลด: {formatBytes(browserRuntimeStatus.estimated_download_bytes)}
                     </div>
                   ) : null}
                 </div>

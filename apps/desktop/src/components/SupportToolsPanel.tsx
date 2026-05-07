@@ -53,14 +53,14 @@ export function SupportToolsPanel({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid gap-3">
-          <Detail label="Database" value={databaseStatus?.path ?? "-"} />
+          <Detail label="ฐานข้อมูล" value={databaseStatus?.path ?? "-"} />
           <div className="grid gap-3 sm:grid-cols-2">
-            <Detail label="Schema version" value={databaseStatus?.schema_version ?? "-"} />
-            <Detail label="Account" value={accountStatus?.email ?? accountStatus?.user_id ?? "-"} />
-            <Detail label="Session expires" value={formatTimestamp(accountStatus?.token_expires_at ?? null)} />
-            <Detail label="Available credits" value={accountStatus?.wallet?.available ?? "-"} />
+            <Detail label="เวอร์ชัน schema" value={databaseStatus?.schema_version ?? "-"} />
+            <Detail label="บัญชี" value={accountStatus?.email ?? accountStatus?.user_id ?? "-"} />
+            <Detail label="session หมดอายุ" value={formatTimestamp(accountStatus?.token_expires_at ?? null)} />
+            <Detail label="เครดิตพร้อมใช้" value={accountStatus?.wallet?.available ?? "-"} />
           </div>
-          <Detail label="Tables" value={databaseStatus?.tables.join(", ") ?? "-"} />
+          <Detail label="ตาราง" value={databaseStatus?.tables.join(", ") ?? "-"} />
         </div>
 
         <div className="flex flex-wrap gap-2">
