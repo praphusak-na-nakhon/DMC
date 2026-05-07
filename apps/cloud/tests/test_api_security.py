@@ -94,6 +94,9 @@ def test_rate_limit_client_key_only_trusts_configured_proxy(monkeypatch) -> None
     proxied_request = request_for("203.0.113.10", "198.51.100.1, 203.0.113.10")
     assert client_rate_limit_key(proxied_request) == "198.51.100.1"
 
+    spoofed_request = request_for("203.0.113.10", "192.0.2.99, 198.51.100.1")
+    assert client_rate_limit_key(spoofed_request) == "198.51.100.1"
+
 
 def test_license_routes_are_removed(monkeypatch, tmp_path: Path) -> None:
     setup_test_security(monkeypatch)

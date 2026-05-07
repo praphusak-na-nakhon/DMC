@@ -45,7 +45,7 @@ from .job_store import JobStore
 from .module_config import load_effective_config, sync_module_config
 from .modules import get_module
 from .p_sar_readiness import PsarReadinessService
-from .runtime import JobManager, build_event_notification
+from .runtime import JobManager, build_event_notification, utc_now
 from .schemas import (
     AddPsarEvidenceRequest,
     ArchiveJobsRequest,
@@ -257,40 +257,33 @@ class RpcServer:
                         message="Chromium browser runtime is not installed.",
                         details=browser_runtime.model_dump(),
                     )
-                credit_reservation_id: str | None = None
-                credits_reserved = 0
-                if not bool(start_params.options.get("dry_run", False)):
-                    credits_reserved = self._estimate_credit_units(start_params)
-                    reservation = reserve_credits(
-                        self.account_store,
-                        job_id=start_params.job_id,
-                        module=start_params.module,
-                        units=credits_reserved,
-                        idempotency_key=f"{start_params.job_id}:reserve",
+                if not bool(start_params.options.get("dry_run", False)) and self.account_store.get_session() is None:
+                    return self._error(
+                        request.id,
+                        code="SIGN_IN_REQUIRED",
+                        message="Sign in before starting credit-backed jobs.",
                     )
-                    credit_reservation_id = reservation.reservation_id
+                estimated_credits = start_params.options.get("estimated_credits")
+                credits_reserved = estimated_credits if isinstance(estimated_credits, int) and estimated_credits > 0 else 0
                 self.job_store.create_pending_job(
                     job_id=start_params.job_id,
                     module=start_params.module,
                     source_file=start_params.excel_path,
-                    credit_reservation_id=credit_reservation_id,
                     credits_reserved=credits_reserved,
-                    credit_status="reserved" if credit_reservation_id else None,
+                    credit_status="reserving" if not bool(start_params.options.get("dry_run", False)) else None,
                 )
-                self.job_manager.start_job(
-                    job_id=start_params.job_id,
-                    module_name=start_params.module,
-                    excel_path=Path(start_params.excel_path),
-                    options=start_params.options,
-                    credit_reservation_id=credit_reservation_id,
-                    credits_reserved=credits_reserved,
-                )
+                threading.Thread(
+                    target=self._prepare_and_start_job,
+                    name=f"dmc-start-{start_params.job_id}",
+                    args=(start_params,),
+                    daemon=True,
+                ).start()
                 return RpcSuccessResponse(
                     id=request.id,
                     result={
                         "accepted": True,
                         "job_id": start_params.job_id,
-                        "credit_reservation_id": credit_reservation_id,
+                        "credit_reservation_id": None,
                         "credits_reserved": credits_reserved,
                     },
                 )
@@ -427,6 +420,54 @@ class RpcServer:
         except Exception as exc:
             raise DomainError("CREDIT_PREFLIGHT_FAILED", "Unable to estimate credits for this job.") from exc
         return max(int(preview.rows_accepted), 1)
+
+    def _prepare_and_start_job(self, start_params: StartJobRequest) -> None:
+        credit_reservation_id: str | None = None
+        credits_reserved = 0
+        try:
+            if not bool(start_params.options.get("dry_run", False)):
+                credits_reserved = self._estimate_credit_units(start_params)
+                reservation = reserve_credits(
+                    self.account_store,
+                    job_id=start_params.job_id,
+                    module=start_params.module,
+                    units=credits_reserved,
+                    idempotency_key=f"{start_params.job_id}:reserve",
+                )
+                credit_reservation_id = reservation.reservation_id
+                self.job_store.update_credit_status(
+                    start_params.job_id,
+                    credit_reservation_id=credit_reservation_id,
+                    credits_reserved=credits_reserved,
+                    credit_status="reserved",
+                )
+                self.emit_notification(
+                    {
+                        "type": "sidecar_stderr",
+                        "message": f"credits reserved for job {start_params.job_id}: {credits_reserved}",
+                    }
+                )
+
+            self.job_manager.start_job(
+                job_id=start_params.job_id,
+                module_name=start_params.module,
+                excel_path=Path(start_params.excel_path),
+                options=start_params.options,
+                credit_reservation_id=credit_reservation_id,
+                credits_reserved=credits_reserved,
+            )
+        except Exception as exc:  # pragma: no cover - defensive background path
+            code = exc.code if isinstance(exc, DomainError) else exc.__class__.__name__.upper()
+            self.job_store.mark_failed(start_params.job_id, checkpoint=None, finished_at=utc_now())
+            self.job_store.update_credit_status(start_params.job_id, credit_status=f"start_failed:{code}")
+            self.emit_notification(
+                {
+                    "type": "error",
+                    "job_id": start_params.job_id,
+                    "code": code,
+                    "message": exc.user_message if isinstance(exc, DomainError) else "Job failed before it started.",
+                }
+            )
 
     def _resume_existing_job(
         self,

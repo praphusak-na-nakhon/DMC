@@ -517,25 +517,39 @@ class AccountRepository:
 
         assignments: list[str] = []
         values: list[str | None] = []
+        should_revoke_sessions = False
         if request.password is not None:
             assignments.append("password_hash = ?")
             values.append(_hash_password(request.password))
+            should_revoke_sessions = True
         if request.display_name is not None:
             assignments.append("display_name = ?")
             values.append(request.display_name)
         if request.status is not None:
             assignments.append("status = ?")
             values.append(request.status)
+            if request.status != "active":
+                should_revoke_sessions = True
 
         if assignments:
+            revoked_at = utc_now() if should_revoke_sessions else None
             assignments.append("updated_at = ?")
-            values.append(utc_now())
+            values.append(revoked_at or utc_now())
             values.append(user_id)
-            with connect(self.sqlite_path) as connection:
+            with connect(self.sqlite_path, immediate=True) as connection:
                 connection.execute(
                     f"UPDATE users SET {', '.join(assignments)} WHERE id = ?",
                     tuple(values),
                 )
+                if revoked_at is not None:
+                    connection.execute(
+                        """
+                        UPDATE sessions
+                        SET revoked_at = ?
+                        WHERE user_id = ? AND revoked_at IS NULL
+                        """,
+                        (revoked_at, user_id),
+                    )
 
         updated = self.get_user_admin(user_id)
         if updated is None:
@@ -639,6 +653,30 @@ class AccountRepository:
     ) -> CreditReservationResponse:
         with connect(self.sqlite_path, immediate=True) as connection:
             row = self._get_reservation_row(connection, user_id, reservation_id)
+            if request.idempotency_key:
+                existing = connection.execute(
+                    """
+                    SELECT type, amount, reservation_id
+                    FROM credit_transactions
+                    WHERE user_id = ? AND idempotency_key = ?
+                    """,
+                    (user_id, request.idempotency_key),
+                ).fetchone()
+                if existing is not None:
+                    if existing["type"] != "capture" or existing["reservation_id"] != reservation_id:
+                        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="credit transaction idempotency conflict")
+                    self._sync_reservation_status(connection, user_id, reservation_id)
+                    return_row = self._get_reservation_row(connection, user_id, reservation_id)
+                    return CreditReservationResponse(
+                        reservation_id=str(return_row["id"]),
+                        job_id=str(return_row["job_id"]),
+                        module=str(return_row["module"]),
+                        status=cast(CreditReservationStatus, return_row["status"]),
+                        units_reserved=int(return_row["units_reserved"]),
+                        units_captured=int(return_row["units_captured"]),
+                        units_released=int(return_row["units_released"]),
+                        wallet=self._wallet_from_connection(connection, user_id),
+                    )
             target_captured = min(int(request.units), int(row["units_reserved"]) - int(row["units_released"]))
             current_captured = int(row["units_captured"])
             delta = max(target_captured - current_captured, 0)
@@ -696,6 +734,30 @@ class AccountRepository:
     ) -> CreditReservationResponse:
         with connect(self.sqlite_path, immediate=True) as connection:
             row = self._get_reservation_row(connection, user_id, reservation_id)
+            if request.idempotency_key:
+                existing = connection.execute(
+                    """
+                    SELECT type, amount, reservation_id
+                    FROM credit_transactions
+                    WHERE user_id = ? AND idempotency_key = ?
+                    """,
+                    (user_id, request.idempotency_key),
+                ).fetchone()
+                if existing is not None:
+                    if existing["type"] != "release" or existing["reservation_id"] != reservation_id:
+                        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="credit transaction idempotency conflict")
+                    self._sync_reservation_status(connection, user_id, reservation_id)
+                    return_row = self._get_reservation_row(connection, user_id, reservation_id)
+                    return CreditReservationResponse(
+                        reservation_id=str(return_row["id"]),
+                        job_id=str(return_row["job_id"]),
+                        module=str(return_row["module"]),
+                        status=cast(CreditReservationStatus, return_row["status"]),
+                        units_reserved=int(return_row["units_reserved"]),
+                        units_captured=int(return_row["units_captured"]),
+                        units_released=int(return_row["units_released"]),
+                        wallet=self._wallet_from_connection(connection, user_id),
+                    )
             max_releasable = int(row["units_reserved"]) - int(row["units_captured"])
             target_released = min(int(request.units), max_releasable)
             current_released = int(row["units_released"])

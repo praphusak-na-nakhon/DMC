@@ -12,6 +12,7 @@ import hashlib
 from app.config import settings
 from app.db import connect
 from app.main import app
+from app.schemas import OcrFieldResponse, OcrFormConverterResponse, OcrRecordResponse
 from app.telemetry_store import TelemetryStore
 
 _SCRIPT_SPEC = spec_from_file_location(
@@ -96,6 +97,65 @@ def test_account_login_success_fail_logout(monkeypatch, tmp_path: Path) -> None:
     headers = {"Authorization": f"Bearer {token}"}
     assert client.post("/v1/auth/logout", headers=headers).status_code == 200
     assert client.get("/v1/auth/me", headers=headers).status_code == 401
+
+
+def test_admin_password_change_revokes_existing_sessions(monkeypatch, tmp_path: Path) -> None:
+    user_id = _create_user(monkeypatch, tmp_path)
+    token = _login()
+    headers = {"Authorization": f"Bearer {token}"}
+    assert client.get("/v1/auth/me", headers=headers).status_code == 200
+
+    response = client.patch(
+        f"/v1/admin/users/{user_id}",
+        headers=_admin_headers(),
+        json={"password": "new-correct-password"},
+    )
+    assert response.status_code == 200
+    assert client.get("/v1/auth/me", headers=headers).status_code == 401
+    assert (
+        client.post(
+            "/v1/auth/login",
+            json={
+                "email": "teacher@example.test",
+                "password": "correct-password",
+                "device_id": "device-1",
+                "device_name": "desktop-1",
+                "app_version": "0.1.0",
+            },
+        ).status_code
+        == 401
+    )
+    assert (
+        client.post(
+            "/v1/auth/login",
+            json={
+                "email": "teacher@example.test",
+                "password": "new-correct-password",
+                "device_id": "device-1",
+                "device_name": "desktop-1",
+                "app_version": "0.1.0",
+            },
+        ).status_code
+        == 200
+    )
+
+
+def test_failed_login_rate_limit_does_not_block_successful_login(monkeypatch, tmp_path: Path) -> None:
+    _create_user(monkeypatch, tmp_path)
+
+    payload = {
+        "email": "teacher@example.test",
+        "password": "wrong-password",
+        "device_id": "device-1",
+        "device_name": "desktop-1",
+        "app_version": "0.1.0",
+    }
+    for _ in range(10):
+        assert client.post("/v1/auth/login", json=payload).status_code == 401
+    assert client.post("/v1/auth/login", json=payload).status_code == 429
+
+    payload["password"] = "correct-password"
+    assert client.post("/v1/auth/login", json=payload).status_code == 200
 
 
 def test_manual_topup_wallet_and_reservation_flow(monkeypatch, tmp_path: Path) -> None:
@@ -855,3 +915,83 @@ def test_form_converter_ocr_credit_ledger_end_to_end(monkeypatch, tmp_path: Path
         ("reserve", "formConverter"),
         ("capture", "formConverter"),
     }
+
+
+def test_form_converter_ocr_retry_uses_cached_response_without_double_capture(monkeypatch, tmp_path: Path) -> None:
+    user_id = _create_user(monkeypatch, tmp_path)
+    assert (
+        client.post(
+            f"/v1/admin/users/{user_id}/credits/topup",
+            headers=_admin_headers(),
+            json={"amount": 3, "idempotency_key": "topup-form-retry"},
+        ).status_code
+        == 200
+    )
+    token = _login()
+    headers = {"Authorization": f"Bearer {token}"}
+    reservation = client.post(
+        "/v1/credits/reservations",
+        headers=headers,
+        json={
+            "job_id": "form-job-retry-1",
+            "module": "formConverter",
+            "units": 2,
+            "idempotency_key": "reserve-form-retry-1",
+        },
+    ).json()
+    calls = {"count": 0}
+
+    def fake_ocr(_request) -> OcrFormConverterResponse:  # noqa: ANN001
+        calls["count"] += 1
+        return OcrFormConverterResponse(
+            job_id="form-job-retry-1",
+            module="formConverter",
+            template_type="student_history_v1",
+            provider="test-provider",
+            records=[
+                OcrRecordResponse(
+                    record_id="record-1",
+                    page_number=1,
+                    status="ready",
+                    fields=[
+                        OcrFieldResponse(
+                            field_name="student_id",
+                            label_th="เลขประจำตัว",
+                            value="1001",
+                            confidence=0.99,
+                            status="ready",
+                        )
+                    ],
+                )
+            ],
+        )
+
+    monkeypatch.setattr("app.routes.ocr.run_form_converter_ocr", fake_ocr)
+    document = b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n2 0 obj << /Type /Page >> endobj\n%%EOF"
+    payload = {
+        "job_id": "form-job-retry-1",
+        "module": "formConverter",
+        "template_type": "student_history_v1",
+        "page_count": 2,
+        "credit_reservation_id": reservation["reservation_id"],
+        "document_sha256": hashlib.sha256(document).hexdigest(),
+        "document_base64": base64.b64encode(document).decode("ascii"),
+    }
+
+    first = client.post("/v1/ocr/form-converter", headers=headers, json=payload)
+    second = client.post("/v1/ocr/form-converter", headers=headers, json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json() == first.json()
+    assert calls["count"] == 1
+    assert client.get("/v1/wallet", headers=headers).json() == {
+        "user_id": user_id,
+        "balance": 1,
+        "reserved": 0,
+        "available": 1,
+    }
+    ledger = client.get(f"/v1/admin/users/{user_id}/ledger", headers=_admin_headers()).json()
+    capture_entries = [entry for entry in ledger if entry["type"] == "capture"]
+    assert len(capture_entries) == 1
+    assert capture_entries[0]["amount"] == 2

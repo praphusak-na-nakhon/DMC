@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,6 +26,23 @@ def _rpc_call(server: RpcServer, method: str, params: dict[str, object]) -> dict
             )
         )
     )
+
+
+def _wait_until(assertion, *, timeout: float = 3.0) -> None:  # noqa: ANN001
+    deadline = time.time() + timeout
+    last_error: AssertionError | None = None
+    while time.time() < deadline:
+        try:
+            result = assertion()
+            if result is False:
+                raise AssertionError("condition not satisfied")
+            return
+        except AssertionError as exc:
+            last_error = exc
+            time.sleep(0.02)
+    if last_error is not None:
+        raise last_error
+    raise AssertionError("condition not satisfied")
 
 
 def _ready_browser_status(tmp_path: Path):
@@ -313,7 +331,7 @@ def test_live_start_requires_account_session_before_job_starts(monkeypatch, tmp_
     assert server.job_store.get_job_record("job-credit-session") is None
 
 
-def test_live_start_blocks_when_credit_reservation_fails(monkeypatch, tmp_path: Path) -> None:
+def test_live_start_reports_credit_reservation_failure_from_background(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
     monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
     monkeypatch.setattr(
@@ -321,6 +339,7 @@ def test_live_start_blocks_when_credit_reservation_fails(monkeypatch, tmp_path: 
         lambda *args, **kwargs: (_ for _ in ()).throw(DomainError("INSUFFICIENT_CREDITS")),
     )
     server = RpcServer(emit_notification=lambda payload: None)
+    monkeypatch.setattr(server.account_store, "get_session", lambda: SimpleNamespace(token="token"))
     started: list[str] = []
     monkeypatch.setattr(server.job_manager, "start_job", lambda **_: started.append("started"))
 
@@ -335,12 +354,15 @@ def test_live_start_blocks_when_credit_reservation_fails(monkeypatch, tmp_path: 
         },
     )
 
-    assert response["error"]["code"] == "INSUFFICIENT_CREDITS"
+    assert response["result"]["accepted"] is True
     assert started == []
-    assert server.job_store.get_job_record("job-credit-low") is None
+    _wait_until(lambda: (server.job_store.get_status("job-credit-low") or {}).get("status") == "failed")
+    status = server.job_store.get_status("job-credit-low")
+    assert status is not None
+    assert status["credit_status"] == "start_failed:INSUFFICIENT_CREDITS"
 
 
-def test_live_start_blocks_when_account_cloud_is_unavailable(monkeypatch, tmp_path: Path) -> None:
+def test_live_start_reports_account_cloud_failure_from_background(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
     monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
     monkeypatch.setattr(
@@ -348,6 +370,7 @@ def test_live_start_blocks_when_account_cloud_is_unavailable(monkeypatch, tmp_pa
         lambda *args, **kwargs: (_ for _ in ()).throw(DomainError("ACCOUNT_CLOUD_UNAVAILABLE")),
     )
     server = RpcServer(emit_notification=lambda payload: None)
+    monkeypatch.setattr(server.account_store, "get_session", lambda: SimpleNamespace(token="token"))
     started: list[str] = []
     monkeypatch.setattr(server.job_manager, "start_job", lambda **_: started.append("started"))
 
@@ -362,12 +385,15 @@ def test_live_start_blocks_when_account_cloud_is_unavailable(monkeypatch, tmp_pa
         },
     )
 
-    assert response["error"]["code"] == "ACCOUNT_CLOUD_UNAVAILABLE"
+    assert response["result"]["accepted"] is True
     assert started == []
-    assert server.job_store.get_job_record("job-cloud-down") is None
+    _wait_until(lambda: (server.job_store.get_status("job-cloud-down") or {}).get("status") == "failed")
+    status = server.job_store.get_status("job-cloud-down")
+    assert status is not None
+    assert status["credit_status"] == "start_failed:ACCOUNT_CLOUD_UNAVAILABLE"
 
 
-def test_live_start_reserves_credits_before_starting_job(monkeypatch, tmp_path: Path) -> None:
+def test_live_start_reserves_credits_in_background_before_starting_job(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
     monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
     reserved: dict[str, object] = {}
@@ -389,6 +415,7 @@ def test_live_start_reserves_credits_before_starting_job(monkeypatch, tmp_path: 
 
     monkeypatch.setattr("dmc_sidecar.rpc.reserve_credits", fake_reserve_credits)
     server = RpcServer(emit_notification=lambda payload: None)
+    monkeypatch.setattr(server.account_store, "get_session", lambda: SimpleNamespace(token="token"))
     monkeypatch.setattr(server.job_manager, "start_job", fake_start_job)
 
     response = _rpc_call(
@@ -405,9 +432,10 @@ def test_live_start_reserves_credits_before_starting_job(monkeypatch, tmp_path: 
     assert response["result"] == {
         "accepted": True,
         "job_id": "job-credit-ok",
-        "credit_reservation_id": "reservation-1",
+        "credit_reservation_id": None,
         "credits_reserved": 7,
     }
+    _wait_until(lambda: started.get("credit_reservation_id") == "reservation-1")
     assert reserved == {
         "job_id": "job-credit-ok",
         "module": "graduation",

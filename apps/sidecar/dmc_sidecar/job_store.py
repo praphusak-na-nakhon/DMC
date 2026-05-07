@@ -119,33 +119,23 @@ class JobStore:
         credits_refunded: int | None = None,
         credit_status: str | None = None,
     ) -> None:
-        with connect() as connection:
-            current = connection.execute(
-                """
-                SELECT credit_reservation_id, credits_reserved, credits_captured, credits_refunded, credit_status
-                FROM job
-                WHERE id = ?
-                """,
-                (job_id,),
-            ).fetchone()
-            if current is None:
-                return
+        with connect(immediate=True) as connection:
             connection.execute(
                 """
                 UPDATE job
-                SET credit_reservation_id = ?,
-                    credits_reserved = ?,
-                    credits_captured = ?,
-                    credits_refunded = ?,
-                    credit_status = ?
+                SET credit_reservation_id = COALESCE(?, credit_reservation_id),
+                    credits_reserved = COALESCE(?, credits_reserved),
+                    credits_captured = COALESCE(?, credits_captured),
+                    credits_refunded = COALESCE(?, credits_refunded),
+                    credit_status = COALESCE(?, credit_status)
                 WHERE id = ?
                 """,
                 (
-                    credit_reservation_id if credit_reservation_id is not None else current["credit_reservation_id"],
-                    credits_reserved if credits_reserved is not None else current["credits_reserved"],
-                    credits_captured if credits_captured is not None else current["credits_captured"],
-                    credits_refunded if credits_refunded is not None else current["credits_refunded"],
-                    credit_status if credit_status is not None else current["credit_status"],
+                    credit_reservation_id,
+                    credits_reserved,
+                    credits_captured,
+                    credits_refunded,
+                    credit_status,
                     job_id,
                 ),
             )
@@ -324,7 +314,8 @@ class JobStore:
         return dict(row)
 
     def list_jobs(self, limit: int = 20) -> list[dict[str, Any]]:
-        with connect() as connection:
+        with connect(immediate=True) as connection:
+            self._backfill_run_summaries(connection, limit=max(limit, 20))
             rows = connection.execute(
                 """
                 SELECT *
@@ -482,6 +473,33 @@ class JobStore:
         if row["status"] not in SUMMARY_FALLBACK_STATUSES:
             return None
         return self._run_summary(connection, str(row["id"]), row["total_records"])
+
+    def _backfill_run_summaries(self, connection: sqlite3.Connection, *, limit: int) -> None:
+        placeholders = ", ".join(["?"] * len(SUMMARY_FALLBACK_STATUSES))
+        rows = connection.execute(
+            f"""
+            SELECT *
+            FROM job
+            WHERE status IN ({placeholders})
+                AND run_summary_json IS NULL
+            ORDER BY COALESCE(finished_at, started_at, id) DESC
+            LIMIT ?
+            """,
+            (*sorted(SUMMARY_FALLBACK_STATUSES), limit),
+        ).fetchall()
+        for row in rows:
+            summary = self._run_summary(connection, str(row["id"]), row["total_records"])
+            connection.execute(
+                """
+                UPDATE job
+                SET run_summary_json = ?
+                WHERE id = ?
+                """,
+                (
+                    json.dumps(summary, ensure_ascii=False, sort_keys=True) if summary is not None else "{}",
+                    row["id"],
+                ),
+            )
 
 
 def _utc_now_for_record() -> str:

@@ -6,6 +6,7 @@ import re
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any, Sequence, cast
 from xml.etree import ElementTree
 from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
@@ -859,7 +860,16 @@ def _save_project_state(
         "uploaded_files": [item.model_dump() for item in uploaded_files],
         "mappings": [item.model_dump() for item in mappings],
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp_path: Path | None = None
+    try:
+        with NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+            temp_path = Path(handle.name)
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+        temp_path.replace(path)
+    finally:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink(missing_ok=True)
 
 
 def _write_psar_report_docx(

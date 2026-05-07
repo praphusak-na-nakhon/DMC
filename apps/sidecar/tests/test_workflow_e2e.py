@@ -262,7 +262,7 @@ def test_account_credit_live_job_reserves_captures_and_releases(monkeypatch, tmp
             "options": {"dry_run": False, "estimated_credits": 2},
         },
     )
-    assert started["result"]["credit_reservation_id"]
+    assert started["result"]["credit_reservation_id"] is None
     assert started["result"]["credits_reserved"] == 2
 
     _wait_until(lambda: server.job_store.get_status("job-credit-live")["credit_status"] == "finalized")

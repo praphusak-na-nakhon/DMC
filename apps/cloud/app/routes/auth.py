@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from ..account_service import AccountRepository, SessionRecord
 from ..auth import require_account_session
@@ -18,20 +18,24 @@ def get_account_repository() -> AccountRepository:
 @router.post("/login", response_model=AuthLoginResponse, dependencies=[Depends(rate_limit(scope="auth.login.ip", limit=60, window_seconds=60))])
 def login(request: AuthLoginRequest, http_request: Request) -> AuthLoginResponse:
     normalized_email = request.email.strip().lower()
-    enforce_rate_limit(scope="auth.login.email", key=normalized_email, limit=10, window_seconds=300)
-    enforce_rate_limit(
-        scope="auth.login.ip_email",
-        key=f"{client_rate_limit_key(http_request)}:{normalized_email}",
-        limit=20,
-        window_seconds=300,
-    )
-    token, account = get_account_repository().authenticate(
-        email=request.email,
-        password=request.password,
-        device_id=request.device_id,
-        device_name=request.device_name,
-        app_version=request.app_version,
-    )
+    try:
+        token, account = get_account_repository().authenticate(
+            email=request.email,
+            password=request.password,
+            device_id=request.device_id,
+            device_name=request.device_name,
+            app_version=request.app_version,
+        )
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_401_UNAUTHORIZED:
+            enforce_rate_limit(scope="auth.login.failed.email", key=normalized_email, limit=10, window_seconds=300)
+            enforce_rate_limit(
+                scope="auth.login.failed.ip_email",
+                key=f"{client_rate_limit_key(http_request)}:{normalized_email}",
+                limit=20,
+                window_seconds=300,
+            )
+        raise
     return AuthLoginResponse(token=token, account=account)
 
 

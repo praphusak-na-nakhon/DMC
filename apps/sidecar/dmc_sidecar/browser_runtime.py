@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-from functools import lru_cache
 from pathlib import Path
 import subprocess
 from typing import Callable
@@ -21,6 +19,7 @@ CHROMIUM_EXECUTABLE_RELATIVE_PATHS = (
 
 INSTALL_PLAN_TIMEOUT_SECS = 4
 LOG_TAIL_LIMIT = 8
+_INSTALL_PLAN_CACHE: tuple[list[BrowserRuntimePackage], str | None] | None = None
 
 
 def _playwright_cli_available() -> bool:
@@ -77,25 +76,16 @@ def _emit_progress(
 def _run_playwright_cli(args: list[str], install_dir: Path) -> tuple[int, str]:
     from playwright._impl._driver import compute_driver_executable, get_driver_env
 
-    previous_browsers_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
     node_executable, cli_script = compute_driver_executable()
-
-    try:
-        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(install_dir)
-        env = get_driver_env()
-        env["PLAYWRIGHT_BROWSERS_PATH"] = str(install_dir)
-        completed = subprocess.run(
-            [node_executable, cli_script, *args],
-            env=env,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    finally:
-        if previous_browsers_path is None:
-            os.environ.pop("PLAYWRIGHT_BROWSERS_PATH", None)
-        else:
-            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = previous_browsers_path
+    env = get_driver_env()
+    env["PLAYWRIGHT_BROWSERS_PATH"] = str(install_dir)
+    completed = subprocess.run(
+        [node_executable, cli_script, *args],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
     output = "\n".join(part for part in (completed.stdout.strip(), completed.stderr.strip()) if part)
     return completed.returncode, output
@@ -158,8 +148,10 @@ def _parse_install_plan_output(output: str) -> list[BrowserRuntimePackage]:
     return packages
 
 
-@lru_cache(maxsize=1)
 def _load_install_plan() -> tuple[list[BrowserRuntimePackage], str | None]:
+    global _INSTALL_PLAN_CACHE
+    if _INSTALL_PLAN_CACHE is not None:
+        return _INSTALL_PLAN_CACHE
     if not _playwright_cli_available():
         return [], "PLAYWRIGHT_CLI_UNAVAILABLE"
 
@@ -176,7 +168,8 @@ def _load_install_plan() -> tuple[list[BrowserRuntimePackage], str | None]:
         summary = log_tail[-1] if log_tail else "Playwright CLI dry-run failed."
         return [], f"PLAYWRIGHT_INSTALL_PLAN_FAILED: {summary}"
 
-    return _parse_install_plan_output(output), None
+    _INSTALL_PLAN_CACHE = (_parse_install_plan_output(output), None)
+    return _INSTALL_PLAN_CACHE
 
 
 def _guidance_for_error(error_code: str | None) -> str | None:

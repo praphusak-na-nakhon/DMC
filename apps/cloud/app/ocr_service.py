@@ -31,6 +31,7 @@ FIELD_LABELS: tuple[tuple[str, str], ...] = (
     ("phone", "เบอร์โทรศัพท์"),
     ("address", "ที่อยู่"),
 )
+OCR_PROVIDER_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 
 
 class OcrProvider(Protocol):
@@ -92,7 +93,7 @@ class OpenAiOcrProvider:
         )
         try:
             with urllib.request.urlopen(api_request, timeout=90) as response:
-                raw_response = response.read().decode("utf-8")
+                raw_response = _read_provider_response(response)
         except urllib.error.HTTPError as exc:
             raise OcrProviderError(f"OCR_OPENAI_HTTP_{exc.code}") from exc
         except urllib.error.URLError as exc:
@@ -207,7 +208,7 @@ class GeminiOcrProvider:
         )
         try:
             with urllib.request.urlopen(upload_request, timeout=90) as response:
-                raw_response = response.read().decode("utf-8")
+                raw_response = _read_provider_response(response)
         except urllib.error.HTTPError as exc:
             raise OcrProviderError(_provider_http_error_code("OCR_GEMINI_UPLOAD_FINALIZE", exc)) from exc
         except urllib.error.URLError as exc:
@@ -245,7 +246,7 @@ class GeminiOcrProvider:
         )
         try:
             with urllib.request.urlopen(api_request, timeout=90) as response:
-                return response.read().decode("utf-8")
+                return _read_provider_response(response)
         except urllib.error.HTTPError as exc:
             raise OcrProviderError(_provider_http_error_code("OCR_GEMINI_GENERATE", exc)) from exc
         except urllib.error.URLError as exc:
@@ -464,12 +465,27 @@ def _extract_gemini_output_text(payload: dict[str, Any]) -> str:
 
 def _extract_json_object(text: str) -> str:
     stripped = text.strip()
-    if stripped.startswith("{") and stripped.endswith("}"):
-        return stripped
-    match = re.search(r"\{.*\}", stripped, flags=re.DOTALL)
-    if not match:
-        raise ValueError("missing JSON object")
-    return match.group(0)
+    decoder = json.JSONDecoder()
+    for start_index, char in enumerate(stripped):
+        if char != "{":
+            continue
+        try:
+            parsed, end_index = decoder.raw_decode(stripped[start_index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return stripped[start_index : start_index + end_index]
+    raise ValueError("missing JSON object")
+
+
+def _read_provider_response(response: Any) -> str:
+    try:
+        raw_response = response.read(OCR_PROVIDER_MAX_RESPONSE_BYTES + 1)
+    except TypeError:  # test doubles and non-standard response objects may not accept a size argument.
+        raw_response = response.read()
+    if len(raw_response) > OCR_PROVIDER_MAX_RESPONSE_BYTES:
+        raise OcrProviderError("OCR_PROVIDER_RESPONSE_TOO_LARGE")
+    return raw_response.decode("utf-8")
 
 
 def _gemini_api_url(path: str) -> str:

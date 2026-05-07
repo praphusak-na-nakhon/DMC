@@ -12,13 +12,22 @@ PII_FIELD_PATTERN = re.compile(
 PII_VALUE_PATTERNS = (
     re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"),
     re.compile(r"(?<!\d)(?:\+66|0)\d{8,9}(?!\d)"),
-    re.compile(r"(?<!\d)\d{13}(?!\d)"),
 )
+THAI_NATIONAL_ID_PATTERN = re.compile(r"(?<!\d)(\d{13})(?!\d)")
 
 
 def _normalize_key(key: str) -> str:
     key = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", key)
     return key.replace("-", "_").lower()
+
+
+def _has_thai_national_id(value: str) -> bool:
+    for match in THAI_NATIONAL_ID_PATTERN.finditer(value):
+        digits = match.group(1)
+        checksum = (11 - (sum(int(digits[index]) * (13 - index) for index in range(12)) % 11)) % 10
+        if checksum == int(digits[-1]):
+            return True
+    return False
 
 
 def assert_payload_is_telemetry_safe(payload: Any, *, path: str = "payload") -> None:
@@ -46,3 +55,5 @@ def assert_payload_is_telemetry_safe(payload: Any, *, path: str = "payload") -> 
         for pattern in PII_VALUE_PATTERNS:
             if pattern.search(payload):
                 raise ValueError(f"PII value is not allowed in telemetry at {path}")
+        if _has_thai_national_id(payload):
+            raise ValueError(f"PII value is not allowed in telemetry at {path}")

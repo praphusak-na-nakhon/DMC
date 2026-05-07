@@ -75,3 +75,12 @@ def test_assert_payload_is_telemetry_safe_rejects_name_aliases() -> None:
                 ]
             }
         )
+
+
+def test_assert_payload_is_telemetry_safe_accepts_millisecond_timestamps() -> None:
+    assert_payload_is_telemetry_safe({"events": [{"event": "tick", "created_ms": "1715025600000"}]})
+
+
+def test_assert_payload_is_telemetry_safe_rejects_valid_thai_national_id_in_string() -> None:
+    with pytest.raises(ValueError, match="PII value"):
+        assert_payload_is_telemetry_safe({"events": [{"event": "failed", "error_code": "ID 1234567890121"}]})

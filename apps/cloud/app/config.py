@@ -28,7 +28,7 @@ class Settings(BaseModel):
         "DMC_CLOUD_SQLITE_PATH",
         str(Path(__file__).resolve().parents[3] / ".dmc-assistant-data" / "cloud" / "state.sqlite3"),
     )
-    session_duration_hours: int = int(os.getenv("DMC_CLOUD_SESSION_DURATION_HOURS", "720"))
+    session_duration_hours: int = int(os.getenv("DMC_CLOUD_SESSION_DURATION_HOURS", "168"))
     ocr_provider: str = os.getenv("DMC_OCR_PROVIDER", "mock").strip().lower() or "mock"
     ocr_openai_api_key: str = os.getenv("DMC_OCR_OPENAI_API_KEY", "").strip()
     ocr_openai_model: str = os.getenv("DMC_OCR_OPENAI_MODEL", "gpt-5.5").strip()
@@ -42,6 +42,7 @@ class Settings(BaseModel):
     ocr_max_pdf_bytes: int = int(os.getenv("DMC_OCR_MAX_PDF_BYTES", str(20 * 1024 * 1024)))
     ocr_max_pages_per_job: int = int(os.getenv("DMC_OCR_MAX_PAGES_PER_JOB", "100"))
     trusted_proxy_hosts: str = os.getenv("DMC_CLOUD_TRUSTED_PROXY_HOSTS", "").strip()
+    rate_limit_sqlite_path: str = os.getenv("DMC_CLOUD_RATE_LIMIT_SQLITE_PATH", "").strip()
 
 
 settings = Settings()

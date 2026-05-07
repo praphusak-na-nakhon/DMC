@@ -222,6 +222,31 @@ def _rate_limit_events(connection: sqlite3.Connection) -> None:
     )
 
 
+def _ocr_form_converter_requests(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS ocr_form_converter_requests (
+            user_id TEXT NOT NULL,
+            request_key TEXT NOT NULL,
+            job_id TEXT NOT NULL,
+            reservation_id TEXT NOT NULL,
+            template_type TEXT NOT NULL,
+            document_sha256 TEXT NOT NULL,
+            page_count INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            response_json TEXT,
+            error_detail TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, request_key),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_ocr_form_converter_requests_status_updated
+            ON ocr_form_converter_requests(status, updated_at);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(version=1, name="baseline_schema", apply=_baseline_schema),
     Migration(version=2, name="add_indexes", apply=_add_indexes),
@@ -230,6 +255,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(version=5, name="wallet_reserved_column", apply=_wallet_reserved_column),
     Migration(version=6, name="telemetry_user_id_column", apply=_telemetry_user_id_column),
     Migration(version=7, name="rate_limit_events", apply=_rate_limit_events),
+    Migration(version=8, name="ocr_form_converter_requests", apply=_ocr_form_converter_requests),
 )
 
 _MIGRATION_LOCK = threading.Lock()

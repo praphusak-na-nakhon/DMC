@@ -156,17 +156,20 @@ def _resolved_template_path(template_path: Path | None) -> Path:
 
 
 def _read_students(path: Path) -> tuple[list[StudentBasicInfoRow], int]:
-    workbook = load_workbook(path, data_only=True)
-    sheet = workbook.active
-    header_row, headers = _find_header_row(sheet)
-    columns = _build_column_lookup(headers)
-    rows_total = max(int(sheet.max_row) - header_row, 0)
-    students: list[StudentBasicInfoRow] = []
-    for row_index in range(header_row + 1, int(sheet.max_row) + 1):
-        if _row_is_blank(sheet, row_index):
-            continue
-        students.append(_student_from_row(sheet, row_index, columns))
-    return students, rows_total
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    try:
+        sheet = workbook.active
+        header_row, headers = _find_header_row(sheet)
+        columns = _build_column_lookup(headers)
+        rows_total = max(int(sheet.max_row) - header_row, 0)
+        students: list[StudentBasicInfoRow] = []
+        for row_index in range(header_row + 1, int(sheet.max_row) + 1):
+            if _row_is_blank(sheet, row_index):
+                continue
+            students.append(_student_from_row(sheet, row_index, columns))
+        return students, rows_total
+    finally:
+        workbook.close()
 
 
 def _find_header_row(sheet: Any) -> tuple[int, dict[str, list[int]]]:

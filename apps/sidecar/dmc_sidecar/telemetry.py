@@ -80,7 +80,7 @@ class QueuedTelemetryEvent:
 
 class TelemetryStore:
     def enqueue_and_prune(self, payload: dict[str, Any], max_items: int) -> int:
-        with connect() as connection:
+        with connect(immediate=True) as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO telemetry_queue (event_json, created_at)
