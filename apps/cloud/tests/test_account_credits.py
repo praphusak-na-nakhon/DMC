@@ -995,3 +995,60 @@ def test_form_converter_ocr_retry_uses_cached_response_without_double_capture(mo
     capture_entries = [entry for entry in ledger if entry["type"] == "capture"]
     assert len(capture_entries) == 1
     assert capture_entries[0]["amount"] == 2
+
+
+def test_form_converter_ocr_stale_captured_request_does_not_call_provider(monkeypatch, tmp_path: Path) -> None:
+    user_id = _create_user(monkeypatch, tmp_path)
+    assert (
+        client.post(
+            f"/v1/admin/users/{user_id}/credits/topup",
+            headers=_admin_headers(),
+            json={"amount": 3, "idempotency_key": "topup-form-stale"},
+        ).status_code
+        == 200
+    )
+    token = _login()
+    headers = {"Authorization": f"Bearer {token}"}
+    reservation = client.post(
+        "/v1/credits/reservations",
+        headers=headers,
+        json={
+            "job_id": "form-job-stale-1",
+            "module": "formConverter",
+            "units": 2,
+            "idempotency_key": "reserve-form-stale-1",
+        },
+    ).json()
+    document = b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n2 0 obj << /Type /Page >> endobj\n%%EOF"
+    document_sha = hashlib.sha256(document).hexdigest()
+    capture_key = (
+        f"ocr:form-converter:form-job-stale-1:{reservation['reservation_id']}:"
+        f"student_history_v1:{document_sha}:2:capture"
+    )
+    capture = client.post(
+        f"/v1/credits/reservations/{reservation['reservation_id']}/capture",
+        headers=headers,
+        json={"units": 2, "idempotency_key": capture_key},
+    )
+    assert capture.status_code == 200
+
+    def fake_ocr(_request) -> OcrFormConverterResponse:  # noqa: ANN001
+        raise AssertionError("provider should not be called after a captured OCR request")
+
+    monkeypatch.setattr("app.routes.ocr.run_form_converter_ocr", fake_ocr)
+    response = client.post(
+        "/v1/ocr/form-converter",
+        headers=headers,
+        json={
+            "job_id": "form-job-stale-1",
+            "module": "formConverter",
+            "template_type": "student_history_v1",
+            "page_count": 2,
+            "credit_reservation_id": reservation["reservation_id"],
+            "document_sha256": document_sha,
+            "document_base64": base64.b64encode(document).decode("ascii"),
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "OCR request was already captured but cached response is unavailable"

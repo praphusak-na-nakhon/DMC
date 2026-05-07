@@ -393,6 +393,27 @@ def test_live_start_reports_account_cloud_failure_from_background(monkeypatch, t
     assert status["credit_status"] == "start_failed:ACCOUNT_CLOUD_UNAVAILABLE"
 
 
+def test_rpc_server_reaps_reserving_jobs_from_previous_process(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    store = JobStore()
+    store.create_pending_job(
+        job_id="job-interrupted-reserve",
+        module="graduation",
+        source_file="C:\\data\\m3.xlsx",
+        credits_reserved=3,
+        credit_status="reserving",
+    )
+    notifications: list[dict[str, object]] = []
+
+    server = RpcServer(emit_notification=notifications.append)
+
+    status = server.job_store.get_status("job-interrupted-reserve")
+    assert status is not None
+    assert status["status"] == "failed"
+    assert status["credit_status"] == "start_failed:RESTART_DURING_RESERVATION"
+    assert any("interrupted credit reservation" in str(item.get("message")) for item in notifications)
+
+
 def test_live_start_reserves_credits_in_background_before_starting_job(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
     monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))

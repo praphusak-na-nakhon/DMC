@@ -159,24 +159,31 @@ def _read_students(path: Path) -> tuple[list[StudentBasicInfoRow], int]:
     workbook = load_workbook(path, read_only=True, data_only=True)
     try:
         sheet = workbook.active
-        header_row, headers = _find_header_row(sheet)
+        max_column = max(int(sheet.max_column or 1), 1)
+        header_row, headers = _find_header_row(sheet, max_column=max_column)
         columns = _build_column_lookup(headers)
-        rows_total = max(int(sheet.max_row) - header_row, 0)
+        max_column = max(max_column, max(int(value) for value in vars(columns).values()))
+        rows_total = 0
         students: list[StudentBasicInfoRow] = []
-        for row_index in range(header_row + 1, int(sheet.max_row) + 1):
-            if _row_is_blank(sheet, row_index):
+        for row_values in sheet.iter_rows(min_row=header_row + 1, max_col=max_column, values_only=True):
+            rows_total += 1
+            if _row_is_blank(row_values):
                 continue
-            students.append(_student_from_row(sheet, row_index, columns))
+            students.append(_student_from_row(row_values, columns))
         return students, rows_total
     finally:
         workbook.close()
 
 
-def _find_header_row(sheet: Any) -> tuple[int, dict[str, list[int]]]:
-    for row_index in range(1, min(int(sheet.max_row), 20) + 1):
+def _find_header_row(sheet: Any, *, max_column: int) -> tuple[int, dict[str, list[int]]]:
+    max_row = min(int(sheet.max_row or 0), 20)
+    for row_index, row_values in enumerate(
+        sheet.iter_rows(min_row=1, max_row=max_row, max_col=max_column, values_only=True),
+        start=1,
+    ):
         headers: dict[str, list[int]] = {}
-        for column_index in range(1, int(sheet.max_column) + 1):
-            header = _clean_header(sheet.cell(row=row_index, column=column_index).value)
+        for column_index, value in enumerate(row_values, start=1):
+            header = _clean_header(value)
             if header:
                 headers.setdefault(header, []).append(column_index)
         if {"ชื่อโรงเรียน", "ชั้น", "ห้อง", "ชื่อ", "นามสกุล"}.issubset(headers):
@@ -230,50 +237,50 @@ def _column(headers: dict[str, list[int]], candidates: Sequence[tuple[str, int]]
     )
 
 
-def _student_from_row(sheet: Any, row_index: int, columns: ColumnLookup) -> StudentBasicInfoRow:
+def _student_from_row(row_values: Sequence[Any], columns: ColumnLookup) -> StudentBasicInfoRow:
     return StudentBasicInfoRow(
-        school_name=_text(_cell(sheet, row_index, columns.school_name)),
-        citizen_id=_text(_cell(sheet, row_index, columns.citizen_id)),
-        level=_text(_cell(sheet, row_index, columns.level)),
-        room=_text(_cell(sheet, row_index, columns.room)),
+        school_name=_text(_cell(row_values, columns.school_name)),
+        citizen_id=_text(_cell(row_values, columns.citizen_id)),
+        level=_text(_cell(row_values, columns.level)),
+        room=_text(_cell(row_values, columns.room)),
         full_name=_full_name(
-            _text(_cell(sheet, row_index, columns.prefix)),
-            _text(_cell(sheet, row_index, columns.first_name)),
-            _text(_cell(sheet, row_index, columns.last_name)),
+            _text(_cell(row_values, columns.prefix)),
+            _text(_cell(row_values, columns.first_name)),
+            _text(_cell(row_values, columns.last_name)),
         ),
-        birth_date=_text(_cell(sheet, row_index, columns.birth_date)),
+        birth_date=_text(_cell(row_values, columns.birth_date)),
         address=_address(
-            house_no=_text(_cell(sheet, row_index, columns.house_no)),
-            moo=_text(_cell(sheet, row_index, columns.moo)),
-            road=_text(_cell(sheet, row_index, columns.road)),
-            subdistrict=_text(_cell(sheet, row_index, columns.subdistrict)),
-            district=_text(_cell(sheet, row_index, columns.district)),
-            province=_text(_cell(sheet, row_index, columns.province)),
+            house_no=_text(_cell(row_values, columns.house_no)),
+            moo=_text(_cell(row_values, columns.moo)),
+            road=_text(_cell(row_values, columns.road)),
+            subdistrict=_text(_cell(row_values, columns.subdistrict)),
+            district=_text(_cell(row_values, columns.district)),
+            province=_text(_cell(row_values, columns.province)),
         ),
         father_full_name=_full_name(
             "",
-            _text(_cell(sheet, row_index, columns.father_first_name)),
-            _text(_cell(sheet, row_index, columns.father_last_name)),
+            _text(_cell(row_values, columns.father_first_name)),
+            _text(_cell(row_values, columns.father_last_name)),
         ),
         mother_full_name=_full_name(
             "",
-            _text(_cell(sheet, row_index, columns.mother_first_name)),
-            _text(_cell(sheet, row_index, columns.mother_last_name)),
+            _text(_cell(row_values, columns.mother_first_name)),
+            _text(_cell(row_values, columns.mother_last_name)),
         ),
-        weight=_number_or_text(_cell(sheet, row_index, columns.weight)),
-        height=_number_or_text(_cell(sheet, row_index, columns.height)),
+        weight=_number_or_text(_cell(row_values, columns.weight)),
+        height=_number_or_text(_cell(row_values, columns.height)),
     )
 
 
-def _cell(sheet: Any, row_index: int, column_index: int) -> Any:
-    return sheet.cell(row=row_index, column=column_index).value
+def _cell(row_values: Sequence[Any], column_index: int) -> Any:
+    value_index = column_index - 1
+    if value_index < 0 or value_index >= len(row_values):
+        return None
+    return row_values[value_index]
 
 
-def _row_is_blank(sheet: Any, row_index: int) -> bool:
-    return all(
-        _text(sheet.cell(row=row_index, column=column_index).value) == ""
-        for column_index in range(1, int(sheet.max_column) + 1)
-    )
+def _row_is_blank(row_values: Sequence[Any]) -> bool:
+    return all(_text(value) == "" for value in row_values)
 
 
 def _group_students(

@@ -676,7 +676,7 @@ export function App() {
       const draft = buildDraftJob(selectedExcelPath, rowsToWrite, result.job_id);
       draft.credit_reservation_id = result.credit_reservation_id;
       draft.credits_reserved = result.credits_reserved;
-      draft.credit_status = result.credit_reservation_id ? "reserved" : null;
+      draft.credit_status = result.credit_reservation_id ? "reserved" : dryRun ? null : "reserving";
       setActiveJobId(result.job_id);
       setCurrentJob(draft);
       upsertExistingJob(draft);

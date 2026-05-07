@@ -6,7 +6,7 @@ import pytest
 from openpyxl import Workbook, load_workbook  # type: ignore[import-untyped]
 
 from dmc_sidecar import config as sidecar_config
-from dmc_sidecar.student_basic_info import export_student_basic_info_form
+from dmc_sidecar.student_basic_info import _read_students, export_student_basic_info_form
 
 
 DMC_HEADERS = [
@@ -185,3 +185,23 @@ def test_export_student_basic_info_splits_by_class_and_extends_template_rows(
     assert second_class["A3"].value == "ชั้น ม.1/2"
     assert second_class["A5"].value == 1
     assert second_class["B5"].value == "เด็กชาย ชื่อ28 สกุล28"
+
+
+def test_read_students_streams_large_dmc_export(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(sidecar_config, "default_data_dir", lambda: tmp_path)
+    source_path = tmp_path / "2568-3-student-large.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Sheet1"
+    sheet.append(["generated 2026-05-02"])
+    sheet.append(DMC_HEADERS)
+    for index in range(1, 601):
+        _append_student(sheet, index=index, level="ม.1", room=1)
+    workbook.save(source_path)
+
+    students, rows_total = _read_students(source_path)
+
+    assert rows_total == 600
+    assert len(students) == 600
+    assert students[0].citizen_id == "1819900000001"
+    assert students[-1].citizen_id == "1819900000600"

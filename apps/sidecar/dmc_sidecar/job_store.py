@@ -140,6 +140,44 @@ class JobStore:
                 ),
             )
 
+    def mark_start_failed(self, job_id: str, *, code: str, finished_at: str) -> None:
+        with connect(immediate=True) as connection:
+            run_summary = self._run_summary(connection, job_id, self._total_records(connection, job_id))
+            connection.execute(
+                """
+                UPDATE job
+                SET status = 'failed',
+                    processed = 0,
+                    succeeded = 0,
+                    failed = 0,
+                    finished_at = ?,
+                    run_summary_json = ?,
+                    credit_status = ?
+                WHERE id = ?
+                """,
+                (
+                    finished_at,
+                    json.dumps(run_summary, ensure_ascii=False, sort_keys=True) if run_summary is not None else "{}",
+                    f"start_failed:{code}",
+                    job_id,
+                ),
+            )
+
+    def reap_reserving_jobs(self, *, code: str = "RESTART_DURING_RESERVATION") -> int:
+        with connect(immediate=True) as connection:
+            cursor = connection.execute(
+                """
+                UPDATE job
+                SET status = 'failed',
+                    finished_at = ?,
+                    run_summary_json = COALESCE(run_summary_json, '{}'),
+                    credit_status = ?
+                WHERE status = 'pending' AND credit_status = 'reserving'
+                """,
+                (utc_now(), f"start_failed:{code}"),
+            )
+            return int(cursor.rowcount)
+
     def save_checkpoint(self, job_id: str, checkpoint: JobCheckpoint) -> None:
         with connect() as connection:
             connection.execute(
@@ -314,17 +352,21 @@ class JobStore:
         return dict(row)
 
     def list_jobs(self, limit: int = 20) -> list[dict[str, Any]]:
+        backfill_limit = max(limit, 20)
+        with connect() as connection:
+            rows = self._list_job_rows(connection, limit=limit)
+            needs_backfill = any(
+                row["status"] in SUMMARY_FALLBACK_STATUSES and row["run_summary_json"] is None
+                for row in rows
+            )
+            if not needs_backfill:
+                return [self._status_from_row(row, connection) for row in rows]
+
         with connect(immediate=True) as connection:
-            self._backfill_run_summaries(connection, limit=max(limit, 20))
-            rows = connection.execute(
-                """
-                SELECT *
-                FROM job
-                ORDER BY COALESCE(started_at, finished_at, id) DESC
-                LIMIT ?
-                """,
-                (limit,),
-            ).fetchall()
+            self._backfill_run_summaries(connection, limit=backfill_limit)
+
+        with connect() as connection:
+            rows = self._list_job_rows(connection, limit=limit)
             return [self._status_from_row(row, connection) for row in rows]
 
     def archive_old_jobs(self, *, keep_latest: int = 20) -> dict[str, int]:
@@ -473,6 +515,17 @@ class JobStore:
         if row["status"] not in SUMMARY_FALLBACK_STATUSES:
             return None
         return self._run_summary(connection, str(row["id"]), row["total_records"])
+
+    def _list_job_rows(self, connection: sqlite3.Connection, *, limit: int) -> list[sqlite3.Row]:
+        return connection.execute(
+            """
+            SELECT *
+            FROM job
+            ORDER BY COALESCE(started_at, finished_at, id) DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
 
     def _backfill_run_summaries(self, connection: sqlite3.Connection, *, limit: int) -> None:
         placeholders = ", ".join(["?"] * len(SUMMARY_FALLBACK_STATUSES))

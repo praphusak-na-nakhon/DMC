@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import sys
 import threading
+import traceback
 import uuid
 from pathlib import Path
 from typing import Any, Callable
@@ -73,6 +74,7 @@ class RpcServer:
     def __init__(self, emit_notification: Callable[[dict[str, Any]], None]) -> None:
         self.emit_notification = emit_notification
         self.job_store = JobStore()
+        reaped_jobs = self.job_store.reap_reserving_jobs()
         self.account_store = AccountSessionStore()
         self.telemetry = TelemetryClient(account_store=self.account_store)
         self.psar_readiness = PsarReadinessService()
@@ -82,6 +84,13 @@ class RpcServer:
             telemetry=self.telemetry,
             emit_notification=emit_notification,
         )
+        if reaped_jobs:
+            self._emit_background_notification(
+                {
+                    "type": "sidecar_stderr",
+                    "message": f"marked {reaped_jobs} interrupted credit reservation job(s) as failed",
+                }
+            )
         self.telemetry.record_app_started(app_version=__version__, platform=sys.platform)
 
     def handle_text(self, raw_text: str) -> str:
@@ -441,7 +450,7 @@ class RpcServer:
                     credits_reserved=credits_reserved,
                     credit_status="reserved",
                 )
-                self.emit_notification(
+                self._emit_background_notification(
                     {
                         "type": "sidecar_stderr",
                         "message": f"credits reserved for job {start_params.job_id}: {credits_reserved}",
@@ -457,10 +466,11 @@ class RpcServer:
                 credits_reserved=credits_reserved,
             )
         except Exception as exc:  # pragma: no cover - defensive background path
+            print(f"[sidecar] start_job background error for {start_params.job_id}: {exc!r}", file=sys.stderr)
+            print(traceback.format_exc(), file=sys.stderr)
             code = exc.code if isinstance(exc, DomainError) else exc.__class__.__name__.upper()
-            self.job_store.mark_failed(start_params.job_id, checkpoint=None, finished_at=utc_now())
-            self.job_store.update_credit_status(start_params.job_id, credit_status=f"start_failed:{code}")
-            self.emit_notification(
+            self.job_store.mark_start_failed(start_params.job_id, code=code, finished_at=utc_now())
+            self._emit_background_notification(
                 {
                     "type": "error",
                     "job_id": start_params.job_id,
@@ -468,6 +478,12 @@ class RpcServer:
                     "message": exc.user_message if isinstance(exc, DomainError) else "Job failed before it started.",
                 }
             )
+
+    def _emit_background_notification(self, payload: dict[str, Any]) -> None:
+        try:
+            self.emit_notification(payload)
+        except Exception as exc:  # pragma: no cover - defensive notification boundary
+            print(f"[sidecar] failed to emit background event: {exc!r}", file=sys.stderr)
 
     def _resume_existing_job(
         self,

@@ -811,6 +811,29 @@ class AccountRepository:
             row = self._get_reservation_row(connection, user_id, reservation_id)
         return self._reservation_response_from_row(row)
 
+    def has_credit_transaction(
+        self,
+        *,
+        user_id: str,
+        reservation_id: str,
+        transaction_type: str,
+        idempotency_key: str,
+    ) -> bool:
+        with connect(self.sqlite_path) as connection:
+            row = connection.execute(
+                """
+                SELECT 1
+                FROM credit_transactions
+                WHERE user_id = ?
+                    AND reservation_id = ?
+                    AND type = ?
+                    AND idempotency_key = ?
+                LIMIT 1
+                """,
+                (user_id, reservation_id, transaction_type, idempotency_key),
+            ).fetchone()
+        return row is not None
+
     def list_ledger(self, user_id: str, *, limit: int = 100, offset: int = 0) -> list[CreditLedgerEntry]:
         safe_limit = min(max(limit, 1), 500)
         safe_offset = max(offset, 0)

@@ -400,8 +400,12 @@ def _extract_output_text(payload: dict[str, Any]) -> str:
 
 def _provider_http_error_code(prefix: str, exc: urllib.error.HTTPError) -> str:
     try:
+        body = exc.read(OCR_PROVIDER_MAX_RESPONSE_BYTES + 1)
+    except TypeError:
         body = exc.read()
     except OSError:
+        body = b""
+    if len(body) > OCR_PROVIDER_MAX_RESPONSE_BYTES:
         body = b""
     reason = _extract_provider_error_reason(body)
     if reason:

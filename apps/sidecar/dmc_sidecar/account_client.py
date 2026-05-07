@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import UTC, datetime
 from typing import Any, cast
 from urllib.error import HTTPError, URLError
@@ -18,6 +17,17 @@ from .schemas import (
     ModuleCatalogResponse,
     WalletSnapshot,
 )
+
+
+SERVER_DETAIL_ERROR_CODES = {
+    "ACCOUNT_DISABLED",
+    "CREDIT_IDEMPOTENCY_CONFLICT",
+    "CREDIT_RESERVATION_NOT_FOUND",
+    "INSUFFICIENT_CREDITS",
+    "INVALID_CREDENTIALS",
+    "SIGN_IN_REQUIRED",
+    "WALLET_NOT_FOUND",
+}
 
 
 def utc_now() -> str:
@@ -109,7 +119,7 @@ def _json_request(
             raise DomainError("ACCOUNT_DISABLED") from exc
         if exc.code == 404:
             raise DomainError("CREDIT_RESERVATION_NOT_FOUND") from exc
-        if detail and _is_machine_error_code(detail):
+        if detail in SERVER_DETAIL_ERROR_CODES:
             raise DomainError(detail) from exc
         raise DomainError(f"HTTP_{exc.code}") from exc
     except URLError as exc:
@@ -132,10 +142,6 @@ def _http_error_detail(exc: HTTPError) -> str | None:
         return None
     detail = payload.get("detail")
     return detail if isinstance(detail, str) else None
-
-
-def _is_machine_error_code(value: str) -> bool:
-    return bool(re.fullmatch(r"[A-Z][A-Z0-9_]+", value))
 
 
 def sign_in(

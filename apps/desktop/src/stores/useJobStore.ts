@@ -191,7 +191,20 @@ export const useJobStore = create<JobStoreState>((set) => ({
         if (event.job_id && state.activeJobId && event.job_id !== state.activeJobId) {
           return state;
         }
+        const nextJob =
+          event.job_id && state.currentJob
+            ? mergeJob(state.currentJob, {
+                job_id: event.job_id,
+                status: "failed",
+                credit_status:
+                  state.currentJob.credit_status === "reserving"
+                    ? `start_failed:${event.code}`
+                    : state.currentJob.credit_status,
+              })
+            : null;
         return {
+          currentJob: nextJob ?? state.currentJob,
+          existingJobs: nextJob ? upsertJobList(state.existingJobs, nextJob) : state.existingJobs,
           errorMessage: `${event.code}: ${event.message}`,
           sidecarMessages: [`เกิดข้อผิดพลาดใน sidecar: ${event.message}`, ...state.sidecarMessages].slice(
             0,

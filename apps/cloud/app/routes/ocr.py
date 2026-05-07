@@ -44,10 +44,22 @@ async def convert_form_pdf(
             detail="active form converter credit reservation is required",
         )
     request_key = _ocr_request_key(request)
+    capture_key = f"ocr:{request_key}:capture"
     request_store = OcrRequestStore()
     cached_response = request_store.completed_response(user_id=session.user_id, request_key=request_key)
     if cached_response is not None:
         return cached_response
+
+    if repository.has_credit_transaction(
+        user_id=session.user_id,
+        reservation_id=request.credit_reservation_id,
+        transaction_type="capture",
+        idempotency_key=capture_key,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="OCR request was already captured but cached response is unavailable",
+        )
 
     if reservation.status != "active":
         raise HTTPException(
@@ -82,11 +94,22 @@ async def convert_form_pdf(
             request.credit_reservation_id,
             CreditCaptureRequest(
                 units=target_captured,
-                idempotency_key=f"ocr:{request_key}:capture",
+                idempotency_key=capture_key,
             ),
         )
         request_store.mark_done(user_id=session.user_id, request_key=request_key, response=response)
     except Exception as exc:
-        request_store.mark_failed(user_id=session.user_id, request_key=request_key, error_detail=str(exc))
+        request_store.mark_failed(user_id=session.user_id, request_key=request_key, error_detail=_safe_ocr_error_detail(exc))
         raise
     return response
+
+
+def _safe_ocr_error_detail(exc: Exception) -> str:
+    if isinstance(exc, HTTPException):
+        detail = exc.detail
+        if isinstance(detail, str):
+            normalized = detail.replace("_", "")
+            if normalized.isalnum() and detail.upper() == detail:
+                return detail
+        return f"HTTP_{exc.status_code}"
+    return exc.__class__.__name__.upper()
