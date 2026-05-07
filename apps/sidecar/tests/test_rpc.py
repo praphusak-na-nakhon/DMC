@@ -242,6 +242,15 @@ def test_create_backup_rpc_returns_archive_path(monkeypatch, tmp_path: Path) -> 
     assert Path(response["result"]["backup_path"]).exists()
 
 
+def test_backup_rpc_rejects_relative_escape_path(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path / "data")
+    server = RpcServer(emit_notification=lambda payload: None)
+
+    response = _rpc_call(server, "create_backup", {"path": "../escape.zip"})
+
+    assert response["error"]["code"] == "BACKUP_PATH_INVALID"
+
+
 def test_restore_backup_rpc_requires_idle(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
     server = RpcServer(emit_notification=lambda payload: None)
@@ -412,6 +421,46 @@ def test_rpc_server_reaps_reserving_jobs_from_previous_process(monkeypatch, tmp_
     assert status["status"] == "failed"
     assert status["credit_status"] == "start_failed:RESTART_DURING_RESERVATION"
     assert any("interrupted credit reservation" in str(item.get("message")) for item in notifications)
+
+
+def test_rpc_server_releases_reaped_cloud_reservation(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    store = JobStore()
+    store.create_pending_job(
+        job_id="job-interrupted-cloud-reserve",
+        module="graduation",
+        source_file="C:\\data\\m3.xlsx",
+        credit_reservation_id="reservation-old",
+        credits_reserved=4,
+        credit_status="reserving",
+    )
+    released: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "dmc_sidecar.rpc.AccountSessionStore.get_session",
+        lambda self: SimpleNamespace(token="token"),
+    )
+    monkeypatch.setattr(
+        "dmc_sidecar.rpc.release_credits",
+        lambda *args, **kwargs: released.append(dict(kwargs)) or SimpleNamespace(reservation_id="reservation-old"),
+    )
+    monkeypatch.setattr(
+        "dmc_sidecar.rpc.reserve_credits",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("known reservation should be released directly")),
+    )
+
+    server = RpcServer(emit_notification=lambda payload: None)
+
+    assert released == [
+        {
+            "reservation_id": "reservation-old",
+            "units": 4,
+            "idempotency_key": "job-interrupted-cloud-reserve:reaper:release",
+        }
+    ]
+    status = server.job_store.get_status("job-interrupted-cloud-reserve")
+    assert status is not None
+    assert status["status"] == "failed"
+    assert status["credit_status"] == "start_failed:RESTART_DURING_RESERVATION"
 
 
 def test_live_start_reserves_credits_in_background_before_starting_job(monkeypatch, tmp_path: Path) -> None:

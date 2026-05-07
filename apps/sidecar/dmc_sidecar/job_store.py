@@ -163,20 +163,46 @@ class JobStore:
                 ),
             )
 
-    def reap_reserving_jobs(self, *, code: str = "RESTART_DURING_RESERVATION") -> int:
+    def list_reserving_jobs(self) -> list[dict[str, Any]]:
+        with connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, module, credit_reservation_id, credits_reserved
+                FROM job
+                WHERE status = 'pending' AND credit_status = 'reserving'
+                ORDER BY id ASC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_reserving_jobs_failed(
+        self,
+        job_ids: list[str],
+        *,
+        code: str = "RESTART_DURING_RESERVATION",
+    ) -> int:
+        if not job_ids:
+            return 0
+        placeholders = ", ".join(["?"] * len(job_ids))
         with connect(immediate=True) as connection:
             cursor = connection.execute(
-                """
+                f"""
                 UPDATE job
                 SET status = 'failed',
                     finished_at = ?,
-                    run_summary_json = COALESCE(run_summary_json, '{}'),
+                    run_summary_json = COALESCE(run_summary_json, '{{}}'),
                     credit_status = ?
-                WHERE status = 'pending' AND credit_status = 'reserving'
+                WHERE status = 'pending'
+                    AND credit_status = 'reserving'
+                    AND id IN ({placeholders})
                 """,
-                (utc_now(), f"start_failed:{code}"),
+                (utc_now(), f"start_failed:{code}", *job_ids),
             )
             return int(cursor.rowcount)
+
+    def reap_reserving_jobs(self, *, code: str = "RESTART_DURING_RESERVATION") -> int:
+        jobs = self.list_reserving_jobs()
+        return self.mark_reserving_jobs_failed([str(job["id"]) for job in jobs], code=code)
 
     def save_checkpoint(self, job_id: str, checkpoint: JobCheckpoint) -> None:
         with connect() as connection:

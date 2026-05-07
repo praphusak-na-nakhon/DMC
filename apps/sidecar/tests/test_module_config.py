@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -127,3 +128,25 @@ def test_bundled_module_config_rejects_tampering(monkeypatch, tmp_path: Path) ->
         assert exc.code == "CONFIG_SIGNATURE_INVALID"
     else:  # pragma: no cover - explicit assertion branch for readability
         raise AssertionError("tampered bundled config was accepted")
+
+
+def test_quarantine_cached_config_uses_unique_atomic_target(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+
+    class FixedDatetime:
+        @staticmethod
+        def now(tz):
+            return datetime(2026, 1, 1, tzinfo=UTC if tz is not None else None)
+
+    monkeypatch.setattr(module_config, "datetime", FixedDatetime)
+    cached_path = module_config.cached_config_path("graduation")
+    cached_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cached_path.write_text("{not-json", encoding="utf-8")
+    module_config._quarantine_cached_config("graduation")  # noqa: SLF001
+    cached_path.write_text("{not-json-again", encoding="utf-8")
+    module_config._quarantine_cached_config("graduation")  # noqa: SLF001
+
+    assert (cached_path.parent / "graduation.invalid-20260101T000000Z.json").exists()
+    assert (cached_path.parent / "graduation.invalid-20260101T000000Z-1.json").exists()
+    assert not cached_path.exists()

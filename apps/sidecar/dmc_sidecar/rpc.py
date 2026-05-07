@@ -15,6 +15,7 @@ from .account_client import (
     cached_module_catalog,
     get_module_catalog,
     refresh_wallet,
+    release_credits,
     reserve_credits,
     sign_in,
     sign_out,
@@ -25,7 +26,7 @@ from . import __version__
 from .backup import create_backup_archive, restore_backup_archive
 from .browser_runtime import bootstrap_browser_runtime, get_browser_runtime_status
 from .checkpoint import JobCheckpoint
-from .config import sqlite_path
+from .config import default_data_dir, sqlite_path
 from .db import get_database_metadata
 from .errors import DomainError
 from .current_students import (
@@ -74,10 +75,10 @@ class RpcServer:
     def __init__(self, emit_notification: Callable[[dict[str, Any]], None]) -> None:
         self.emit_notification = emit_notification
         self.job_store = JobStore()
-        reaped_jobs = self.job_store.reap_reserving_jobs()
         self.account_store = AccountSessionStore()
         self.telemetry = TelemetryClient(account_store=self.account_store)
         self.psar_readiness = PsarReadinessService()
+        reaped_jobs = self._reap_interrupted_reservations()
         self.job_manager = JobManager(
             job_store=self.job_store,
             account_store=self.account_store,
@@ -217,7 +218,7 @@ class RpcServer:
             if request.method == "create_backup":
                 backup_params = FilePathRequest.model_validate(request.params) if request.params else None
                 backup_path = (
-                    create_backup_archive(Path(backup_params.path))
+                    create_backup_archive(_backup_rpc_path(backup_params.path, must_exist=False))
                     if backup_params and backup_params.path
                     else create_backup_archive()
                 )
@@ -231,7 +232,7 @@ class RpcServer:
                         code="RESTORE_REQUIRES_IDLE",
                         message="Stop active jobs before restoring a backup.",
                     )
-                result = restore_backup_archive(Path(restore_params.path))
+                result = restore_backup_archive(_backup_rpc_path(restore_params.path, must_exist=True))
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "sync_module_config":
@@ -485,6 +486,40 @@ class RpcServer:
         except Exception as exc:  # pragma: no cover - defensive notification boundary
             print(f"[sidecar] failed to emit background event: {exc!r}", file=sys.stderr)
 
+    def _reap_interrupted_reservations(self) -> int:
+        jobs = self.job_store.list_reserving_jobs()
+        for job in jobs:
+            self._release_interrupted_reservation(job)
+        return self.job_store.mark_reserving_jobs_failed([str(job["id"]) for job in jobs])
+
+    def _release_interrupted_reservation(self, job: dict[str, Any]) -> None:
+        credits_reserved = int(job.get("credits_reserved") or 0)
+        if credits_reserved <= 0 or self.account_store.get_session() is None:
+            return
+
+        job_id = str(job["id"])
+        reservation_id = job.get("credit_reservation_id")
+        try:
+            if not reservation_id:
+                reservation = reserve_credits(
+                    self.account_store,
+                    job_id=job_id,
+                    module=str(job["module"]),
+                    units=credits_reserved,
+                    idempotency_key=f"{job_id}:reserve",
+                )
+                reservation_id = reservation.reservation_id
+            release_credits(
+                self.account_store,
+                reservation_id=str(reservation_id),
+                units=credits_reserved,
+                idempotency_key=f"{job_id}:reaper:release",
+            )
+        except DomainError as exc:
+            print(f"[sidecar] failed to release interrupted reservation for {job_id}: {exc.code}", file=sys.stderr)
+        except Exception as exc:  # pragma: no cover - defensive startup path
+            print(f"[sidecar] unexpected interrupted reservation release error for {job_id}: {exc!r}", file=sys.stderr)
+
     def _resume_existing_job(
         self,
         request_id: str | int | None,
@@ -623,3 +658,30 @@ def run_stdio_server() -> int:
             sys.stdout.write(response_text + "\n")
             sys.stdout.flush()
     return 0
+
+
+def _backup_rpc_path(raw_path: str, *, must_exist: bool) -> Path:
+    raw = raw_path.strip()
+    if not raw:
+        raise DomainError("BACKUP_PATH_INVALID", "Backup path is invalid.")
+    candidate = Path(raw).expanduser()
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    else:
+        root = default_data_dir().resolve()
+        resolved = (root / candidate).resolve()
+        try:
+            resolved.relative_to(root)
+        except ValueError as exc:
+            raise DomainError("BACKUP_PATH_INVALID", "Backup path is invalid.") from exc
+
+    if resolved.suffix.lower() != ".zip":
+        raise DomainError("BACKUP_PATH_UNSUPPORTED_TYPE", "Backup path must be a .zip file.")
+    if must_exist:
+        if not resolved.exists():
+            raise DomainError("BACKUP_NOT_FOUND", "Backup file was not found.")
+        if not resolved.is_file():
+            raise DomainError("BACKUP_PATH_INVALID", "Backup path is invalid.")
+    elif resolved.exists() and resolved.is_dir():
+        raise DomainError("BACKUP_PATH_INVALID", "Backup path is invalid.")
+    return resolved

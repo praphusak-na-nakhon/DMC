@@ -12,6 +12,7 @@ import hashlib
 from app.config import settings
 from app.db import connect
 from app.main import app
+from app.ocr_request_store import OcrRequestStore
 from app.schemas import OcrFieldResponse, OcrFormConverterResponse, OcrRecordResponse
 from app.telemetry_store import TelemetryStore
 
@@ -1052,3 +1053,102 @@ def test_form_converter_ocr_stale_captured_request_does_not_call_provider(monkey
 
     assert response.status_code == 409
     assert response.json()["detail"] == "OCR request was already captured but cached response is unavailable"
+
+
+def test_form_converter_ocr_finalizes_provider_done_capture_without_provider_retry(monkeypatch, tmp_path: Path) -> None:
+    user_id = _create_user(monkeypatch, tmp_path)
+    assert (
+        client.post(
+            f"/v1/admin/users/{user_id}/credits/topup",
+            headers=_admin_headers(),
+            json={"amount": 3, "idempotency_key": "topup-form-provider-done"},
+        ).status_code
+        == 200
+    )
+    token = _login()
+    headers = {"Authorization": f"Bearer {token}"}
+    reservation = client.post(
+        "/v1/credits/reservations",
+        headers=headers,
+        json={
+            "job_id": "form-job-provider-done-1",
+            "module": "formConverter",
+            "units": 2,
+            "idempotency_key": "reserve-form-provider-done-1",
+        },
+    ).json()
+    document = b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n2 0 obj << /Type /Page >> endobj\n%%EOF"
+    document_sha = hashlib.sha256(document).hexdigest()
+    request_key = (
+        f"form-converter:form-job-provider-done-1:{reservation['reservation_id']}:"
+        f"student_history_v1:{document_sha}:2"
+    )
+    capture_key = f"ocr:{request_key}:capture"
+    cached_response = OcrFormConverterResponse(
+        job_id="form-job-provider-done-1",
+        module="formConverter",
+        template_type="student_history_v1",
+        provider="cached-provider",
+        records=[
+            OcrRecordResponse(
+                record_id="record-1",
+                page_number=1,
+                status="ready",
+                fields=[
+                    OcrFieldResponse(
+                        field_name="student_id",
+                        label_th="เลขประจำตัว",
+                        value="1001",
+                        confidence=0.99,
+                        status="ready",
+                    )
+                ],
+            )
+        ],
+    )
+    request_store = OcrRequestStore()
+    claim = request_store.claim_processing(
+        user_id=user_id,
+        request_key=request_key,
+        job_id="form-job-provider-done-1",
+        reservation_id=reservation["reservation_id"],
+        template_type="student_history_v1",
+        document_sha256=document_sha,
+        page_count=2,
+    )
+    assert claim.claimed is True
+    request_store.mark_provider_done(user_id=user_id, request_key=request_key, response=cached_response)
+    capture = client.post(
+        f"/v1/credits/reservations/{reservation['reservation_id']}/capture",
+        headers=headers,
+        json={"units": 2, "idempotency_key": capture_key},
+    )
+    assert capture.status_code == 200
+
+    def fake_ocr(_request) -> OcrFormConverterResponse:  # noqa: ANN001
+        raise AssertionError("provider should not be called when provider_done response exists")
+
+    monkeypatch.setattr("app.routes.ocr.run_form_converter_ocr", fake_ocr)
+    response = client.post(
+        "/v1/ocr/form-converter",
+        headers=headers,
+        json={
+            "job_id": "form-job-provider-done-1",
+            "module": "formConverter",
+            "template_type": "student_history_v1",
+            "page_count": 2,
+            "credit_reservation_id": reservation["reservation_id"],
+            "document_sha256": document_sha,
+            "document_base64": base64.b64encode(document).decode("ascii"),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["provider"] == "cached-provider"
+    assert request_store.completed_response(user_id=user_id, request_key=request_key) is not None
+    assert client.get("/v1/wallet", headers=headers).json() == {
+        "user_id": user_id,
+        "balance": 1,
+        "reserved": 0,
+        "available": 1,
+    }

@@ -42,6 +42,25 @@ class OcrRequestStore:
             return None
         return OcrFormConverterResponse.model_validate_json(str(row["response_json"]))
 
+    def provider_response(
+        self,
+        *,
+        user_id: str,
+        request_key: str,
+    ) -> OcrFormConverterResponse | None:
+        with connect(self.sqlite_path) as connection:
+            row = connection.execute(
+                """
+                SELECT response_json
+                FROM ocr_form_converter_requests
+                WHERE user_id = ? AND request_key = ? AND status = 'provider_done'
+                """,
+                (user_id, request_key),
+            ).fetchone()
+        if row is None or not row["response_json"]:
+            return None
+        return OcrFormConverterResponse.model_validate_json(str(row["response_json"]))
+
     def claim_processing(
         self,
         *,
@@ -72,6 +91,8 @@ class OcrRequestStore:
                         claimed=False,
                         response=OcrFormConverterResponse.model_validate_json(str(row["response_json"])),
                     )
+                if row["status"] == "provider_done" and str(row["updated_at"]) > stale_before:
+                    return OcrRequestClaim(claimed=False, processing=True)
                 if row["status"] == "processing" and str(row["updated_at"]) > stale_before:
                     return OcrRequestClaim(claimed=False, processing=True)
                 connection.execute(
@@ -109,7 +130,7 @@ class OcrRequestStore:
             )
             return OcrRequestClaim(claimed=True)
 
-    def mark_done(
+    def mark_provider_done(
         self,
         *,
         user_id: str,
@@ -120,13 +141,38 @@ class OcrRequestStore:
             connection.execute(
                 """
                 UPDATE ocr_form_converter_requests
-                SET status = 'done',
+                SET status = 'provider_done',
                     response_json = ?,
                     error_detail = NULL,
                     updated_at = ?
                 WHERE user_id = ? AND request_key = ?
                 """,
                 (response.model_dump_json(), utc_now(), user_id, request_key),
+            )
+
+    def mark_done(
+        self,
+        *,
+        user_id: str,
+        request_key: str,
+        response: OcrFormConverterResponse | None = None,
+    ) -> None:
+        with connect(self.sqlite_path, immediate=True) as connection:
+            connection.execute(
+                """
+                UPDATE ocr_form_converter_requests
+                SET status = 'done',
+                    response_json = COALESCE(?, response_json),
+                    error_detail = NULL,
+                    updated_at = ?
+                WHERE user_id = ? AND request_key = ?
+                """,
+                (
+                    response.model_dump_json() if response is not None else None,
+                    utc_now(),
+                    user_id,
+                    request_key,
+                ),
             )
 
     def mark_failed(

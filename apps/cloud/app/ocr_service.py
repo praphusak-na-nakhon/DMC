@@ -487,6 +487,8 @@ def _read_provider_response(response: Any) -> str:
         raw_response = response.read(OCR_PROVIDER_MAX_RESPONSE_BYTES + 1)
     except TypeError:  # test doubles and non-standard response objects may not accept a size argument.
         raw_response = response.read()
+    if not isinstance(raw_response, bytes):
+        raise OcrProviderError("OCR_PROVIDER_RESPONSE_INVALID")
     if len(raw_response) > OCR_PROVIDER_MAX_RESPONSE_BYTES:
         raise OcrProviderError("OCR_PROVIDER_RESPONSE_TOO_LARGE")
     return raw_response.decode("utf-8")

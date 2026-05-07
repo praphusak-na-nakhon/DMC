@@ -171,7 +171,7 @@ def _quarantine_cached_config(module: str) -> None:
     path = cached_config_path(module)
     if not path.exists():
         return
-    quarantine_path = path.with_suffix(f".invalid-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.json")
+    quarantine_path = _quarantine_path(path)
     try:
         path.replace(quarantine_path)
     except OSError:
@@ -179,6 +179,16 @@ def _quarantine_cached_config(module: str) -> None:
             path.unlink()
         except OSError:
             pass
+
+
+def _quarantine_path(path: Path) -> Path:
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    candidate = path.with_suffix(f".invalid-{timestamp}.json")
+    suffix = 1
+    while candidate.exists():
+        candidate = path.with_suffix(f".invalid-{timestamp}-{suffix}.json")
+        suffix += 1
+    return candidate
 
 
 def load_effective_config(module: str) -> ModuleConfigState:

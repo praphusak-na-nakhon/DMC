@@ -56,6 +56,13 @@ async def convert_form_pdf(
         transaction_type="capture",
         idempotency_key=capture_key,
     ):
+        provider_response = request_store.provider_response(
+            user_id=session.user_id,
+            request_key=request_key,
+        )
+        if provider_response is not None:
+            request_store.mark_done(user_id=session.user_id, request_key=request_key)
+            return provider_response
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="OCR request was already captured but cached response is unavailable",
@@ -85,8 +92,10 @@ async def convert_form_pdf(
         return claim.response
     if claim.processing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="OCR request is already processing")
+    captured = False
     try:
         response = await run_in_threadpool(run_form_converter_ocr, request)
+        request_store.mark_provider_done(user_id=session.user_id, request_key=request_key, response=response)
         latest = repository.get_reservation(session.user_id, request.credit_reservation_id)
         target_captured = latest.units_captured + request.page_count
         repository.capture_credits(
@@ -97,9 +106,15 @@ async def convert_form_pdf(
                 idempotency_key=capture_key,
             ),
         )
-        request_store.mark_done(user_id=session.user_id, request_key=request_key, response=response)
+        captured = True
+        request_store.mark_done(user_id=session.user_id, request_key=request_key)
     except Exception as exc:
-        request_store.mark_failed(user_id=session.user_id, request_key=request_key, error_detail=_safe_ocr_error_detail(exc))
+        if not captured:
+            request_store.mark_failed(
+                user_id=session.user_id,
+                request_key=request_key,
+                error_detail=_safe_ocr_error_detail(exc),
+            )
         raise
     return response
 
@@ -108,8 +123,8 @@ def _safe_ocr_error_detail(exc: Exception) -> str:
     if isinstance(exc, HTTPException):
         detail = exc.detail
         if isinstance(detail, str):
-            normalized = detail.replace("_", "")
-            if normalized.isalnum() and detail.upper() == detail:
+            normalized = detail.replace("_", "").replace("-", "").replace(":", "").replace(".", "")
+            if 0 < len(detail) <= 120 and normalized.isalnum() and detail.upper() == detail:
                 return detail
         return f"HTTP_{exc.status_code}"
     return exc.__class__.__name__.upper()

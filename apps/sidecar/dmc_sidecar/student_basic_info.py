@@ -17,6 +17,7 @@ from .schemas import ExportStudentBasicInfoFormResponse, StudentBasicInfoClassSu
 
 DATA_START_ROW = 5
 FORM_MAX_COLUMN = 9
+DMC_SOURCE_SCAN_MAX_COLUMN = 80
 SOURCE_YEAR_TERM_PATTERN = re.compile(r"(?P<year>[0-9]{4})[-_ ](?P<term>[0-9]+)")
 INVALID_SHEET_TITLE_CHARS = re.compile(r"[:\\/?*\[\]]")
 EMPTY_MARKERS = {"", "-"}
@@ -159,7 +160,7 @@ def _read_students(path: Path) -> tuple[list[StudentBasicInfoRow], int]:
     workbook = load_workbook(path, read_only=True, data_only=True)
     try:
         sheet = workbook.active
-        max_column = max(int(sheet.max_column or 1), 1)
+        max_column = max(int(sheet.max_column or 1), DMC_SOURCE_SCAN_MAX_COLUMN)
         header_row, headers = _find_header_row(sheet, max_column=max_column)
         columns = _build_column_lookup(headers)
         max_column = max(max_column, max(int(value) for value in vars(columns).values()))
