@@ -194,20 +194,25 @@ def migrate_database(path: Path | None = None) -> int:
     target_path = path or database_path()
     with open_connection(target_path) as connection:
         _create_migration_table(connection)
+        connection.commit()
         applied_version = current_schema_version(connection)
         for migration in MIGRATIONS:
             if migration.version <= applied_version:
                 continue
-            migration.apply(connection)
-            connection.execute(
-                """
-                INSERT INTO schema_migrations (version, name, applied_at)
-                VALUES (?, ?, ?)
-                """,
-                (migration.version, migration.name, utc_now()),
-            )
+            try:
+                migration.apply(connection)
+                connection.execute(
+                    """
+                    INSERT INTO schema_migrations (version, name, applied_at)
+                    VALUES (?, ?, ?)
+                    """,
+                    (migration.version, migration.name, utc_now()),
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
             applied_version = migration.version
-        connection.commit()
         return applied_version
 
 

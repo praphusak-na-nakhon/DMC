@@ -206,6 +206,22 @@ def _telemetry_user_id_column(connection: sqlite3.Connection) -> None:
     )
 
 
+def _rate_limit_events(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS rate_limit_events (
+            scope TEXT NOT NULL,
+            key_hash TEXT NOT NULL,
+            created_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_rate_limit_events_scope_key_created
+            ON rate_limit_events(scope, key_hash, created_at);
+        CREATE INDEX IF NOT EXISTS idx_rate_limit_events_created
+            ON rate_limit_events(created_at);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(version=1, name="baseline_schema", apply=_baseline_schema),
     Migration(version=2, name="add_indexes", apply=_add_indexes),
@@ -213,6 +229,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(version=4, name="admin_audit_and_topup_requests", apply=_admin_audit_and_topup_requests),
     Migration(version=5, name="wallet_reserved_column", apply=_wallet_reserved_column),
     Migration(version=6, name="telemetry_user_id_column", apply=_telemetry_user_id_column),
+    Migration(version=7, name="rate_limit_events", apply=_rate_limit_events),
 )
 
 _MIGRATION_LOCK = threading.Lock()
@@ -239,20 +256,25 @@ def migrate_database(path: Path) -> int:
     ensure_parent(path)
     with open_connection(path) as connection:
         _create_migration_table(connection)
+        connection.commit()
         applied_version = current_schema_version(connection)
         for migration in MIGRATIONS:
             if migration.version <= applied_version:
                 continue
-            migration.apply(connection)
-            connection.execute(
-                """
-                INSERT INTO schema_migrations (version, name, applied_at)
-                VALUES (?, ?, ?)
-                """,
-                (migration.version, migration.name, utc_now()),
-            )
+            try:
+                migration.apply(connection)
+                connection.execute(
+                    """
+                    INSERT INTO schema_migrations (version, name, applied_at)
+                    VALUES (?, ?, ?)
+                    """,
+                    (migration.version, migration.name, utc_now()),
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
             applied_version = migration.version
-        connection.commit()
         return applied_version
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import sys
 import threading
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 
@@ -22,6 +23,7 @@ from .account_store import AccountSessionStore
 from . import __version__
 from .backup import create_backup_archive, restore_backup_archive
 from .browser_runtime import bootstrap_browser_runtime, get_browser_runtime_status
+from .checkpoint import JobCheckpoint
 from .config import sqlite_path
 from .db import get_database_metadata
 from .errors import DomainError
@@ -450,11 +452,32 @@ class RpcServer:
                 message="Job not found.",
             )
 
-        if record["status"] in {"done", "cancelled"}:
+        if record["status"] != "paused":
             return self._error(
                 request_id,
                 code="JOB_NOT_RESUMABLE",
                 message=f"Job status '{record['status']}' cannot be resumed.",
+            )
+        credit_reservation_id = record.get("credit_reservation_id")
+        credits_reserved = int(record.get("credits_reserved") or 0)
+        if credit_reservation_id and record.get("credit_status") == "finalized":
+            resume_attempt_id = uuid.uuid4().hex
+            credits_reserved = self._estimate_resume_credit_units(record, checkpoint)
+            reservation = reserve_credits(
+                self.account_store,
+                job_id=f"{job_id}:resume:{resume_attempt_id}",
+                module=record["module"],
+                units=credits_reserved,
+                idempotency_key=f"{job_id}:resume:{resume_attempt_id}:reserve",
+            )
+            credit_reservation_id = reservation.reservation_id
+            self.job_store.update_credit_status(
+                job_id,
+                credit_reservation_id=credit_reservation_id,
+                credits_reserved=credits_reserved,
+                credits_captured=0,
+                credits_refunded=0,
+                credit_status="reserved",
             )
 
         browser_runtime = get_browser_runtime_status()
@@ -471,13 +494,23 @@ class RpcServer:
             module_name=record["module"],
             excel_path=Path(record["source_file"]),
             options=checkpoint.options,
-            credit_reservation_id=record.get("credit_reservation_id"),
-            credits_reserved=int(record.get("credits_reserved") or 0),
+            credit_reservation_id=credit_reservation_id,
+            credits_reserved=credits_reserved,
         )
         return RpcSuccessResponse(
             id=request_id,
             result={"accepted": True, "job_id": job_id, "status": "running"},
         )
+
+    def _estimate_resume_credit_units(self, record: dict[str, Any], checkpoint: JobCheckpoint) -> int:
+        total = int(record.get("total_records") or 0)
+        processed = max(int(record.get("processed") or 0), checkpoint.processed)
+        if total > processed:
+            return total - processed
+        previous_reserved = int(record.get("credits_reserved") or 0)
+        previous_captured = int(record.get("credits_captured") or 0)
+        previous_refunded = int(record.get("credits_refunded") or 0)
+        return max(previous_reserved - previous_captured - previous_refunded, 1)
 
     def _error(
         self,

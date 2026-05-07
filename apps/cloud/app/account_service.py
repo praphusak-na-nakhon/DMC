@@ -544,14 +544,35 @@ class AccountRepository:
 
     def reserve_credits(self, user_id: str, request: CreditReservationRequest) -> CreditReservationResponse:
         with connect(self.sqlite_path, immediate=True) as connection:
-            existing = connection.execute(
+            existing_by_job = connection.execute(
                 """
                 SELECT * FROM credit_reservations
-                WHERE user_id = ? AND (job_id = ? OR idempotency_key = ?)
+                WHERE user_id = ? AND job_id = ?
                 """,
-                (user_id, request.job_id, request.idempotency_key),
+                (user_id, request.job_id),
             ).fetchone()
+            existing_by_key = connection.execute(
+                """
+                SELECT * FROM credit_reservations
+                WHERE user_id = ? AND idempotency_key = ?
+                """,
+                (user_id, request.idempotency_key),
+            ).fetchone()
+            if (
+                existing_by_job is not None
+                and existing_by_key is not None
+                and existing_by_job["id"] != existing_by_key["id"]
+            ):
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="credit reservation idempotency conflict")
+            existing = existing_by_job or existing_by_key
             if existing is not None:
+                if (
+                    existing["job_id"] != request.job_id
+                    or existing["idempotency_key"] != request.idempotency_key
+                    or existing["module"] != request.module
+                    or int(existing["units_reserved"]) != int(request.units)
+                ):
+                    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="credit reservation idempotency conflict")
                 return self._reservation_response_from_row(existing)
 
             if connection.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone() is None:

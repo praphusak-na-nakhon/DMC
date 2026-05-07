@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 
 from ..account_service import AccountRepository, SessionRecord
 from ..auth import require_account_session
+from ..rate_limit import rate_limit
 from ..schemas import (
     CreditCaptureRequest,
     CreditReleaseRequest,
@@ -12,7 +13,7 @@ from ..schemas import (
 )
 
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(rate_limit(scope="credits", limit=300, window_seconds=60))])
 
 
 @router.post("/reservations", response_model=CreditReservationResponse)

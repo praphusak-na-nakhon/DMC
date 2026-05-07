@@ -139,6 +139,30 @@ def test_manual_topup_wallet_and_reservation_flow(monkeypatch, tmp_path: Path) -
     assert repeated.status_code == 200
     assert repeated.json()["reservation_id"] == reservation["reservation_id"]
 
+    same_job_new_key = client.post(
+        "/v1/credits/reservations",
+        headers=headers,
+        json={
+            "job_id": "job-credit-1",
+            "module": "graduation",
+            "units": 3,
+            "idempotency_key": "reserve-1-new-key",
+        },
+    )
+    assert same_job_new_key.status_code == 409
+
+    new_job_same_key = client.post(
+        "/v1/credits/reservations",
+        headers=headers,
+        json={
+            "job_id": "job-credit-1-new-job",
+            "module": "graduation",
+            "units": 3,
+            "idempotency_key": "reserve-1",
+        },
+    )
+    assert new_job_same_key.status_code == 409
+
     capture = client.post(
         f"/v1/credits/reservations/{reservation['reservation_id']}/capture",
         headers=headers,
@@ -446,6 +470,10 @@ def test_form_converter_ocr_requires_login_and_returns_mock_records(monkeypatch,
         "first_name",
         "last_name",
     }
+    wallet = client.get("/v1/wallet", headers={"Authorization": f"Bearer {token}"})
+    assert wallet.status_code == 200
+    assert wallet.json()["balance"] == 4
+    assert wallet.json()["reserved"] == 0
     assert telemetry.count() == 0
 
 
@@ -798,19 +826,26 @@ def test_form_converter_ocr_credit_ledger_end_to_end(monkeypatch, tmp_path: Path
     assert ocr.status_code == 200
     assert len(ocr.json()["records"]) == 2
 
-    capture = client.post(
-        f"/v1/credits/reservations/{reservation['reservation_id']}/capture",
+    second_ocr = client.post(
+        "/v1/ocr/form-converter",
         headers=headers,
-        json={"units": 1, "idempotency_key": "capture-form-ledger-1"},
+        json={
+            "job_id": "form-job-ledger-1",
+            "module": "formConverter",
+            "template_type": "student_history_v1",
+            "page_count": 1,
+            "credit_reservation_id": reservation["reservation_id"],
+            "document_sha256": hashlib.sha256(document).hexdigest(),
+            "document_base64": base64.b64encode(document).decode("ascii"),
+        },
     )
-    assert capture.status_code == 200
-    release = client.post(
-        f"/v1/credits/reservations/{reservation['reservation_id']}/release",
-        headers=headers,
-        json={"units": 1, "idempotency_key": "release-form-ledger-1"},
-    )
-    assert release.status_code == 200
-    assert release.json()["wallet"] == {"user_id": user_id, "balance": 2, "reserved": 0, "available": 2}
+    assert second_ocr.status_code == 402
+    assert client.get("/v1/wallet", headers=headers).json() == {
+        "user_id": user_id,
+        "balance": 1,
+        "reserved": 0,
+        "available": 1,
+    }
 
     ledger = client.get(f"/v1/admin/users/{user_id}/ledger", headers=_admin_headers())
     assert ledger.status_code == 200
@@ -819,5 +854,4 @@ def test_form_converter_ocr_credit_ledger_end_to_end(monkeypatch, tmp_path: Path
         ("topup", None),
         ("reserve", "formConverter"),
         ("capture", "formConverter"),
-        ("release", "formConverter"),
     }

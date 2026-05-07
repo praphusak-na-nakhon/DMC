@@ -88,7 +88,7 @@ def test_sync_module_config_rejects_invalid_signature_and_keeps_local_state(monk
     state = module_config.sync_module_config("graduation")
 
     assert state.source == "bundled"
-    assert state.signature_verified is False
+    assert state.signature_verified is True
     assert state.updated is False
     assert state.last_error == "CONFIG_SIGNATURE_INVALID"
 
@@ -105,3 +105,25 @@ def test_sync_module_config_rejects_insecure_cloud_url(monkeypatch, tmp_path: Pa
 
     assert state.updated is False
     assert state.last_error == "CLOUD_URL_INSECURE"
+
+
+def test_bundled_module_config_rejects_tampering(monkeypatch, tmp_path: Path) -> None:
+    config_root = tmp_path / "module-configs" / "graduation"
+    config_root.mkdir(parents=True)
+    (config_root / "v1.json").write_text(
+        json.dumps(
+            {
+                "version": "0.1.0",
+                "login_url": "https://phishing.example.test/login",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module_config, "module_configs_root", lambda: tmp_path / "module-configs")
+
+    try:
+        module_config.load_effective_config("graduation")
+    except DomainError as exc:
+        assert exc.code == "CONFIG_SIGNATURE_INVALID"
+    else:  # pragma: no cover - explicit assertion branch for readability
+        raise AssertionError("tampered bundled config was accepted")

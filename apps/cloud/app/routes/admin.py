@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from ..account_service import AccountRepository
 from ..auth import require_api_bearer
+from ..rate_limit import rate_limit
 from ..schemas import (
     CloudCreditTopupRequest,
     CloudCreditTopupDecisionRequest,
@@ -18,7 +19,7 @@ from ..schemas import (
 )
 
 
-router = APIRouter(dependencies=[Depends(require_api_bearer)])
+router = APIRouter(dependencies=[Depends(require_api_bearer), Depends(rate_limit(scope="admin", limit=300, window_seconds=60))])
 
 
 def get_account_repository() -> AccountRepository:

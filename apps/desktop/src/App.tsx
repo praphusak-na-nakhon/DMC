@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import messages from "./i18n/th.json";
 import {
   archiveOldJobs,
@@ -121,6 +121,7 @@ export function App() {
     null,
   );
   const [activeModule, setActiveModule] = useState<"home" | ModuleId>("home");
+  const mountedRef = useRef(false);
 
   const validationBlocksStart =
     !preview || preview.rows_accepted <= 0 || validatedExcelPath !== excelPath.trim();
@@ -226,21 +227,52 @@ export function App() {
     }
   }, [setErrorMessage]);
 
-  const handleConnect = useCallback(async () => {
+  const handleConnect = useCallback(async (isActive: () => boolean = () => mountedRef.current) => {
+    if (!isActive()) {
+      return;
+    }
     setErrorMessage(null);
     setConnectionState("connecting");
     try {
       await initializeSidecar();
+      if (!isActive()) {
+        return;
+      }
       setConnectionState("ready");
       await handleRefreshAccount(false);
-      setModuleConfigStatus(await getModuleConfigStatus("graduation"));
+      if (!isActive()) {
+        return;
+      }
+      const configStatus = await getModuleConfigStatus("graduation");
+      if (!isActive()) {
+        return;
+      }
+      setModuleConfigStatus(configStatus);
       await handleLoadUpdaterStatus();
+      if (!isActive()) {
+        return;
+      }
       await handleLoadDatabaseStatus();
+      if (!isActive()) {
+        return;
+      }
       await handleLoadJobs();
+      if (!isActive()) {
+        return;
+      }
       await handleLoadBrowserRuntime();
+      if (!isActive()) {
+        return;
+      }
       await handleLoadModuleCatalog();
+      if (!isActive()) {
+        return;
+      }
       await handleSyncConfig();
     } catch (error) {
+      if (!isActive()) {
+        return;
+      }
       setConnectionState("error");
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
@@ -419,6 +451,13 @@ export function App() {
   }
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (typeof navigator === "undefined") {
       return;
     }
@@ -432,11 +471,14 @@ export function App() {
 
     async function bootstrap() {
       try {
-        await handleConnect();
+        await handleConnect(() => !disposed);
         if (disposed) {
           return;
         }
         unlisten = await listenSidecarEvents((event) => {
+          if (disposed) {
+            return;
+          }
           if (event.type === "browser_runtime_progress") {
             setBrowserRuntimeProgress({
               phase: event.phase,
@@ -448,6 +490,9 @@ export function App() {
           applySidecarEvent(event);
         });
         unlistenUpdater = await listenUpdaterEvents((event) => {
+          if (disposed) {
+            return;
+          }
           if (event.type === "started" || event.type === "progress") {
             setUpdateProgress({
               downloaded: event.downloaded,

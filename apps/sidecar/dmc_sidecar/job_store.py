@@ -8,6 +8,9 @@ from .checkpoint import JobCheckpoint
 from .db import connect, utc_now
 
 
+SUMMARY_FALLBACK_STATUSES = {"done", "failed", "cancelled", "stopped_on_review"}
+
+
 class JobStore:
     def _checkpoint_payload(self, checkpoint: JobCheckpoint) -> str:
         return checkpoint.model_dump_json(exclude={"results"})
@@ -110,6 +113,8 @@ class JobStore:
         self,
         job_id: str,
         *,
+        credit_reservation_id: str | None = None,
+        credits_reserved: int | None = None,
         credits_captured: int | None = None,
         credits_refunded: int | None = None,
         credit_status: str | None = None,
@@ -117,7 +122,7 @@ class JobStore:
         with connect() as connection:
             current = connection.execute(
                 """
-                SELECT credits_captured, credits_refunded, credit_status
+                SELECT credit_reservation_id, credits_reserved, credits_captured, credits_refunded, credit_status
                 FROM job
                 WHERE id = ?
                 """,
@@ -128,12 +133,16 @@ class JobStore:
             connection.execute(
                 """
                 UPDATE job
-                SET credits_captured = ?,
+                SET credit_reservation_id = ?,
+                    credits_reserved = ?,
+                    credits_captured = ?,
                     credits_refunded = ?,
                     credit_status = ?
                 WHERE id = ?
                 """,
                 (
+                    credit_reservation_id if credit_reservation_id is not None else current["credit_reservation_id"],
+                    credits_reserved if credits_reserved is not None else current["credits_reserved"],
                     credits_captured if credits_captured is not None else current["credits_captured"],
                     credits_refunded if credits_refunded is not None else current["credits_refunded"],
                     credit_status if credit_status is not None else current["credit_status"],
@@ -470,6 +479,8 @@ class JobStore:
                         for key, value in parsed.items()
                         if isinstance(value, int)
                     }
+        if row["status"] not in SUMMARY_FALLBACK_STATUSES:
+            return None
         return self._run_summary(connection, str(row["id"]), row["total_records"])
 
 

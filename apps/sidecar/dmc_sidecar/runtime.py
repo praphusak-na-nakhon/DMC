@@ -23,6 +23,18 @@ def utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _safe_runtime_error_code(exc: Exception) -> str:
+    if isinstance(exc, DomainError):
+        return exc.code
+    return exc.__class__.__name__.upper() or "JOB_RUNTIME_ERROR"
+
+
+def _safe_runtime_error_message(exc: Exception) -> str:
+    if isinstance(exc, DomainError):
+        return exc.user_message
+    return "Job failed. Check diagnostics."
+
+
 class JobControl:
     def __init__(self) -> None:
         self._pause_event = threading.Event()
@@ -320,7 +332,8 @@ class JobManager:
             elif status is not None and status["status"] in {"failed", "cancelled", "stopped_on_review"}:
                 self._finalize_credits(context, status)
         except Exception as exc:  # pragma: no cover - background defensive path
-            code = str(exc)
+            code = _safe_runtime_error_code(exc)
+            message = _safe_runtime_error_message(exc)
             checkpoint = context.job_store.load_checkpoint(context.job_id)
             if code == "JOB_CANCELLED":
                 context.snapshot.status = "cancelled"
@@ -341,7 +354,7 @@ class JobManager:
                         "type": "error",
                         "job_id": context.job_id,
                         "code": code,
-                        "message": str(exc),
+                        "message": message,
                     }
                 )
                 self.telemetry.record_job_failed(

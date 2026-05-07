@@ -216,16 +216,17 @@ def test_graduation_job_runs_against_mock_obec_portal(
     monkeypatch.setattr(
         graduation_module,
         "sync_module_config",
-        lambda module: SimpleNamespace(
-            config={
-                "login_url": f"{base_url}/obec68/auth/login",
-                "target_url_template": f"{base_url}/obec68/studentpendingupl/add?levelDtlCode={{level_code}}&action=search",
-                "level_rules": legacy.LEVEL_RULES,
-                "status_code_map": legacy.STATUS_CODE_MAP,
-            },
-            last_error=None,
-        ),
-    )
+            lambda module: SimpleNamespace(
+                config={
+                    "login_url": f"{base_url}/obec68/auth/login",
+                    "target_url_template": f"{base_url}/obec68/studentpendingupl/add?levelDtlCode={{level_code}}&action=search",
+                    "level_rules": legacy.LEVEL_RULES,
+                    "status_code_map": legacy.STATUS_CODE_MAP,
+                },
+                signature_verified=True,
+                last_error=None,
+            ),
+        )
 
     job_store = JobStore()
     job_store.create_pending_job(job_id, "graduation", str(tmp_path / "source.xlsx"))

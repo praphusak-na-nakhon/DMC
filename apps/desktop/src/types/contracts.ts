@@ -645,6 +645,11 @@ export type SidecarEvent =
       type: "job_done";
       job_id: string;
       status: string;
+      processed: number;
+      total: number | null;
+      succeeded: number;
+      failed: number;
+      current_page: number | null;
       report_path: string;
       review_report_path: string;
       run_summary: JobRunSummary | null;
@@ -1682,6 +1687,11 @@ export function parseSidecarEvent(value: unknown): SidecarEvent {
         type: "job_done",
         job_id: readString(record, "job_id", "sidecar_event"),
         status: readString(record, "status", "sidecar_event"),
+        processed: readNumber(record, "processed", "sidecar_event"),
+        total: readOptionalNumber(record, "total", "sidecar_event"),
+        succeeded: readNumber(record, "succeeded", "sidecar_event"),
+        failed: readNumber(record, "failed", "sidecar_event"),
+        current_page: readOptionalNumber(record, "current_page", "sidecar_event"),
         report_path: readString(record, "report_path", "sidecar_event"),
         review_report_path: readString(record, "review_report_path", "sidecar_event"),
         run_summary: parseOptionalJobRunSummary(record, "run_summary", "sidecar_event"),

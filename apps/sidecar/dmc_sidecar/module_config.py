@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -21,6 +22,11 @@ from .config import (
     secure_cloud_base_url,
 )
 from .errors import DomainError
+
+
+BUNDLED_CONFIG_SHA256: dict[str, str] = {
+    "graduation": "943369dc2d4c7d7f2360c05fbb8a6e77a6b06c6f7b5918a1bbdc69e13351d776",
+}
 
 
 def utc_now() -> str:
@@ -123,22 +129,30 @@ def _read_json_file(path: Path) -> dict[str, Any]:
     return cast(dict[str, Any], payload)
 
 
-def _read_bundled_config(path: Path) -> dict[str, Any]:
-    payload = _read_json_file(path)
+def _read_bundled_config(module: str, path: Path) -> dict[str, Any]:
+    expected_hash = BUNDLED_CONFIG_SHA256.get(module)
+    if expected_hash is None:
+        raise DomainError("CONFIG_SIGNATURE_INVALID")
+    raw_bytes = path.read_bytes()
+    if hashlib.sha256(raw_bytes).hexdigest() != expected_hash:
+        raise DomainError("CONFIG_SIGNATURE_INVALID")
+    payload = json.loads(raw_bytes.decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise DomainError("CONFIG_JSON_INVALID")
     if "version" not in payload:
         raise DomainError("CONFIG_SIGNATURE_INVALID")
-    return payload
+    return cast(dict[str, Any], payload)
 
 
 def _load_bundled_state(module: str, *, last_error: str | None = None) -> ModuleConfigState:
     path = bundled_config_path(module)
-    payload = _read_bundled_config(path)
+    payload = _read_bundled_config(module, path)
     return ModuleConfigState(
         module=module,
         version=str(payload["version"]),
         config=payload,
         source="bundled",
-        signature_verified=False,
+        signature_verified=True,
         config_path=path,
         checked_at=utc_now(),
         updated=False,

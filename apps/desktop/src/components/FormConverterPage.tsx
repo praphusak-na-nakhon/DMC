@@ -32,8 +32,8 @@ const errorMessages: Record<string, string> = {
   CURRENT_STUDENTS_ROSTER_EMPTY: "ไม่พบรายชื่อนักเรียนในไฟล์บัญชีรายชื่อ",
   CURRENT_STUDENTS_EXPORT_UNSUPPORTED_TYPE: "ไฟล์ปลายทางต้องเป็น .xlsx",
   DMC_FORM_JSON_EXPORT_UNSUPPORTED_TYPE: "ไฟล์ปลายทางต้องเป็น .json",
-  CURRENT_STUDENTS_OCR_REQUIRED: "กรุณาเพิ่มไฟล์ OCR markdown อย่างน้อย 1 ไฟล์",
-  CURRENT_STUDENTS_OCR_NO_RECORDS: "ไม่พบข้อมูลนักเรียนจากไฟล์ OCR markdown ที่เลือก",
+  CURRENT_STUDENTS_OCR_REQUIRED: "กรุณาเพิ่มไฟล์ OCR จากแบบฟอร์ม DMC อย่างน้อย 1 ไฟล์",
+  CURRENT_STUDENTS_OCR_NO_RECORDS: "ไม่พบข้อมูลนักเรียนจากไฟล์ OCR จากแบบฟอร์ม DMC ที่เลือก",
 };
 
 type PreviewColumn = {
@@ -57,6 +57,10 @@ type PreviewColumnGroup = {
   label: string;
   colSpan: number;
 };
+
+const previewRowHeight = 40;
+const previewTableMaxHeight = 560;
+const previewVirtualOverscan = 6;
 
 const priorityPreviewColumnGroups: PreviewColumnGroupDefinition[] = [
   {
@@ -161,7 +165,7 @@ export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPag
       return null;
     }
     if (!selectedOcrPaths.length) {
-      setErrorMessage("กรุณาเพิ่มไฟล์ OCR markdown อย่างน้อย 1 ไฟล์");
+      setErrorMessage("กรุณาเพิ่มไฟล์ OCR จากแบบฟอร์ม DMC อย่างน้อย 1 ไฟล์");
       return null;
     }
     const parsedSchoolYear = Number.parseInt(schoolYear.trim(), 10);
@@ -251,7 +255,7 @@ export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPag
               <Badge variant="default">พร้อมสร้าง JSON</Badge>
               <h1 className="mt-2 text-3xl font-bold tracking-normal">แปลงเอกสารแบบฟอร์ม DMC เป็น JSON</h1>
               <p className="mt-2 max-w-3xl text-muted-foreground">
-                แปลงข้อมูลจากไฟล์ OCR markdown ของแบบฟอร์มที่นักเรียนกรอกจริงเป็น JSON กลาง โดยใช้บัญชีรายชื่อและ CSV เครื่องสแกนบัตรเป็นข้อมูลอ้างอิง
+                แปลงข้อมูลจากไฟล์ OCR จากแบบฟอร์ม DMC ของแบบฟอร์มที่นักเรียนกรอกจริงเป็น JSON กลาง โดยใช้บัญชีรายชื่อและ CSV เครื่องสแกนบัตรเป็นข้อมูลอ้างอิง
               </p>
             </div>
           </div>
@@ -270,7 +274,7 @@ export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPag
             <div>
               <CardTitle>สร้าง JSON จากแบบฟอร์ม DMC</CardTitle>
               <CardDescription>
-                ไฟล์ OCR markdown คือรายการหลักที่จะถูก export; บัญชีรายชื่อและ CSV ใช้ช่วยจับคู่นักเรียนและเติมข้อมูลอ้างอิงเท่านั้น โดยยังไม่กำหนดประเภทงาน
+                ไฟล์ OCR จากแบบฟอร์ม DMC คือรายการหลักที่จะถูก export; บัญชีรายชื่อและ CSV ใช้ช่วยจับคู่นักเรียนและเติมข้อมูลอ้างอิงเท่านั้น โดยยังไม่กำหนดประเภทงาน
               </CardDescription>
             </div>
             <Badge variant="outline">DMC form JSON</Badge>
@@ -316,7 +320,7 @@ export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPag
               </div>
 
               <div className="grid gap-2">
-                <Label>ไฟล์ OCR markdown</Label>
+                <Label>ไฟล์ OCR จากแบบฟอร์ม DMC</Label>
                 <textarea
                   className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   value={ocrMarkdownPaths}
@@ -478,11 +482,28 @@ function DmcFormTablePreview({
   const columns = previewColumnsFromRecords(records, fieldLabels);
   const columnGroups = previewColumnGroupsFromColumns(columns);
   const tableMinWidth = Math.max(1280, columns.length * 160 + 140);
+  const [scrollTop, setScrollTop] = useState(0);
+  const shouldVirtualize = records.length > 50;
+  const visibleHeight = shouldVirtualize ? previewTableMaxHeight : records.length * previewRowHeight;
+  const visibleCount = Math.ceil(visibleHeight / previewRowHeight) + previewVirtualOverscan * 2;
+  const startIndex = shouldVirtualize ? Math.max(0, Math.floor(scrollTop / previewRowHeight) - previewVirtualOverscan) : 0;
+  const endIndex = shouldVirtualize ? Math.min(records.length, startIndex + visibleCount) : records.length;
+  const visibleRecords = records.slice(startIndex, endIndex);
+  const topPadding = shouldVirtualize ? startIndex * previewRowHeight : 0;
+  const bottomPadding = shouldVirtualize ? Math.max(0, (records.length - endIndex) * previewRowHeight) : 0;
 
   return (
-    <div className="mt-4 overflow-x-auto rounded-md border bg-background">
+    <div
+      className="mt-4 overflow-auto rounded-md border bg-background"
+      style={shouldVirtualize ? { maxHeight: previewTableMaxHeight } : undefined}
+      onScroll={(event) => {
+        if (shouldVirtualize) {
+          setScrollTop(event.currentTarget.scrollTop);
+        }
+      }}
+    >
       <table className="w-full border-collapse text-sm" style={{ minWidth: tableMinWidth }}>
-        <thead className="bg-muted/60 text-left">
+        <thead className="sticky top-0 z-10 bg-muted/60 text-left">
           <tr>
             <th rowSpan={2} className="whitespace-nowrap border-b px-3 py-2 font-medium">
               สถานะ
@@ -506,10 +527,19 @@ function DmcFormTablePreview({
           </tr>
         </thead>
         <tbody>
-          {records.map((record) => {
+          {topPadding > 0 ? (
+            <tr aria-hidden="true">
+              <td colSpan={columns.length + 1} style={{ height: topPadding, padding: 0, border: 0 }} />
+            </tr>
+          ) : null}
+          {visibleRecords.map((record) => {
             const missingCount = unresolvedConflictCount(record.record_id, conflicts);
             return (
-              <tr key={record.record_id} className="align-top">
+              <tr
+                key={record.record_id}
+                className="align-top"
+                style={shouldVirtualize ? { height: previewRowHeight } : undefined}
+              >
                 <td className="border-b px-3 py-2">
                   <span className={missingCount ? "font-medium text-amber-800" : "font-medium text-emerald-700"}>
                     {missingCount ? `ขาด ${missingCount} ช่อง` : "พร้อม"}
@@ -523,6 +553,11 @@ function DmcFormTablePreview({
               </tr>
             );
           })}
+          {bottomPadding > 0 ? (
+            <tr aria-hidden="true">
+              <td colSpan={columns.length + 1} style={{ height: bottomPadding, padding: 0, border: 0 }} />
+            </tr>
+          ) : null}
         </tbody>
       </table>
     </div>

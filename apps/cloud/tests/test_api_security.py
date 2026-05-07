@@ -5,10 +5,12 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 from app.config import settings
 from app.config_signing import canonical_config_payload, sign_config_payload
 from app.main import app
+from app.rate_limit import client_rate_limit_key
 from app.telemetry_store import TelemetryStore
 
 
@@ -70,6 +72,27 @@ def test_admin_requires_bearer() -> None:
     settings.api_bearer_token = TEST_API_BEARER_TOKEN
     response = client.get("/v1/admin/users")
     assert response.status_code == 401
+
+
+def test_rate_limit_client_key_only_trusts_configured_proxy(monkeypatch) -> None:
+    def request_for(host: str, forwarded_for: str):
+        return Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/healthz",
+                "headers": [(b"x-forwarded-for", forwarded_for.encode("ascii"))],
+                "client": (host, 12345),
+            }
+        )
+
+    monkeypatch.setattr(settings, "trusted_proxy_hosts", "")
+    direct_request = request_for("203.0.113.10", "198.51.100.1")
+    assert client_rate_limit_key(direct_request) == "203.0.113.10"
+
+    monkeypatch.setattr(settings, "trusted_proxy_hosts", "203.0.113.10")
+    proxied_request = request_for("203.0.113.10", "198.51.100.1, 203.0.113.10")
+    assert client_rate_limit_key(proxied_request) == "198.51.100.1"
 
 
 def test_license_routes_are_removed(monkeypatch, tmp_path: Path) -> None:

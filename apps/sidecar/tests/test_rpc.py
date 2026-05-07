@@ -119,15 +119,7 @@ def test_list_jobs_rpc(monkeypatch, tmp_path: Path) -> None:
 
     assert response["result"]["items"][0]["job_id"] == "job-1"
     assert response["result"]["items"][0]["source_file"] == "C:\\data\\m3.xlsx"
-    assert response["result"]["items"][0]["run_summary"] == {
-        "dmc_rows_total": 3,
-        "matched_from_excel": 2,
-        "default_207": 1,
-        "excel_missing": 1,
-        "review_rows": 1,
-        "applied_rows": 0,
-        "dry_run_rows": 2,
-    }
+    assert response["result"]["items"][0]["run_summary"] is None
 
 
 def test_archive_old_jobs_rpc_keeps_latest_terminal_jobs(monkeypatch, tmp_path: Path) -> None:
@@ -539,6 +531,65 @@ def test_resume_existing_job_rejects_done_job(monkeypatch, tmp_path: Path) -> No
     response = json.loads(server.handle_text(payload))
 
     assert response["error"]["code"] == "JOB_NOT_RESUMABLE"
+
+
+def test_resume_existing_job_re_reserves_finalized_credit_reservation(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    store = JobStore()
+    store.create_pending_job(
+        "job-credit-finalized",
+        "graduation",
+        "C:\\data\\m6.xlsx",
+        credit_reservation_id="reservation-finalized",
+        credits_reserved=10,
+        credit_status="reserved",
+    )
+    checkpoint = JobCheckpoint.initial(level_label="เธก.6", base_url="https://example.test")
+    checkpoint.options = {"dry_run": False}
+    store.mark_running(
+        "job-credit-finalized",
+        total_records=10,
+        checkpoint=checkpoint,
+        started_at="2026-04-22T00:00:00Z",
+    )
+    store.set_status("job-credit-finalized", "paused")
+    store.update_credit_status("job-credit-finalized", credit_status="finalized")
+
+    server = RpcServer(emit_notification=lambda payload: None)
+    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
+    reservations: list[dict[str, object]] = []
+
+    def fake_reserve_credits(*args: object, **kwargs: object) -> object:
+        reservations.append(dict(kwargs))
+        return SimpleNamespace(reservation_id="reservation-resume-1")
+
+    started: dict[str, object] = {}
+
+    def fake_start_job(**kwargs: object) -> None:
+        started.update(kwargs)
+
+    monkeypatch.setattr("dmc_sidecar.rpc.reserve_credits", fake_reserve_credits)
+    monkeypatch.setattr(server.job_manager, "start_job", fake_start_job)
+    payload = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "req-finalized-credit",
+            "method": "resume_existing_job",
+            "params": {"job_id": "job-credit-finalized"},
+        }
+    )
+
+    response = json.loads(server.handle_text(payload))
+
+    assert response["result"]["accepted"] is True
+    assert reservations[0]["units"] == 10
+    assert str(reservations[0]["job_id"]).startswith("job-credit-finalized:resume:")
+    assert started["credit_reservation_id"] == "reservation-resume-1"
+    assert started["credits_reserved"] == 10
+    status = server.job_store.get_status("job-credit-finalized")
+    assert status is not None
+    assert status["credit_reservation_id"] == "reservation-resume-1"
+    assert status["credit_status"] == "reserved"
 
 
 def test_rpc_sanitizes_unexpected_exception_messages(monkeypatch, tmp_path: Path) -> None:

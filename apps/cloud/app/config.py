@@ -41,6 +41,7 @@ class Settings(BaseModel):
     ).strip().rstrip("/")
     ocr_max_pdf_bytes: int = int(os.getenv("DMC_OCR_MAX_PDF_BYTES", str(20 * 1024 * 1024)))
     ocr_max_pages_per_job: int = int(os.getenv("DMC_OCR_MAX_PAGES_PER_JOB", "100"))
+    trusted_proxy_hosts: str = os.getenv("DMC_CLOUD_TRUSTED_PROXY_HOSTS", "").strip()
 
 
 settings = Settings()

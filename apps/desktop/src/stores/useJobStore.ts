@@ -150,6 +150,11 @@ export const useJobStore = create<JobStoreState>((set) => ({
           ? mergeJob(state.currentJob, {
               job_id: event.job_id,
               status: event.status,
+              processed: event.processed,
+              total: event.total,
+              succeeded: event.succeeded,
+              failed: event.failed,
+              current_page: event.current_page,
               needs_auth: false,
               auth_reason: null,
               report_path: event.report_path,
@@ -183,6 +188,9 @@ export const useJobStore = create<JobStoreState>((set) => ({
       }
 
       if (event.type === "error") {
+        if (event.job_id && state.activeJobId && event.job_id !== state.activeJobId) {
+          return state;
+        }
         return {
           errorMessage: `${event.code}: ${event.message}`,
           sidecarMessages: [`เกิดข้อผิดพลาดใน sidecar: ${event.message}`, ...state.sidecarMessages].slice(

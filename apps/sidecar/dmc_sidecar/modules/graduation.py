@@ -9,7 +9,7 @@ from playwright.sync_api import BrowserContext, Error as PlaywrightError, Page, 
 from ..checkpoint import JobCheckpoint
 from ..config import profile_dir_for_account, profiles_dir, reports_dir
 from ..errors import DomainError
-from ..module_config import load_effective_config, sync_module_config
+from ..module_config import ModuleConfigState, load_effective_config, sync_module_config
 from ..runtime import JobContext, utc_now
 from ..schemas import PreviewRow, ValidateExcelResponse, ValidationWarning
 from .base import AutomationModule
@@ -44,7 +44,7 @@ class GraduationModule(AutomationModule):
 
     def validate_excel(self, path: Path) -> ValidateExcelResponse:
         legacy = graduation_legacy
-        self._apply_module_config(legacy, load_effective_config(self.name).config)
+        self._apply_module_config(legacy, load_effective_config(self.name))
         dataframe = pd.read_excel(path, dtype=str).fillna("")
         students, detected_level = legacy.load_source_data(path)
 
@@ -91,7 +91,7 @@ class GraduationModule(AutomationModule):
     ) -> None:
         legacy = graduation_legacy
         module_config_state = sync_module_config(self.name)
-        self._apply_module_config(legacy, module_config_state.config)
+        self._apply_module_config(legacy, module_config_state)
         if module_config_state.last_error:
             context.emit_event(
                 {
@@ -268,6 +268,11 @@ class GraduationModule(AutomationModule):
                                 "type": "job_done",
                                 "job_id": job_id,
                                 "status": "done",
+                                "processed": context.snapshot.processed,
+                                "total": context.snapshot.total,
+                                "succeeded": context.snapshot.succeeded,
+                                "failed": context.snapshot.failed,
+                                "current_page": context.snapshot.current_page,
                                 "report_path": str(csv_path),
                                 "review_report_path": str(review_path),
                                 "run_summary": status.get("run_summary"),
@@ -352,11 +357,15 @@ class GraduationModule(AutomationModule):
             )
         )
 
-    def _apply_module_config(self, legacy: GraduationLegacyModule, module_config: dict[str, Any]) -> None:
-        login_url = module_config.get("login_url")
-        target_url_template = module_config.get("target_url_template")
-        level_rules = module_config.get("level_rules")
-        status_code_map = module_config.get("status_code_map")
+    def _apply_module_config(self, legacy: GraduationLegacyModule, module_config_state: ModuleConfigState) -> None:
+        if not module_config_state.signature_verified:
+            raise DomainError("CONFIG_SIGNATURE_INVALID")
+
+        config_payload = module_config_state.config
+        login_url = config_payload.get("login_url")
+        target_url_template = config_payload.get("target_url_template")
+        level_rules = config_payload.get("level_rules")
+        status_code_map = config_payload.get("status_code_map")
 
         if isinstance(login_url, str) and login_url.strip():
             legacy.LOGIN_URL = login_url.strip()

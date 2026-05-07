@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from ..account_service import AccountRepository, SessionRecord
 from ..auth import require_account_session
-from ..rate_limit import rate_limit
+from ..rate_limit import client_rate_limit_key, enforce_rate_limit, rate_limit
 from ..schemas import AccountResponse, AuthLoginRequest, AuthLoginResponse
 
 
@@ -15,8 +15,16 @@ def get_account_repository() -> AccountRepository:
     return AccountRepository()
 
 
-@router.post("/login", response_model=AuthLoginResponse, dependencies=[Depends(rate_limit(scope="auth.login", limit=20, window_seconds=60))])
-def login(request: AuthLoginRequest) -> AuthLoginResponse:
+@router.post("/login", response_model=AuthLoginResponse, dependencies=[Depends(rate_limit(scope="auth.login.ip", limit=60, window_seconds=60))])
+def login(request: AuthLoginRequest, http_request: Request) -> AuthLoginResponse:
+    normalized_email = request.email.strip().lower()
+    enforce_rate_limit(scope="auth.login.email", key=normalized_email, limit=10, window_seconds=300)
+    enforce_rate_limit(
+        scope="auth.login.ip_email",
+        key=f"{client_rate_limit_key(http_request)}:{normalized_email}",
+        limit=20,
+        window_seconds=300,
+    )
     token, account = get_account_repository().authenticate(
         email=request.email,
         password=request.password,

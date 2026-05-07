@@ -35,6 +35,15 @@ struct SidecarRuntime {
     child: Option<RunningSidecar>,
 }
 
+impl Drop for SidecarRuntime {
+    fn drop(&mut self) {
+        if let Some(running) = self.child.take() {
+            finish_pending_with_error(&running.pending, "Desktop sidecar owner was dropped.");
+            let _ = wait_for_child_exit(&running.child, Duration::from_secs(2));
+        }
+    }
+}
+
 #[derive(Default)]
 struct SidecarState {
     runtime: tauri::async_runtime::Mutex<SidecarRuntime>,
@@ -397,6 +406,20 @@ fn clear_runtime_if_child(app: AppHandle, expected_child: Arc<StdMutex<Child>>) 
     });
 }
 
+async fn clear_runtime_if_child_now(
+    state: &State<'_, SidecarState>,
+    expected_child: &Arc<StdMutex<Child>>,
+) {
+    let mut runtime = state.runtime.lock().await;
+    let should_clear = runtime
+        .child
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(&current.child, expected_child));
+    if should_clear {
+        runtime.child = None;
+    }
+}
+
 fn wait_for_child_exit(
     child: &Arc<StdMutex<Child>>,
     timeout: Duration,
@@ -417,6 +440,19 @@ fn wait_for_child_exit(
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+fn write_sidecar_request(running: &RunningSidecar, request_json: &str) -> Result<(), String> {
+    let mut stdin = lock_mutex(&running.stdin);
+    stdin
+        .write_all(request_json.as_bytes())
+        .map_err(|error| format!("Failed writing to sidecar stdin: {error}"))?;
+    stdin
+        .write_all(b"\n")
+        .map_err(|error| format!("Failed writing request terminator to sidecar stdin: {error}"))?;
+    stdin
+        .flush()
+        .map_err(|error| format!("Failed flushing sidecar stdin: {error}"))
 }
 
 fn spawn_sidecar_process(app: &AppHandle) -> Result<RunningSidecar, String> {
@@ -684,53 +720,66 @@ async fn perform_rpc_request(
     let request_id = extract_request_id(&request_json)?;
     let method = extract_request_method(&request_json)?;
     let timeout_secs = rpc_timeout_secs(&method);
-    let running = ensure_sidecar_running(app, state).await?;
+    let mut last_write_error = None;
 
-    let (sender, receiver) = oneshot::channel::<Result<Value, String>>();
-    {
-        let mut pending = lock_mutex(&running.pending);
-        pending.insert(request_id.clone(), sender);
+    for attempt in 0..2 {
+        let running = ensure_sidecar_running(app, state).await?;
+        let (sender, receiver) = oneshot::channel::<Result<Value, String>>();
+        {
+            let mut pending = lock_mutex(&running.pending);
+            pending.insert(request_id.clone(), sender);
+        }
+
+        if let Err(error) = write_sidecar_request(&running, &request_json) {
+            lock_mutex(&running.pending).remove(&request_id);
+            finish_pending_with_error(
+                &running.pending,
+                "Sidecar stdin closed while writing a request.",
+            );
+            clear_runtime_if_child_now(state, &running.child).await;
+            let child_for_shutdown = Arc::clone(&running.child);
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                wait_for_child_exit(&child_for_shutdown, Duration::from_secs(1))
+            })
+            .await;
+            last_write_error = Some(error);
+            if attempt == 0 {
+                continue;
+            }
+            return Err(
+                last_write_error.unwrap_or_else(|| "Failed writing to sidecar stdin.".to_string())
+            );
+        }
+
+        let response = match tokio::time::timeout(Duration::from_secs(timeout_secs), receiver).await
+        {
+            Ok(Ok(result)) => result?,
+            Ok(Err(_)) => return Err("Sidecar response channel closed unexpectedly.".to_string()),
+            Err(_) => {
+                lock_mutex(&running.pending).remove(&request_id);
+                return Err("Timed out waiting for sidecar response.".to_string());
+            }
+        };
+
+        if let Some(error) = response.get("error") {
+            let code = error
+                .get("code")
+                .and_then(Value::as_str)
+                .unwrap_or("UNKNOWN_ERROR");
+            let message = error
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("Unknown JSON-RPC error.");
+            return Err(format!("{code}: {message}"));
+        }
+
+        return response
+            .get("result")
+            .cloned()
+            .ok_or_else(|| "JSON-RPC response is missing the result field.".to_string());
     }
 
-    {
-        let mut stdin = lock_mutex(&running.stdin);
-        if let Err(error) = stdin.write_all(request_json.as_bytes()) {
-            lock_mutex(&running.pending).remove(&request_id);
-            return Err(format!("Failed writing to sidecar stdin: {error}"));
-        }
-        if let Err(error) = stdin.write_all(b"\n") {
-            lock_mutex(&running.pending).remove(&request_id);
-            return Err(format!(
-                "Failed writing request terminator to sidecar stdin: {error}"
-            ));
-        }
-        if let Err(error) = stdin.flush() {
-            lock_mutex(&running.pending).remove(&request_id);
-            return Err(format!("Failed flushing sidecar stdin: {error}"));
-        }
-    }
-
-    let response = tokio::time::timeout(Duration::from_secs(timeout_secs), receiver)
-        .await
-        .map_err(|_| "Timed out waiting for sidecar response.".to_string())?
-        .map_err(|_| "Sidecar response channel closed unexpectedly.".to_string())??;
-
-    if let Some(error) = response.get("error") {
-        let code = error
-            .get("code")
-            .and_then(Value::as_str)
-            .unwrap_or("UNKNOWN_ERROR");
-        let message = error
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("Unknown JSON-RPC error.");
-        return Err(format!("{code}: {message}"));
-    }
-
-    response
-        .get("result")
-        .cloned()
-        .ok_or_else(|| "JSON-RPC response is missing the result field.".to_string())
+    Err(last_write_error.unwrap_or_else(|| "Failed writing to sidecar stdin.".to_string()))
 }
 
 fn current_app_version(app: &AppHandle) -> String {
