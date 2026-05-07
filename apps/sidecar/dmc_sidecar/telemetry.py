@@ -14,7 +14,6 @@ from .account_store import AccountSessionStore
 from .config import secure_cloud_base_url
 from .db import connect
 from .errors import DomainError
-from .license_store import LicenseStore
 
 
 def utc_now() -> str:
@@ -28,15 +27,6 @@ class AppStartedEvent(BaseModel):
     ts: str
     app_version: str
     platform: str
-
-
-class LicenseCheckedEvent(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    event: Literal["license_checked"]
-    ts: str
-    result: str
-    offline_mode: bool
 
 
 class JobCompletedEvent(BaseModel):
@@ -73,7 +63,6 @@ class ConfigUpdatedEvent(BaseModel):
 
 TelemetryEvent = Annotated[
     AppStartedEvent
-    | LicenseCheckedEvent
     | JobCompletedEvent
     | JobFailedEvent
     | ConfigUpdatedEvent,
@@ -90,6 +79,35 @@ class QueuedTelemetryEvent:
 
 
 class TelemetryStore:
+    def enqueue_and_prune(self, payload: dict[str, Any], max_items: int) -> int:
+        with connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO telemetry_queue (event_json, created_at)
+                VALUES (?, ?)
+                """,
+                (json.dumps(payload, ensure_ascii=False), utc_now()),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("TELEMETRY_QUEUE_INSERT_FAILED")
+            row = connection.execute("SELECT COUNT(*) AS total FROM telemetry_queue").fetchone()
+            total = int(row["total"]) if row is not None else 0
+            overflow = total - max_items
+            if overflow > 0:
+                connection.execute(
+                    """
+                    DELETE FROM telemetry_queue
+                    WHERE id IN (
+                        SELECT id
+                        FROM telemetry_queue
+                        ORDER BY id ASC
+                        LIMIT ?
+                    )
+                    """,
+                    (overflow,),
+                )
+            return int(cursor.lastrowid)
+
     def enqueue(self, payload: dict[str, Any]) -> int:
         with connect() as connection:
             cursor = connection.execute(
@@ -169,13 +187,11 @@ class TelemetryClient:
         self,
         *,
         account_store: AccountSessionStore | None = None,
-        license_store: LicenseStore | None = None,
         store: TelemetryStore | None = None,
         max_queue_size: int = 500,
         background_flush: bool = True,
     ) -> None:
         self.account_store = account_store
-        self.license_store = license_store
         self.store = store or TelemetryStore()
         self.max_queue_size = max_queue_size
         self.background_flush = background_flush
@@ -185,8 +201,7 @@ class TelemetryClient:
 
     def record(self, payload: dict[str, Any]) -> None:
         normalized = validate_telemetry_event(payload)
-        self.store.enqueue(normalized)
-        self.store.prune(self.max_queue_size)
+        self.store.enqueue_and_prune(normalized, self.max_queue_size)
         if self.background_flush:
             self.flush_soon()
         else:
@@ -222,6 +237,9 @@ class TelemetryClient:
             return {"status": "error", "sent": 0, "queued": self.store.count(), "last_error": str(exc)}
         if not base_url:
             return {"status": "disabled", "sent": 0, "queued": self.store.count(), "last_error": None}
+        auth_headers = self._auth_headers()
+        if not auth_headers:
+            return {"status": "disabled", "sent": 0, "queued": self.store.count(), "last_error": "ACCOUNT_SESSION_REQUIRED"}
 
         if not self._flush_lock.acquire(blocking=False):
             return {"status": "busy", "sent": 0, "queued": self.store.count(), "last_error": None}
@@ -239,7 +257,7 @@ class TelemetryClient:
                     headers={
                         "Accept": "application/json",
                         "Content-Type": "application/json",
-                        **self._license_headers(),
+                        **auth_headers,
                     },
                     data=json.dumps(
                         {"events": [item.payload for item in batch]},
@@ -270,23 +288,14 @@ class TelemetryClient:
         status = "ok" if last_error is None else "error"
         return {"status": status, "sent": sent, "queued": self.store.count(), "last_error": last_error}
 
-    def _license_headers(self) -> dict[str, str]:
+    def _auth_headers(self) -> dict[str, str]:
         if self.account_store is not None:
             session = self.account_store.get_session()
             if session is not None:
                 return {
                     "Authorization": f"Bearer {session.token}",
-                    "X-DMC-Device-Id": session.user_id,
                 }
-        if self.license_store is None:
-            return {}
-        record = self.license_store.get_license()
-        if record is None:
-            return {}
-        return {
-            "X-DMC-License-Key": record.license_key,
-            "X-DMC-Device-Id": record.device_id,
-        }
+        return {}
 
     def record_app_started(self, *, app_version: str, platform: str) -> None:
         self.record(
@@ -295,16 +304,6 @@ class TelemetryClient:
                 "ts": utc_now(),
                 "app_version": app_version,
                 "platform": platform,
-            }
-        )
-
-    def record_license_checked(self, *, result: str, offline_mode: bool) -> None:
-        self.record(
-            {
-                "event": "license_checked",
-                "ts": utc_now(),
-                "result": result,
-                "offline_mode": offline_mode,
             }
         )
 

@@ -78,14 +78,6 @@ def playwright_browsers_dir() -> Path:
     return ensure_data_dir() / "ms-playwright"
 
 
-def profile_dir_for_license(license_key: str | None) -> Path:
-    seed = license_key or "dev-unlicensed"
-    profile_hash = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
-    path = profiles_dir() / profile_hash
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
 def profile_dir_for_account(user_id: str | None) -> Path:
     seed = user_id or "dev-account"
     profile_hash = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
@@ -97,10 +89,6 @@ def profile_dir_for_account(user_id: str | None) -> Path:
 def cloud_base_url() -> str | None:
     value = os.getenv("DMC_CLOUD_BASE_URL", "").strip()
     return value.rstrip("/") or None
-
-
-def allow_unlicensed_jobs() -> bool:
-    return env_flag("DMC_ALLOW_UNLICENSED_JOBS")
 
 
 def allow_production_dry_run() -> bool:

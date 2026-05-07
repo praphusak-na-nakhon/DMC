@@ -5,29 +5,22 @@ import zipfile
 from pathlib import Path
 
 from dmc_sidecar import config
+from dmc_sidecar.account_store import AccountSessionStore
 from dmc_sidecar.backup import create_backup_archive, restore_backup_archive
 from dmc_sidecar.db import get_database_metadata, migrate_database
-from dmc_sidecar.license_store import LicenseStore
-from dmc_sidecar.schemas import LicenseRecord
+from dmc_sidecar.schemas import WalletSnapshot
 
 
-def seed_license(store: LicenseStore, *, license_key: str) -> None:
-    store.save_activation(
-        LicenseRecord(
-            license_key=license_key,
-            status="active",
-            device_id="device-1",
-            license_tier="trial",
-            school_size_tier="le_500",
-            billing_interval=None,
-            student_count_total=123,
-            modules_enabled=["graduation"],
-            max_devices=3,
-            activated_at="2026-04-22T00:00:00Z",
-            expires_at="2026-05-20T00:00:00Z",
-            last_checked_at="2026-04-22T00:00:00Z",
-            offline_grace_until="2026-04-29T00:00:00Z",
-        )
+def seed_account(store: AccountSessionStore, *, token: str) -> None:
+    store.save_session(
+        token=token,
+        user_id="user-1",
+        email="teacher@example.test",
+        display_name="Teacher",
+        status="active",
+        token_expires_at="2026-05-20T00:00:00Z",
+        checked_at="2026-04-22T00:00:00Z",
+        wallet=WalletSnapshot(user_id="user-1", balance=10, reserved=0, available=10),
     )
 
 
@@ -36,8 +29,8 @@ def test_sidecar_migrations_report_latest_version(monkeypatch, tmp_path: Path) -
     version = migrate_database(config.sqlite_path())
     metadata = get_database_metadata(config.sqlite_path())
 
-    assert version == 4
-    assert metadata["schema_version"] == 4
+    assert version == 5
+    assert metadata["schema_version"] == 5
     assert "job" in metadata["tables"]
     assert "job_record" in metadata["tables"]
     assert "schema_migrations" in metadata["tables"]
@@ -45,8 +38,8 @@ def test_sidecar_migrations_report_latest_version(monkeypatch, tmp_path: Path) -
 
 def test_sidecar_backup_archive_round_trip(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    store = LicenseStore()
-    seed_license(store, license_key="DMC-BACKUP-001")
+    store = AccountSessionStore()
+    seed_account(store, token="token-original")
     sample_report = config.reports_dir() / "report.json"
     sample_report.write_text('{"ok":true}', encoding="utf-8")
     sample_config = config.configs_dir() / "graduation.json"
@@ -65,13 +58,13 @@ def test_sidecar_backup_archive_round_trip(monkeypatch, tmp_path: Path) -> None:
         assert "reports/report.json" in manifest["files"]
         assert all(not item.startswith("profiles/") for item in manifest["files"])
 
-    seed_license(store, license_key="DMC-BACKUP-CHANGED")
+    seed_account(store, token="token-changed")
     sample_report.write_text('{"ok":false}', encoding="utf-8")
 
     result = restore_backup_archive(archive_path)
-    restored = store.get_license()
+    restored = store.get_session()
 
     assert restored is not None
-    assert restored.license_key == "DMC-BACKUP-001"
+    assert restored.token == "token-original"
     assert sample_report.read_text(encoding="utf-8") == '{"ok":true}'
     assert Path(result["safety_backup_path"]).exists()

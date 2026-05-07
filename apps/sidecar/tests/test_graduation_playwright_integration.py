@@ -16,7 +16,6 @@ from playwright.sync_api import sync_playwright
 from dmc_sidecar import config as sidecar_config
 from dmc_sidecar.account_store import AccountSessionStore
 from dmc_sidecar.job_store import JobStore
-from dmc_sidecar.license_store import LicenseStore
 from dmc_sidecar.modules import graduation as graduation_module
 from dmc_sidecar.modules import graduation_legacy as legacy
 from dmc_sidecar.runtime import JobContext, JobControl, JobSnapshot
@@ -236,7 +235,6 @@ def test_graduation_job_runs_against_mock_obec_portal(
         emit_event=events.append,
         control=JobControl(),
         job_store=job_store,
-        license_store=LicenseStore(),
         account_store=AccountSessionStore(),
         snapshot=JobSnapshot(job_id=job_id, module="graduation", status="pending"),
     )

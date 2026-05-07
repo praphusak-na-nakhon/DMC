@@ -85,6 +85,27 @@ class JobStore:
                 (status, job_id),
             )
 
+    def set_status_if_current(
+        self,
+        job_id: str,
+        status: str,
+        *,
+        current_statuses: set[str],
+    ) -> bool:
+        if not current_statuses:
+            return False
+        placeholders = ", ".join(["?"] * len(current_statuses))
+        with connect(immediate=True) as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE job
+                SET status = ?
+                WHERE id = ? AND status IN ({placeholders})
+                """,
+                (status, job_id, *sorted(current_statuses)),
+            )
+            return cursor.rowcount == 1
+
     def update_credit_status(
         self,
         job_id: str,
@@ -198,6 +219,8 @@ class JobStore:
 
     def mark_done(self, job_id: str, checkpoint: JobCheckpoint, finished_at: str) -> None:
         with connect() as connection:
+            total_records = self._total_records(connection, job_id)
+            run_summary = self._run_summary(connection, job_id, total_records)
             connection.execute(
                 """
                 UPDATE job
@@ -213,7 +236,8 @@ class JobStore:
                     review_report_path = ?,
                     stopped_item_json = ?,
                     level_label = ?,
-                    checkpoint_json = ?
+                    checkpoint_json = ?,
+                    run_summary_json = ?
                 WHERE id = ?
                 """,
                 (
@@ -229,6 +253,7 @@ class JobStore:
                     json.dumps(checkpoint.stopped_item, ensure_ascii=False) if checkpoint.stopped_item is not None else None,
                     checkpoint.level_label,
                     self._checkpoint_payload(checkpoint),
+                    json.dumps(run_summary, ensure_ascii=False, sort_keys=True) if run_summary is not None else None,
                     job_id,
                 ),
             )
@@ -244,6 +269,7 @@ class JobStore:
         succeeded = checkpoint.succeeded if checkpoint is not None else 0
         failed = checkpoint.failed if checkpoint is not None else 0
         with connect() as connection:
+            run_summary = self._run_summary(connection, job_id, self._total_records(connection, job_id))
             connection.execute(
                 """
                 UPDATE job
@@ -252,10 +278,19 @@ class JobStore:
                     succeeded = ?,
                     failed = ?,
                     finished_at = ?,
-                    checkpoint_json = COALESCE(?, checkpoint_json)
+                    checkpoint_json = COALESCE(?, checkpoint_json),
+                    run_summary_json = ?
                 WHERE id = ?
                 """,
-                (processed, succeeded, failed, finished_at, payload, job_id),
+                (
+                    processed,
+                    succeeded,
+                    failed,
+                    finished_at,
+                    payload,
+                    json.dumps(run_summary, ensure_ascii=False, sort_keys=True) if run_summary is not None else None,
+                    job_id,
+                ),
             )
 
     def load_checkpoint(self, job_id: str) -> JobCheckpoint | None:
@@ -345,7 +380,7 @@ class JobStore:
             "started_at": row["started_at"],
             "finished_at": row["finished_at"],
             "level_label": row["level_label"],
-            "run_summary": self._run_summary(connection, str(row["id"]), row["total_records"]),
+            "run_summary": self._run_summary_from_row(row, connection),
             "credit_reservation_id": row["credit_reservation_id"],
             "credits_reserved": row["credits_reserved"],
             "credits_captured": row["credits_captured"],
@@ -414,6 +449,28 @@ class JobStore:
         accepted_total = int(total_records or 0)
         summary["excel_missing"] = max(accepted_total - len(matched_orders), 0)
         return summary
+
+    def _total_records(self, connection: sqlite3.Connection, job_id: str) -> int | None:
+        row = connection.execute("SELECT total_records FROM job WHERE id = ?", (job_id,)).fetchone()
+        if row is None or row["total_records"] is None:
+            return None
+        return int(row["total_records"])
+
+    def _run_summary_from_row(self, row: sqlite3.Row, connection: sqlite3.Connection) -> dict[str, int] | None:
+        raw_summary = row["run_summary_json"] if "run_summary_json" in row.keys() else None
+        if raw_summary:
+            try:
+                parsed = json.loads(raw_summary)
+            except (TypeError, json.JSONDecodeError):
+                pass
+            else:
+                if isinstance(parsed, dict):
+                    return {
+                        str(key): int(value)
+                        for key, value in parsed.items()
+                        if isinstance(value, int)
+                    }
+        return self._run_summary(connection, str(row["id"]), row["total_records"])
 
 
 def _utc_now_for_record() -> str:

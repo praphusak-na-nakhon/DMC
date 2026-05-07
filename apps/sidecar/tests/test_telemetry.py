@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 from dmc_sidecar import config
-from dmc_sidecar.license_store import LicenseStore
-from dmc_sidecar.schemas import LicenseRecord
+from dmc_sidecar.account_store import AccountSessionStore
+from dmc_sidecar.schemas import WalletSnapshot
 from dmc_sidecar.telemetry import TelemetryClient, validate_telemetry_event
 
 
@@ -27,23 +27,16 @@ def test_telemetry_client_flushes_batched_events(monkeypatch, tmp_path: Path) ->
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
     monkeypatch.setattr("dmc_sidecar.telemetry.secure_cloud_base_url", lambda: "https://cloud.example.test")
 
-    license_store = LicenseStore()
-    license_store.save_activation(
-        LicenseRecord(
-            license_key="DMC-TEST-0001",
-            status="active",
-            device_id="device-1",
-            license_tier="trial",
-            school_size_tier="le_500",
-            billing_interval=None,
-            student_count_total=100,
-            modules_enabled=["graduation"],
-            max_devices=3,
-            activated_at="2026-04-22T00:00:00Z",
-            expires_at="2026-05-06T00:00:00Z",
-            last_checked_at="2026-04-22T00:00:00Z",
-            offline_grace_until="2026-04-29T00:00:00Z",
-        )
+    account_store = AccountSessionStore()
+    account_store.save_session(
+        token="account-token",
+        user_id="user-1",
+        email="teacher@example.test",
+        display_name="Teacher",
+        status="active",
+        token_expires_at="2026-05-06T00:00:00Z",
+        checked_at="2026-04-22T00:00:00Z",
+        wallet=WalletSnapshot(user_id="user-1", balance=10, reserved=0, available=10),
     )
 
     captured: list[dict[str, object]] = []
@@ -53,23 +46,19 @@ def test_telemetry_client_flushes_batched_events(monkeypatch, tmp_path: Path) ->
         captured.append(
             {
                 "body": json.loads(request.data.decode("utf-8")),
-                "license_key": headers.get("x-dmc-license-key"),
-                "device_id": headers.get("x-dmc-device-id"),
+                "authorization": headers.get("authorization"),
             }
         )
         return FakeResponse({"accepted": len(captured[-1]["body"]["events"]), "rejected": 0})
 
     monkeypatch.setattr("dmc_sidecar.telemetry.urlopen", fake_urlopen)
 
-    client = TelemetryClient(license_store=license_store, background_flush=False)
+    client = TelemetryClient(account_store=account_store, background_flush=False)
     client.record_app_started(app_version="0.1.0", platform="win32")
-    client.record_license_checked(result="HEARTBEAT_OK", offline_mode=False)
 
-    assert len(captured) == 2
+    assert len(captured) == 1
     assert captured[0]["body"]["events"][0]["event"] == "app_started"
-    assert captured[0]["license_key"] == "DMC-TEST-0001"
-    assert captured[0]["device_id"] == "device-1"
-    assert captured[1]["body"]["events"][0]["event"] == "license_checked"
+    assert captured[0]["authorization"] == "Bearer account-token"
     assert client.store.count() == 0
 
 

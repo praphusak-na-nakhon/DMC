@@ -2,7 +2,6 @@ import { create } from "zustand";
 import type {
   AccountStatus,
   JobStatusSnapshot,
-  LicenseStatus,
   ModuleConfigStatus,
   SidecarEvent,
   ValidateExcelResponse,
@@ -12,7 +11,6 @@ type JobStoreState = {
   preview: ValidateExcelResponse | null;
   currentJob: JobStatusSnapshot | null;
   accountStatus: AccountStatus | null;
-  licenseStatus: LicenseStatus | null;
   moduleConfigStatus: ModuleConfigStatus | null;
   existingJobs: JobStatusSnapshot[];
   excelPath: string;
@@ -26,7 +24,6 @@ type JobStoreState = {
   setPreview: (preview: ValidateExcelResponse | null) => void;
   setCurrentJob: (job: JobStatusSnapshot | null) => void;
   setAccountStatus: (status: AccountStatus | null) => void;
-  setLicenseStatus: (status: LicenseStatus | null) => void;
   setModuleConfigStatus: (status: ModuleConfigStatus | null) => void;
   setExistingJobs: (jobs: JobStatusSnapshot[]) => void;
   upsertExistingJob: (job: JobStatusSnapshot) => void;
@@ -79,7 +76,6 @@ export const useJobStore = create<JobStoreState>((set) => ({
   preview: null,
   currentJob: null,
   accountStatus: null,
-  licenseStatus: null,
   moduleConfigStatus: null,
   existingJobs: [],
   excelPath: "",
@@ -93,7 +89,6 @@ export const useJobStore = create<JobStoreState>((set) => ({
   setPreview: (preview) => set({ preview }),
   setCurrentJob: (currentJob) => set({ currentJob }),
   setAccountStatus: (accountStatus) => set({ accountStatus }),
-  setLicenseStatus: (licenseStatus) => set({ licenseStatus }),
   setModuleConfigStatus: (moduleConfigStatus) => set({ moduleConfigStatus }),
   setExistingJobs: (existingJobs) => set({ existingJobs }),
   upsertExistingJob: (job) =>
@@ -239,7 +234,6 @@ export const useJobStore = create<JobStoreState>((set) => ({
       preview: null,
       currentJob: null,
       accountStatus: null,
-      licenseStatus: null,
       moduleConfigStatus: null,
       existingJobs: [],
       excelPath: "",

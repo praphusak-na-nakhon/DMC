@@ -11,8 +11,12 @@ from .account_client import capture_credits, release_credits
 from .account_store import AccountSessionStore
 from .errors import DomainError
 from .job_store import JobStore
-from .license_store import LicenseStore
 from .telemetry import TelemetryClient
+
+PAUSABLE_STATUSES = {"running"}
+RESUMABLE_STATUSES = {"paused"}
+CANCELLABLE_STATUSES = {"running", "paused"}
+TERMINAL_STATUSES = {"done", "failed", "cancelled", "stopped_on_review"}
 
 
 def utc_now() -> str:
@@ -99,7 +103,6 @@ class JobContext:
     emit_event: Callable[[dict[str, Any]], None]
     control: JobControl
     job_store: JobStore
-    license_store: LicenseStore
     account_store: AccountSessionStore
     snapshot: JobSnapshot
 
@@ -144,13 +147,11 @@ class JobManager:
         self,
         *,
         job_store: JobStore,
-        license_store: LicenseStore,
         account_store: AccountSessionStore,
         telemetry: TelemetryClient,
         emit_notification: Callable[[dict[str, Any]], None],
     ) -> None:
         self.job_store = job_store
-        self.license_store = license_store
         self.account_store = account_store
         self.telemetry = telemetry
         self.emit_notification = emit_notification
@@ -187,7 +188,6 @@ class JobManager:
                 emit_event=self.emit_notification,
                 control=control,
                 job_store=self.job_store,
-                license_store=self.license_store,
                 account_store=self.account_store,
                 snapshot=snapshot,
             )
@@ -207,23 +207,51 @@ class JobManager:
             thread.start()
 
     def pause_job(self, job_id: str) -> None:
-        active = self._require_active_job(job_id)
+        with self._lock:
+            active = self._jobs.get(job_id)
+            if active is None:
+                raise DomainError("JOB_NOT_FOUND")
+            updated = self.job_store.set_status_if_current(
+                job_id,
+                "paused",
+                current_statuses=PAUSABLE_STATUSES,
+            )
+            if not updated:
+                raise DomainError("JOB_NOT_ACTIVE")
+            active.snapshot.status = "paused"
         active.control.pause()
-        active.snapshot.status = "paused"
-        self.job_store.set_status(job_id, "paused")
 
     def resume_job(self, job_id: str) -> None:
-        active = self._require_active_job(job_id)
+        with self._lock:
+            active = self._jobs.get(job_id)
+            if active is None:
+                raise DomainError("JOB_NOT_FOUND")
+            updated = self.job_store.set_status_if_current(
+                job_id,
+                "running",
+                current_statuses=RESUMABLE_STATUSES,
+            )
+            if not updated:
+                raise DomainError("JOB_NOT_ACTIVE")
+            active.snapshot.status = "running"
+            active.snapshot.needs_auth = False
+            active.snapshot.auth_reason = None
         active.control.resume()
-        active.snapshot.status = "running"
-        active.snapshot.needs_auth = False
-        self.job_store.set_status(job_id, "running")
 
     def cancel_job(self, job_id: str) -> None:
-        active = self._require_active_job(job_id)
+        with self._lock:
+            active = self._jobs.get(job_id)
+            if active is None:
+                raise DomainError("JOB_NOT_FOUND")
+            updated = self.job_store.set_status_if_current(
+                job_id,
+                "cancelled",
+                current_statuses=CANCELLABLE_STATUSES,
+            )
+            if not updated:
+                raise DomainError("JOB_NOT_ACTIVE")
+            active.snapshot.status = "cancelled"
         active.control.cancel()
-        active.snapshot.status = "cancelled"
-        self.job_store.set_status(job_id, "cancelled")
 
     def get_runtime_status(self, job_id: str) -> dict[str, Any] | None:
         with self._lock:
@@ -232,10 +260,15 @@ class JobManager:
             return None
         snapshot = active.snapshot
         persisted = self.job_store.get_status(job_id) or {}
+        status = (
+            persisted.get("status")
+            if persisted.get("status") in TERMINAL_STATUSES
+            else snapshot.status
+        )
         return {
             "job_id": snapshot.job_id,
             "module": snapshot.module,
-            "status": snapshot.status,
+            "status": status,
             "source_file": snapshot.source_file or persisted.get("source_file", ""),
             "processed": snapshot.processed,
             "total": snapshot.total,

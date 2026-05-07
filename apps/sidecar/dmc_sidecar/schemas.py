@@ -58,14 +58,6 @@ class ModuleConfigRequest(BaseModel):
     module: Literal["graduation"]
 
 
-class ActivateLicenseRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    license_key: str
-    device_name: str
-    app_version: str
-
-
 class SignInRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -368,46 +360,6 @@ class FilePathRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     path: str
-
-
-class LicenseRecord(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    license_key: str
-    status: str = "active"
-    device_id: str
-    license_tier: str
-    school_size_tier: str
-    billing_interval: str | None
-    student_count_total: int
-    modules_enabled: list[str] = Field(default_factory=list)
-    max_devices: int
-    activated_at: str
-    expires_at: str
-    last_checked_at: str
-    offline_grace_until: str
-
-
-class LicenseStatusSnapshot(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    configured: bool
-    status: str
-    license_tier: str | None
-    school_size_tier: str | None
-    billing_interval: str | None
-    student_count_total: int | None
-    max_devices: int | None
-    modules_enabled: list[str]
-    expires_at: str | None
-    last_checked_at: str | None
-    offline_grace_until: str | None
-    offline_mode: bool
-    within_offline_grace: bool
-    can_start_jobs: bool
-    needs_attention: bool
-    message: str | None
-    last_error: str | None
 
 
 class ModuleConfigStatus(BaseModel):

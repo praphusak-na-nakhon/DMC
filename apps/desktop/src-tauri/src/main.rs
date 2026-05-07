@@ -4,13 +4,12 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::{
     collections::HashMap,
-    env,
-    fs,
-    io::{BufRead, BufReader, Write},
+    env, fs,
+    io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{Arc, Mutex as StdMutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_updater::UpdaterExt;
@@ -20,6 +19,9 @@ use url::Url;
 type PendingMap = Arc<StdMutex<HashMap<String, oneshot::Sender<Result<Value, String>>>>>;
 const RPC_TIMEOUT_STANDARD_SECS: u64 = 30;
 const RPC_TIMEOUT_LONG_SECS: u64 = 600;
+const MAX_SIDECAR_STDOUT_LINE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_SIDECAR_STDERR_LINE_BYTES: usize = 1024 * 1024;
+const SIDECAR_SHUTDOWN_TIMEOUT_SECS: u64 = 5;
 
 #[derive(Clone)]
 struct RunningSidecar {
@@ -40,6 +42,12 @@ struct SidecarState {
 
 #[derive(Default)]
 struct PendingUpdate(StdMutex<Option<tauri_plugin_updater::Update>>);
+
+fn lock_mutex<T>(mutex: &StdMutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 #[derive(serde::Serialize)]
 struct UpdaterStatus {
@@ -130,20 +138,6 @@ fn configured_cloud_base_url(app: &AppHandle) -> Option<String> {
         return None;
     }
     Some(trimmed.to_string())
-}
-
-fn release_config_allows_unlicensed_jobs(config: &ReleaseConfig) -> bool {
-    matches!(
-        config.environment.trim().to_ascii_lowercase().as_str(),
-        "development" | "dev" | "local" | "test"
-    )
-}
-
-fn add_development_sidecar_env(app: &AppHandle, envs: &mut Vec<(String, String)>) {
-    let config = load_release_config(app);
-    if release_config_allows_unlicensed_jobs(&config) {
-        envs.push(("DMC_ALLOW_UNLICENSED_JOBS".to_string(), "1".to_string()));
-    }
 }
 
 fn updater_endpoint(app: &AppHandle) -> Option<String> {
@@ -237,7 +231,10 @@ fn bundled_sidecar_launch_spec(app: &AppHandle) -> Result<Option<SidecarLaunchSp
     let browser_dir = data_dir.join("ms-playwright");
     let resources_dir = sidecar_root.join("sidecar-resources");
     let mut envs = vec![
-        ("DMC_DATA_DIR".to_string(), data_dir.to_string_lossy().to_string()),
+        (
+            "DMC_DATA_DIR".to_string(),
+            data_dir.to_string_lossy().to_string(),
+        ),
         (
             "PLAYWRIGHT_BROWSERS_PATH".to_string(),
             browser_dir.to_string_lossy().to_string(),
@@ -252,8 +249,6 @@ fn bundled_sidecar_launch_spec(app: &AppHandle) -> Result<Option<SidecarLaunchSp
     if let Some(cloud_base_url) = configured_cloud_base_url(app) {
         envs.push(("DMC_CLOUD_BASE_URL".to_string(), cloud_base_url));
     }
-    add_development_sidecar_env(app, &mut envs);
-
     Ok(Some(SidecarLaunchSpec {
         program,
         args: Vec::new(),
@@ -270,8 +265,14 @@ fn python_sidecar_launch_specs(app: &AppHandle) -> Result<Vec<SidecarLaunchSpec>
     let browser_dir = data_dir.join("ms-playwright");
     let mut shared_envs = vec![
         ("PYTHONPATH".to_string(), python_path),
-        ("DMC_REPO_ROOT".to_string(), repo_root.to_string_lossy().to_string()),
-        ("DMC_DATA_DIR".to_string(), data_dir.to_string_lossy().to_string()),
+        (
+            "DMC_REPO_ROOT".to_string(),
+            repo_root.to_string_lossy().to_string(),
+        ),
+        (
+            "DMC_DATA_DIR".to_string(),
+            data_dir.to_string_lossy().to_string(),
+        ),
         (
             "PLAYWRIGHT_BROWSERS_PATH".to_string(),
             browser_dir.to_string_lossy().to_string(),
@@ -280,22 +281,34 @@ fn python_sidecar_launch_specs(app: &AppHandle) -> Result<Vec<SidecarLaunchSpec>
     if let Some(cloud_base_url) = configured_cloud_base_url(app) {
         shared_envs.push(("DMC_CLOUD_BASE_URL".to_string(), cloud_base_url));
     }
-    add_development_sidecar_env(app, &mut shared_envs);
-
     let program_candidates: Vec<(String, Vec<String>)> = match env::var("DMC_PYTHON") {
         Ok(custom) => vec![
             (custom, vec!["-m".to_string(), "dmc_sidecar".to_string()]),
-            ("python".to_string(), vec!["-m".to_string(), "dmc_sidecar".to_string()]),
+            (
+                "python".to_string(),
+                vec!["-m".to_string(), "dmc_sidecar".to_string()],
+            ),
             (
                 "py".to_string(),
-                vec!["-3".to_string(), "-m".to_string(), "dmc_sidecar".to_string()],
+                vec![
+                    "-3".to_string(),
+                    "-m".to_string(),
+                    "dmc_sidecar".to_string(),
+                ],
             ),
         ],
         Err(_) => vec![
-            ("python".to_string(), vec!["-m".to_string(), "dmc_sidecar".to_string()]),
+            (
+                "python".to_string(),
+                vec!["-m".to_string(), "dmc_sidecar".to_string()],
+            ),
             (
                 "py".to_string(),
-                vec!["-3".to_string(), "-m".to_string(), "dmc_sidecar".to_string()],
+                vec![
+                    "-3".to_string(),
+                    "-m".to_string(),
+                    "dmc_sidecar".to_string(),
+                ],
             ),
         ],
     };
@@ -314,11 +327,95 @@ fn python_sidecar_launch_specs(app: &AppHandle) -> Result<Vec<SidecarLaunchSpec>
 
 fn finish_pending_with_error(pending: &PendingMap, message: &str) {
     let pending_senders = {
-        let mut guard = pending.lock().expect("pending map poisoned");
+        let mut guard = lock_mutex(pending);
         guard.drain().map(|(_, sender)| sender).collect::<Vec<_>>()
     };
     for sender in pending_senders {
         let _ = sender.send(Err(message.to_string()));
+    }
+}
+
+fn read_limited_line<R: BufRead>(reader: &mut R, limit: usize) -> io::Result<Option<String>> {
+    let mut buffer = Vec::new();
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            if buffer.is_empty() {
+                return Ok(None);
+            }
+            break;
+        }
+
+        let newline_index = available.iter().position(|byte| *byte == b'\n');
+        let take_len = newline_index.map_or(available.len(), |index| index + 1);
+        if buffer.len() + take_len > limit {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Sidecar output line exceeded {limit} bytes."),
+            ));
+        }
+
+        buffer.extend_from_slice(&available[..take_len]);
+        reader.consume(take_len);
+        if newline_index.is_some() {
+            break;
+        }
+    }
+
+    if buffer.last().is_some_and(|byte| *byte == b'\n') {
+        buffer.pop();
+    }
+    if buffer.last().is_some_and(|byte| *byte == b'\r') {
+        buffer.pop();
+    }
+
+    String::from_utf8(buffer)
+        .map(Some)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn sidecar_exit_code(child: &Arc<StdMutex<Child>>) -> Option<i32> {
+    let mut child_guard = lock_mutex(child);
+    child_guard
+        .try_wait()
+        .ok()
+        .flatten()
+        .and_then(|status| status.code())
+}
+
+fn clear_runtime_if_child(app: AppHandle, expected_child: Arc<StdMutex<Child>>) {
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<SidecarState>();
+        let mut runtime = state.runtime.lock().await;
+        let should_clear = runtime
+            .child
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(&current.child, &expected_child));
+        if should_clear {
+            runtime.child = None;
+        }
+    });
+}
+
+fn wait_for_child_exit(
+    child: &Arc<StdMutex<Child>>,
+    timeout: Duration,
+) -> Result<Option<i32>, String> {
+    let mut child_guard = lock_mutex(child);
+    if let Some(status) = child_guard.try_wait().map_err(|error| error.to_string())? {
+        return Ok(status.code());
+    }
+
+    let _ = child_guard.kill();
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child_guard.try_wait().map_err(|error| error.to_string())? {
+            return Ok(status.code());
+        }
+        if Instant::now() >= deadline {
+            return Err("Timed out waiting for sidecar process to exit.".to_string());
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -377,13 +474,20 @@ fn spawn_sidecar_process(app: &AppHandle) -> Result<RunningSidecar, String> {
             .ok_or_else(|| "Could not capture sidecar stdin.".to_string())?;
 
         let pending: PendingMap = Arc::new(StdMutex::new(HashMap::new()));
+        let running = RunningSidecar {
+            child: Arc::new(StdMutex::new(child)),
+            stdin: Arc::new(StdMutex::new(stdin)),
+            pending,
+        };
+
         let app_for_stdout = app.clone();
-        let pending_for_stdout = Arc::clone(&pending);
+        let pending_for_stdout = Arc::clone(&running.pending);
+        let child_for_stdout = Arc::clone(&running.child);
         std::thread::spawn(move || {
-            let reader = BufReader::new(stdout);
-            for line_result in reader.lines() {
-                match line_result {
-                    Ok(line) => {
+            let mut reader = BufReader::new(stdout);
+            loop {
+                match read_limited_line(&mut reader, MAX_SIDECAR_STDOUT_LINE_BYTES) {
+                    Ok(Some(line)) => {
                         let trimmed = line.trim();
                         if trimmed.is_empty() {
                             continue;
@@ -397,7 +501,8 @@ fn spawn_sidecar_process(app: &AppHandle) -> Result<RunningSidecar, String> {
                                     .is_some_and(|method| method == "event")
                                 {
                                     if let Some(params) = payload.get("params") {
-                                        let _ = app_for_stdout.emit("sidecar-event", params.clone());
+                                        let _ =
+                                            app_for_stdout.emit("sidecar-event", params.clone());
                                     }
                                     continue;
                                 }
@@ -410,10 +515,8 @@ fn spawn_sidecar_process(app: &AppHandle) -> Result<RunningSidecar, String> {
 
                                 if let Some(request_id) = response_id {
                                     if !request_id.is_empty() {
-                                        if let Some(sender) = pending_for_stdout
-                                            .lock()
-                                            .expect("pending map poisoned")
-                                            .remove(&request_id)
+                                        if let Some(sender) =
+                                            lock_mutex(&pending_for_stdout).remove(&request_id)
                                         {
                                             let _ = sender.send(Ok(payload));
                                         }
@@ -431,6 +534,7 @@ fn spawn_sidecar_process(app: &AppHandle) -> Result<RunningSidecar, String> {
                             }
                         }
                     }
+                    Ok(None) => break,
                     Err(error) => {
                         let _ = app_for_stdout.emit(
                             "sidecar-event",
@@ -448,37 +552,52 @@ fn spawn_sidecar_process(app: &AppHandle) -> Result<RunningSidecar, String> {
                 &pending_for_stdout,
                 "Sidecar stdout closed before a response was received.",
             );
+            let exit_code = sidecar_exit_code(&child_for_stdout);
+            let _ = app_for_stdout.emit(
+                "sidecar-event",
+                serde_json::json!({
+                    "type": "sidecar_exited",
+                    "code": exit_code,
+                    "signal": Option::<String>::None,
+                }),
+            );
+            clear_runtime_if_child(app_for_stdout, child_for_stdout);
         });
 
         let app_for_stderr = app.clone();
         std::thread::spawn(move || {
-            let reader = BufReader::new(stderr);
-            for line in reader.lines().map_while(Result::ok) {
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
+            let mut reader = BufReader::new(stderr);
+            loop {
+                match read_limited_line(&mut reader, MAX_SIDECAR_STDERR_LINE_BYTES) {
+                    Ok(Some(line)) => {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        let _ = app_for_stderr.emit(
+                            "sidecar-event",
+                            serde_json::json!({
+                                "type": "sidecar_stderr",
+                                "message": trimmed,
+                            }),
+                        );
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        let _ = app_for_stderr.emit(
+                            "sidecar-event",
+                            serde_json::json!({
+                                "type": "sidecar_stderr",
+                                "message": format!("Failed reading sidecar stderr: {error}"),
+                            }),
+                        );
+                        break;
+                    }
                 }
-                let _ = app_for_stderr.emit(
-                    "sidecar-event",
-                    serde_json::json!({
-                        "type": "sidecar_stderr",
-                        "message": trimmed,
-                    }),
-                );
             }
         });
 
-        let running = RunningSidecar {
-            child: Arc::new(StdMutex::new(child)),
-            stdin: Arc::new(StdMutex::new(stdin)),
-            pending,
-        };
-
-        let pid = running
-            .child
-            .lock()
-            .expect("child process mutex poisoned")
-            .id();
+        let pid = lock_mutex(&running.child).id();
         let _ = app.emit(
             "sidecar-event",
             serde_json::json!({
@@ -505,8 +624,11 @@ async fn ensure_sidecar_running(
 
     if let Some(existing) = runtime.child.clone() {
         let is_running = {
-            let mut child = existing.child.lock().expect("child process mutex poisoned");
-            child.try_wait().map_err(|error| error.to_string())?.is_none()
+            let mut child = lock_mutex(&existing.child);
+            child
+                .try_wait()
+                .map_err(|error| error.to_string())?
+                .is_none()
         };
 
         if is_running {
@@ -566,34 +688,24 @@ async fn perform_rpc_request(
 
     let (sender, receiver) = oneshot::channel::<Result<Value, String>>();
     {
-        let mut pending = running.pending.lock().expect("pending map poisoned");
+        let mut pending = lock_mutex(&running.pending);
         pending.insert(request_id.clone(), sender);
     }
 
     {
-        let mut stdin = running.stdin.lock().expect("sidecar stdin mutex poisoned");
+        let mut stdin = lock_mutex(&running.stdin);
         if let Err(error) = stdin.write_all(request_json.as_bytes()) {
-            running
-                .pending
-                .lock()
-                .expect("pending map poisoned")
-                .remove(&request_id);
+            lock_mutex(&running.pending).remove(&request_id);
             return Err(format!("Failed writing to sidecar stdin: {error}"));
         }
         if let Err(error) = stdin.write_all(b"\n") {
-            running
-                .pending
-                .lock()
-                .expect("pending map poisoned")
-                .remove(&request_id);
-            return Err(format!("Failed writing request terminator to sidecar stdin: {error}"));
+            lock_mutex(&running.pending).remove(&request_id);
+            return Err(format!(
+                "Failed writing request terminator to sidecar stdin: {error}"
+            ));
         }
         if let Err(error) = stdin.flush() {
-            running
-                .pending
-                .lock()
-                .expect("pending map poisoned")
-                .remove(&request_id);
+            lock_mutex(&running.pending).remove(&request_id);
             return Err(format!("Failed flushing sidecar stdin: {error}"));
         }
     }
@@ -636,12 +748,11 @@ fn build_updater_status(app: &AppHandle) -> UpdaterStatus {
     }
 }
 
-fn build_runtime_updater(
-    app: &AppHandle,
-) -> Result<tauri_plugin_updater::UpdaterBuilder, String> {
+fn build_runtime_updater(app: &AppHandle) -> Result<tauri_plugin_updater::UpdaterBuilder, String> {
     let endpoint = updater_endpoint(app).ok_or_else(|| "UPDATER_NOT_CONFIGURED".to_string())?;
     let pubkey = updater_pubkey(app).ok_or_else(|| "UPDATER_NOT_CONFIGURED".to_string())?;
-    let url = Url::parse(&endpoint).map_err(|error| format!("UPDATER_ENDPOINT_INVALID: {error}"))?;
+    let url =
+        Url::parse(&endpoint).map_err(|error| format!("UPDATER_ENDPOINT_INVALID: {error}"))?;
     app.updater_builder()
         .pubkey(pubkey)
         .endpoints(vec![url])
@@ -685,10 +796,7 @@ async fn rpc_request(
 }
 
 #[tauri::command]
-async fn shutdown_sidecar(
-    app: AppHandle,
-    state: State<'_, SidecarState>,
-) -> Result<(), String> {
+async fn shutdown_sidecar(app: AppHandle, state: State<'_, SidecarState>) -> Result<(), String> {
     let running = {
         let mut runtime = state.runtime.lock().await;
         runtime.child.take()
@@ -696,14 +804,17 @@ async fn shutdown_sidecar(
 
     if let Some(running) = running {
         finish_pending_with_error(&running.pending, "Sidecar shut down by desktop.");
-        let mut child = running.child.lock().expect("child process mutex poisoned");
-        let _ = child.kill();
-        let status = child.wait().map_err(|error| error.to_string())?;
+        let child = Arc::clone(&running.child);
+        let exit_code = tauri::async_runtime::spawn_blocking(move || {
+            wait_for_child_exit(&child, Duration::from_secs(SIDECAR_SHUTDOWN_TIMEOUT_SECS))
+        })
+        .await
+        .map_err(|error| error.to_string())??;
         let _ = app.emit(
             "sidecar-event",
             serde_json::json!({
                 "type": "sidecar_exited",
-                "code": status.code(),
+                "code": exit_code,
                 "signal": Option::<String>::None,
             }),
         );
@@ -739,7 +850,10 @@ fn open_markdown_dialog() -> Option<String> {
 #[tauri::command]
 fn open_evidence_dialog() -> Option<String> {
     rfd::FileDialog::new()
-        .add_filter("Evidence", &["pdf", "docx", "xlsx", "xlsm", "xls", "png", "jpg", "jpeg"])
+        .add_filter(
+            "Evidence",
+            &["pdf", "docx", "xlsx", "xlsm", "xls", "png", "jpg", "jpeg"],
+        )
         .pick_file()
         .map(|path| path.to_string_lossy().to_string())
 }
@@ -776,9 +890,7 @@ fn save_diagnostics_dialog(default_name: Option<String>) -> Option<String> {
 
 fn template_source_path(app: &AppHandle) -> Result<PathBuf, String> {
     if let Ok(resource_dir) = app.path().resource_dir() {
-        let candidate = resource_dir
-            .join("templates")
-            .join("obec-study-form.xlsx");
+        let candidate = resource_dir.join("templates").join("obec-study-form.xlsx");
         if candidate.exists() {
             return Ok(candidate);
         }
@@ -885,7 +997,7 @@ async fn check_for_app_update(
         body: item.body.clone(),
     });
 
-    *pending_update.0.lock().expect("pending update mutex poisoned") = update;
+    *lock_mutex(&pending_update.0) = update;
     serde_json::to_value(metadata).map_err(|error| error.to_string())
 }
 
@@ -894,10 +1006,7 @@ async fn install_app_update(
     app: AppHandle,
     pending_update: State<'_, PendingUpdate>,
 ) -> Result<(), String> {
-    let update = pending_update
-        .0
-        .lock()
-        .expect("pending update mutex poisoned")
+    let update = lock_mutex(&pending_update.0)
         .take()
         .ok_or_else(|| "NO_PENDING_UPDATE".to_string())?;
 
@@ -985,7 +1094,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{release_config_allows_unlicensed_jobs, ReleaseConfig, UpdateMetadata, UpdaterStatus};
+    use super::{UpdateMetadata, UpdaterStatus};
 
     #[test]
     fn updater_status_serializes_with_frontend_contract_keys() {
@@ -1015,25 +1124,5 @@ mod tests {
 
         assert_eq!(value["current_version"], "0.1.0");
         assert!(value.get("currentVersion").is_none());
-    }
-
-    #[test]
-    fn development_release_config_allows_unlicensed_jobs_for_local_testing() {
-        let config = ReleaseConfig {
-            environment: "development".to_string(),
-            ..Default::default()
-        };
-
-        assert!(release_config_allows_unlicensed_jobs(&config));
-    }
-
-    #[test]
-    fn production_release_config_keeps_license_gate_enabled() {
-        let config = ReleaseConfig {
-            environment: "production".to_string(),
-            ..Default::default()
-        };
-
-        assert!(!release_config_allows_unlicensed_jobs(&config));
     }
 }

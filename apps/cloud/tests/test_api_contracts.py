@@ -20,7 +20,34 @@ def _configure(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(settings, "config_signing_key_id", "dev-2026-01")
 
 
-def _activate_device(monkeypatch, tmp_path: Path) -> None:
+def _account_auth_headers(monkeypatch, tmp_path: Path) -> dict[str, str]:
+    _configure(monkeypatch, tmp_path)
+    create = client.post(
+        "/v1/admin/users",
+        headers={"Authorization": "Bearer dmc-test-token"},
+        json={
+            "email": "teacher@example.test",
+            "password": "correct-password",
+            "display_name": "Teacher",
+            "status": "active",
+        },
+    )
+    assert create.status_code == 200
+    login = client.post(
+        "/v1/auth/login",
+        json={
+            "email": "teacher@example.test",
+            "password": "correct-password",
+            "device_id": "device-contract",
+            "device_name": "desktop-contract",
+            "app_version": "0.1.0",
+        },
+    )
+    assert login.status_code == 200
+    return {"Authorization": f"Bearer {login.json()['token']}"}
+
+
+def test_license_routes_are_removed(monkeypatch, tmp_path: Path) -> None:
     _configure(monkeypatch, tmp_path)
     response = client.post(
         "/v1/license/activate",
@@ -31,60 +58,15 @@ def _activate_device(monkeypatch, tmp_path: Path) -> None:
             "app_version": "0.1.0",
         },
     )
-    assert response.status_code == 200
-
-
-def test_license_activate_contract_keys_are_stable(monkeypatch, tmp_path: Path) -> None:
-    _configure(monkeypatch, tmp_path)
-    response = client.post(
-        "/v1/license/activate",
-        json={
-            "license_key": "DMC-TEST-0001",
-            "device_id": "device-contract",
-            "device_name": "desktop-contract",
-            "app_version": "0.1.0",
-        },
-    )
-
-    assert response.status_code == 200
-    assert set(response.json()) == {
-        "status",
-        "license_tier",
-        "school_size_tier",
-        "billing_interval",
-        "student_count_total",
-        "expires_at",
-        "modules_enabled",
-        "max_devices",
-        "offline_grace_days",
-    }
-
-
-def test_license_activate_rejects_extra_contract_fields(monkeypatch, tmp_path: Path) -> None:
-    _configure(monkeypatch, tmp_path)
-    response = client.post(
-        "/v1/license/activate",
-        json={
-            "license_key": "DMC-TEST-0001",
-            "device_id": "device-contract",
-            "device_name": "desktop-contract",
-            "app_version": "0.1.0",
-            "unexpected": "field",
-        },
-    )
-
-    assert response.status_code == 422
+    assert response.status_code == 404
 
 
 def test_telemetry_contract_rejects_nested_pii(monkeypatch, tmp_path: Path) -> None:
-    _activate_device(monkeypatch, tmp_path)
+    headers = _account_auth_headers(monkeypatch, tmp_path)
     store = TelemetryStore(settings.sqlite_path)
     response = client.post(
         "/v1/telemetry",
-        headers={
-            "X-DMC-License-Key": "DMC-TEST-0001",
-            "X-DMC-Device-Id": "device-contract",
-        },
+        headers=headers,
         json={
             "events": [
                 {

@@ -134,7 +134,7 @@ class AccountRepository:
         user_id = str(uuid.uuid4())
         now = utc_now()
         try:
-            with connect(self.sqlite_path) as connection:
+            with connect(self.sqlite_path, immediate=True) as connection:
                 connection.execute(
                     """
                     INSERT INTO users (
@@ -154,8 +154,8 @@ class AccountRepository:
                 )
                 connection.execute(
                     """
-                    INSERT INTO wallets (user_id, balance, updated_at)
-                    VALUES (?, 0, ?)
+                    INSERT INTO wallets (user_id, balance, reserved, updated_at)
+                    VALUES (?, 0, 0, ?)
                     """,
                     (user_id, now),
                 )
@@ -265,19 +265,11 @@ class AccountRepository:
     def get_wallet(self, user_id: str) -> WalletResponse:
         with connect(self.sqlite_path) as connection:
             row = connection.execute(
-                "SELECT balance FROM wallets WHERE user_id = ?",
-                (user_id,),
-            ).fetchone()
-            reserved_row = connection.execute(
-                """
-                SELECT COALESCE(SUM(units_reserved - units_captured - units_released), 0) AS reserved
-                FROM credit_reservations
-                WHERE user_id = ? AND status = 'active'
-                """,
+                "SELECT balance, reserved FROM wallets WHERE user_id = ?",
                 (user_id,),
             ).fetchone()
         balance = int(row["balance"]) if row is not None else 0
-        reserved = int(reserved_row["reserved"]) if reserved_row is not None else 0
+        reserved = int(row["reserved"]) if row is not None else 0
         return WalletResponse(
             user_id=user_id,
             balance=balance,
@@ -287,7 +279,7 @@ class AccountRepository:
 
     def topup_user(self, user_id: str, request: CloudCreditTopupRequest) -> WalletResponse:
         idempotency_key = request.idempotency_key or f"admin-topup-{uuid.uuid4()}"
-        with connect(self.sqlite_path) as connection:
+        with connect(self.sqlite_path, immediate=True) as connection:
             existing = connection.execute(
                 """
                 SELECT 1 FROM credit_transactions
@@ -296,7 +288,7 @@ class AccountRepository:
                 (user_id, idempotency_key),
             ).fetchone()
             if existing is not None:
-                return self.get_wallet(user_id)
+                return self._wallet_from_connection(connection, user_id)
 
             if connection.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone() is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
@@ -316,7 +308,7 @@ class AccountRepository:
                 """,
                 (str(uuid.uuid4()), user_id, request.amount, idempotency_key, request.note, now),
             )
-        return self.get_wallet(user_id)
+            return self._wallet_from_connection(connection, user_id)
 
     def record_admin_audit(
         self,
@@ -411,7 +403,7 @@ class AccountRepository:
         *,
         actor: str,
     ) -> CloudCreditTopupRequestResponse:
-        with connect(self.sqlite_path) as connection:
+        with connect(self.sqlite_path, immediate=True) as connection:
             row = self._get_topup_request_row(connection, request_id)
             if row["status"] != "pending":
                 response = self._topup_request_response_from_row(row)
@@ -419,6 +411,20 @@ class AccountRepository:
 
             now = utc_now()
             idempotency_key = request.idempotency_key or f"topup-request:{request_id}"
+            cursor = connection.execute(
+                """
+                UPDATE credit_topup_requests
+                SET status = ?, note = COALESCE(?, note), decided_by = ?,
+                    topup_idempotency_key = ?, updated_at = ?, decided_at = ?
+                WHERE id = ? AND status = 'pending'
+                """,
+                (request.decision, request.note, actor, idempotency_key, now, now, request_id),
+            )
+            if cursor.rowcount != 1:
+                refreshed = self._get_topup_request_row(connection, request_id)
+                response = self._topup_request_response_from_row(refreshed)
+                return response.model_copy(update={"wallet": self._wallet_from_connection(connection, str(refreshed["user_id"]))})
+
             wallet: WalletResponse | None = None
             if request.decision == "approved":
                 wallet = self._topup_user_in_connection(
@@ -428,15 +434,6 @@ class AccountRepository:
                     idempotency_key=idempotency_key,
                     note=request.note or row["note"],
                 )
-            connection.execute(
-                """
-                UPDATE credit_topup_requests
-                SET status = ?, note = COALESCE(?, note), decided_by = ?,
-                    topup_idempotency_key = ?, updated_at = ?, decided_at = ?
-                WHERE id = ?
-                """,
-                (request.decision, request.note, actor, idempotency_key, now, now, request_id),
-            )
             self._record_admin_audit(
                 connection,
                 actor=actor,
@@ -492,19 +489,15 @@ class AccountRepository:
         with connect(self.sqlite_path) as connection:
             rows = connection.execute(
                 """
-                SELECT id
+                SELECT users.*, wallets.balance AS wallet_balance, wallets.reserved AS wallet_reserved
                 FROM users
+                LEFT JOIN wallets ON wallets.user_id = users.id
                 ORDER BY created_at DESC, id DESC
                 LIMIT ? OFFSET ?
                 """,
                 (safe_limit, safe_offset),
             ).fetchall()
-        users: list[CloudUserAdminResponse] = []
-        for row in rows:
-            user = self.get_user_admin(str(row["id"]))
-            if user is not None:
-                users.append(user)
-        return users
+        return [self._user_admin_from_joined_row(row) for row in rows]
 
     def get_user_by_email(self, email: str) -> CloudUserAdminResponse | None:
         normalized_email = _normalize_email(email)
@@ -550,7 +543,7 @@ class AccountRepository:
         return updated
 
     def reserve_credits(self, user_id: str, request: CreditReservationRequest) -> CreditReservationResponse:
-        with connect(self.sqlite_path) as connection:
+        with connect(self.sqlite_path, immediate=True) as connection:
             existing = connection.execute(
                 """
                 SELECT * FROM credit_reservations
@@ -561,12 +554,22 @@ class AccountRepository:
             if existing is not None:
                 return self._reservation_response_from_row(existing)
 
-            wallet = self.get_wallet(user_id)
-            if wallet.available < request.units:
+            if connection.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone() is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+
+            now = utc_now()
+            wallet_cursor = connection.execute(
+                """
+                UPDATE wallets
+                SET reserved = reserved + ?, updated_at = ?
+                WHERE user_id = ? AND balance - reserved >= ?
+                """,
+                (request.units, now, user_id, request.units),
+            )
+            if wallet_cursor.rowcount != 1:
                 raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="insufficient credits")
 
             reservation_id = str(uuid.uuid4())
-            now = utc_now()
             connection.execute(
                 """
                 INSERT INTO credit_reservations (
@@ -613,25 +616,35 @@ class AccountRepository:
         reservation_id: str,
         request: CreditCaptureRequest,
     ) -> CreditReservationResponse:
-        with connect(self.sqlite_path) as connection:
+        with connect(self.sqlite_path, immediate=True) as connection:
             row = self._get_reservation_row(connection, user_id, reservation_id)
             target_captured = min(int(request.units), int(row["units_reserved"]) - int(row["units_released"]))
             current_captured = int(row["units_captured"])
             delta = max(target_captured - current_captured, 0)
             if delta > 0:
                 now = utc_now()
-                connection.execute(
-                    "UPDATE wallets SET balance = balance - ?, updated_at = ? WHERE user_id = ?",
-                    (delta, now, user_id),
+                wallet_cursor = connection.execute(
+                    """
+                    UPDATE wallets
+                    SET balance = balance - ?,
+                        reserved = reserved - ?,
+                        updated_at = ?
+                    WHERE user_id = ? AND balance >= ? AND reserved >= ?
+                    """,
+                    (delta, delta, now, user_id, delta, delta),
                 )
-                connection.execute(
+                if wallet_cursor.rowcount != 1:
+                    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="credit reservation is inconsistent")
+                reservation_cursor = connection.execute(
                     """
                     UPDATE credit_reservations
                     SET units_captured = ?, updated_at = ?
-                    WHERE id = ? AND user_id = ?
+                    WHERE id = ? AND user_id = ? AND units_captured = ?
                     """,
-                    (target_captured, now, reservation_id, user_id),
+                    (target_captured, now, reservation_id, user_id, current_captured),
                 )
+                if reservation_cursor.rowcount != 1:
+                    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="credit reservation changed")
                 connection.execute(
                     """
                     INSERT INTO credit_transactions (
@@ -660,7 +673,7 @@ class AccountRepository:
         reservation_id: str,
         request: CreditReleaseRequest,
     ) -> CreditReservationResponse:
-        with connect(self.sqlite_path) as connection:
+        with connect(self.sqlite_path, immediate=True) as connection:
             row = self._get_reservation_row(connection, user_id, reservation_id)
             max_releasable = int(row["units_reserved"]) - int(row["units_captured"])
             target_released = min(int(request.units), max_releasable)
@@ -668,14 +681,26 @@ class AccountRepository:
             delta = max(target_released - current_released, 0)
             if delta > 0:
                 now = utc_now()
-                connection.execute(
+                wallet_cursor = connection.execute(
+                    """
+                    UPDATE wallets
+                    SET reserved = reserved - ?, updated_at = ?
+                    WHERE user_id = ? AND reserved >= ?
+                    """,
+                    (delta, now, user_id, delta),
+                )
+                if wallet_cursor.rowcount != 1:
+                    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="credit reservation is inconsistent")
+                reservation_cursor = connection.execute(
                     """
                     UPDATE credit_reservations
                     SET units_released = ?, updated_at = ?
-                    WHERE id = ? AND user_id = ?
+                    WHERE id = ? AND user_id = ? AND units_released = ?
                     """,
-                    (target_released, now, reservation_id, user_id),
+                    (target_released, now, reservation_id, user_id, current_released),
                 )
+                if reservation_cursor.rowcount != 1:
+                    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="credit reservation changed")
                 connection.execute(
                     """
                     INSERT INTO credit_transactions (
@@ -703,7 +728,9 @@ class AccountRepository:
             row = self._get_reservation_row(connection, user_id, reservation_id)
         return self._reservation_response_from_row(row)
 
-    def list_ledger(self, user_id: str) -> list[CreditLedgerEntry]:
+    def list_ledger(self, user_id: str, *, limit: int = 100, offset: int = 0) -> list[CreditLedgerEntry]:
+        safe_limit = min(max(limit, 1), 500)
+        safe_offset = max(offset, 0)
         with connect(self.sqlite_path) as connection:
             rows = connection.execute(
                 """
@@ -711,8 +738,9 @@ class AccountRepository:
                 FROM credit_transactions
                 WHERE user_id = ?
                 ORDER BY created_at DESC, id DESC
+                LIMIT ? OFFSET ?
                 """,
-                (user_id,),
+                (user_id, safe_limit, safe_offset),
             ).fetchall()
         return [
             CreditLedgerEntry(
@@ -730,15 +758,33 @@ class AccountRepository:
 
     def get_user_admin(self, user_id: str) -> CloudUserAdminResponse | None:
         with connect(self.sqlite_path) as connection:
-            row = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            row = connection.execute(
+                """
+                SELECT users.*, wallets.balance AS wallet_balance, wallets.reserved AS wallet_reserved
+                FROM users
+                LEFT JOIN wallets ON wallets.user_id = users.id
+                WHERE users.id = ?
+                """,
+                (user_id,),
+            ).fetchone()
         if row is None:
             return None
+        return self._user_admin_from_joined_row(row)
+
+    def _user_admin_from_joined_row(self, row: sqlite3.Row) -> CloudUserAdminResponse:
+        balance = int(row["wallet_balance"]) if row["wallet_balance"] is not None else 0
+        reserved = int(row["wallet_reserved"]) if row["wallet_reserved"] is not None else 0
         return CloudUserAdminResponse(
             user_id=str(row["id"]),
             email=str(row["email"]),
             display_name=row["display_name"],
             status=cast(CloudAccountStatus, row["status"]),
-            wallet=self.get_wallet(str(row["id"])),
+            wallet=WalletResponse(
+                user_id=str(row["id"]),
+                balance=balance,
+                reserved=reserved,
+                available=max(balance - reserved, 0),
+            ),
         )
 
     def _get_reservation_row(
@@ -809,17 +855,9 @@ class AccountRepository:
         return self._wallet_from_connection(connection, user_id)
 
     def _wallet_from_connection(self, connection: sqlite3.Connection, user_id: str) -> WalletResponse:
-        row = connection.execute("SELECT balance FROM wallets WHERE user_id = ?", (user_id,)).fetchone()
-        reserved_row = connection.execute(
-            """
-            SELECT COALESCE(SUM(units_reserved - units_captured - units_released), 0) AS reserved
-            FROM credit_reservations
-            WHERE user_id = ? AND status = 'active'
-            """,
-            (user_id,),
-        ).fetchone()
+        row = connection.execute("SELECT balance, reserved FROM wallets WHERE user_id = ?", (user_id,)).fetchone()
         balance = int(row["balance"]) if row is not None else 0
-        reserved = int(reserved_row["reserved"]) if reserved_row is not None else 0
+        reserved = int(row["reserved"]) if row is not None else 0
         return WalletResponse(user_id=user_id, balance=balance, reserved=reserved, available=max(balance - reserved, 0))
 
     def _record_admin_audit(

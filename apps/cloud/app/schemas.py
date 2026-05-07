@@ -4,10 +4,6 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-LicenseTier = Literal["trial", "school_le_500", "school_501_1500", "school_gt_1500"]
-SchoolSizeTier = Literal["le_500", "501_1500", "gt_1500"]
-BillingInterval = Literal["monthly", "annual"]
-LicenseStatus = Literal["active", "suspended", "expired"]
 AccountStatus = Literal["active", "disabled"]
 CreditReservationStatus = Literal["active", "captured", "released"]
 CreditTransactionType = Literal["topup", "reserve", "capture", "release"]
@@ -242,58 +238,6 @@ class AdminAuditEntry(BaseModel):
     created_at: str
 
 
-class LicenseActivateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    license_key: str
-    device_id: str
-    device_name: str
-    app_version: str
-
-
-class LicenseStateResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    status: LicenseStatus
-    license_tier: LicenseTier
-    school_size_tier: SchoolSizeTier
-    billing_interval: BillingInterval | None
-    student_count_total: int
-    expires_at: str
-    modules_enabled: list[str]
-    max_devices: int
-    offline_grace_days: int
-
-
-class CloudLicenseUpsertRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    license_key: str
-    license_tier: LicenseTier
-    school_size_tier: SchoolSizeTier
-    billing_interval: BillingInterval | None = None
-    student_count_total: int
-    max_devices: int
-    status: LicenseStatus
-    expires_at: str
-    modules_enabled: list[str]
-
-
-class CloudLicenseAdminResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    license_key: str
-    license_tier: LicenseTier
-    school_size_tier: SchoolSizeTier
-    billing_interval: BillingInterval | None
-    student_count_total: int
-    max_devices: int
-    status: LicenseStatus
-    expires_at: str
-    modules_enabled: list[str]
-    active_devices: int
-
-
 class ConfigResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -309,15 +253,6 @@ class AppStartedEvent(BaseModel):
     ts: str
     app_version: str
     platform: str
-
-
-class LicenseCheckedEvent(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    event: Literal["license_checked"]
-    ts: str
-    result: str
-    offline_mode: bool
 
 
 class JobCompletedEvent(BaseModel):
@@ -354,7 +289,6 @@ class ConfigUpdatedEvent(BaseModel):
 
 TelemetryEvent = Annotated[
     AppStartedEvent
-    | LicenseCheckedEvent
     | JobCompletedEvent
     | JobFailedEvent
     | ConfigUpdatedEvent,

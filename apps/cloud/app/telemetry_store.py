@@ -15,29 +15,29 @@ class TelemetryStore:
     def save_batch(
         self,
         *,
-        license_key: str | None,
         user_id: str | None = None,
-        device_id: str | None,
         events: list[dict[str, Any]],
     ) -> None:
         with connect(self.sqlite_path) as connection:
-            for event in events:
-                connection.execute(
+            now = utc_now()
+            connection.executemany(
                 """
                 INSERT INTO telemetry_events (
-                    license_key, device_id, event, app_version, payload_json, created_at
+                    user_id, event, app_version, payload_json, created_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
+                [
                     (
-                        license_key,
-                        device_id,
+                        user_id,
                         str(event["event"]),
                         event.get("app_version"),
                         json.dumps(event, ensure_ascii=False),
-                        utc_now(),
-                    ),
-                )
+                        now,
+                    )
+                    for event in events
+                ],
+            )
 
     def count(self) -> int:
         with connect(self.sqlite_path) as connection:
@@ -50,18 +50,20 @@ class TelemetryStore:
         with connect(self.sqlite_path) as connection:
             rows = connection.execute(
                 """
-                SELECT license_key, device_id, event, app_version, payload_json
+                SELECT *
                 FROM telemetry_events
                 ORDER BY id ASC
                 """
             ).fetchall()
-        return [
-            {
-                "license_key": row["license_key"],
-                "device_id": row["device_id"],
-                "event": row["event"],
-                "app_version": row["app_version"],
-                "payload": json.loads(row["payload_json"]),
-            }
-            for row in rows
-        ]
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            data = dict(row)
+            events.append(
+                {
+                    "user_id": data.get("user_id"),
+                    "event": data["event"],
+                    "app_version": data["app_version"],
+                    "payload": json.loads(data["payload_json"]),
+                }
+            )
+        return events

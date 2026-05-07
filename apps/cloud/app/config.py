@@ -28,12 +28,6 @@ class Settings(BaseModel):
         "DMC_CLOUD_SQLITE_PATH",
         str(Path(__file__).resolve().parents[3] / ".dmc-assistant-data" / "cloud" / "state.sqlite3"),
     )
-    offline_grace_days: int = int(os.getenv("DMC_CLOUD_OFFLINE_GRACE_DAYS", "7"))
-    trial_duration_days: int = int(os.getenv("DMC_CLOUD_TRIAL_DURATION_DAYS", "14"))
-    trial_license_keys: str = os.getenv(
-        "DMC_CLOUD_TRIAL_LICENSE_KEYS",
-        "DMC-TRIAL-0001,DMC-TEST-0001,DMC-TEST-NEW,DMC-TEST-ACTIVATE",
-    )
     session_duration_hours: int = int(os.getenv("DMC_CLOUD_SESSION_DURATION_HOURS", "720"))
     ocr_provider: str = os.getenv("DMC_OCR_PROVIDER", "mock").strip().lower() or "mock"
     ocr_openai_api_key: str = os.getenv("DMC_OCR_OPENAI_API_KEY", "").strip()

@@ -35,33 +35,9 @@ def _create_migration_table(connection: sqlite3.Connection) -> None:
 def _baseline_schema(connection: sqlite3.Connection) -> None:
     connection.executescript(
         """
-        CREATE TABLE IF NOT EXISTS licenses (
-            license_key TEXT PRIMARY KEY,
-            license_tier TEXT NOT NULL,
-            school_size_tier TEXT NOT NULL,
-            billing_interval TEXT,
-            student_count_total INTEGER NOT NULL,
-            max_devices INTEGER NOT NULL,
-            status TEXT NOT NULL,
-            expires_at TEXT NOT NULL,
-            modules_enabled_json TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS device_activations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            license_key TEXT NOT NULL,
-            device_id TEXT NOT NULL,
-            device_name TEXT NOT NULL,
-            first_seen_at TEXT NOT NULL,
-            last_seen_at TEXT NOT NULL,
-            UNIQUE (license_key, device_id),
-            FOREIGN KEY (license_key) REFERENCES licenses(license_key)
-        );
-
         CREATE TABLE IF NOT EXISTS telemetry_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            license_key TEXT,
-            device_id TEXT,
+            user_id TEXT,
             event TEXT NOT NULL,
             app_version TEXT,
             payload_json TEXT NOT NULL,
@@ -74,12 +50,10 @@ def _baseline_schema(connection: sqlite3.Connection) -> None:
 def _add_indexes(connection: sqlite3.Connection) -> None:
     connection.executescript(
         """
-        CREATE INDEX IF NOT EXISTS idx_device_activations_license_last_seen
-            ON device_activations(license_key, last_seen_at DESC);
         CREATE INDEX IF NOT EXISTS idx_telemetry_events_created_at
             ON telemetry_events(created_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_telemetry_events_license_device
-            ON telemetry_events(license_key, device_id);
+        CREATE INDEX IF NOT EXISTS idx_telemetry_events_user_created
+            ON telemetry_events(user_id, created_at DESC);
         """
     )
 
@@ -197,11 +171,48 @@ def _admin_audit_and_topup_requests(connection: sqlite3.Connection) -> None:
     )
 
 
+def _wallet_reserved_column(connection: sqlite3.Connection) -> None:
+    existing_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(wallets)").fetchall()
+    }
+    if "reserved" not in existing_columns:
+        connection.execute("ALTER TABLE wallets ADD COLUMN reserved INTEGER NOT NULL DEFAULT 0")
+    connection.execute(
+        """
+        UPDATE wallets
+        SET reserved = COALESCE((
+            SELECT SUM(units_reserved - units_captured - units_released)
+            FROM credit_reservations
+            WHERE credit_reservations.user_id = wallets.user_id
+                AND credit_reservations.status = 'active'
+        ), 0)
+        """
+    )
+
+
+def _telemetry_user_id_column(connection: sqlite3.Connection) -> None:
+    existing_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(telemetry_events)").fetchall()
+    }
+    if "user_id" not in existing_columns:
+        connection.execute("ALTER TABLE telemetry_events ADD COLUMN user_id TEXT")
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_telemetry_events_user_created
+            ON telemetry_events(user_id, created_at DESC)
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(version=1, name="baseline_schema", apply=_baseline_schema),
     Migration(version=2, name="add_indexes", apply=_add_indexes),
     Migration(version=3, name="account_credit_schema", apply=_account_credit_schema),
     Migration(version=4, name="admin_audit_and_topup_requests", apply=_admin_audit_and_topup_requests),
+    Migration(version=5, name="wallet_reserved_column", apply=_wallet_reserved_column),
+    Migration(version=6, name="telemetry_user_id_column", apply=_telemetry_user_id_column),
 )
 
 _MIGRATION_LOCK = threading.Lock()
@@ -289,11 +300,16 @@ def open_connection(path: Path) -> sqlite3.Connection:
 
 
 @contextmanager
-def connect(path: Path) -> Iterator[sqlite3.Connection]:
+def connect(path: Path, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
     target_path = ensure_database_ready(path)
     connection = open_connection(target_path)
     try:
+        if immediate:
+            connection.execute("BEGIN IMMEDIATE")
         yield connection
         connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
     finally:
         connection.close()

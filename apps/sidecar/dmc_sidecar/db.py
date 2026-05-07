@@ -52,23 +52,6 @@ def _create_migration_table(connection: sqlite3.Connection) -> None:
 def _baseline_schema(connection: sqlite3.Connection) -> None:
     connection.executescript(
         """
-        CREATE TABLE IF NOT EXISTS license (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            license_key TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'active',
-            device_id TEXT NOT NULL,
-            license_tier TEXT NOT NULL,
-            school_size_tier TEXT NOT NULL,
-            billing_interval TEXT,
-            student_count_total INTEGER NOT NULL,
-            modules_enabled_json TEXT NOT NULL DEFAULT '[]',
-            max_devices INTEGER NOT NULL DEFAULT 3,
-            activated_at TEXT NOT NULL,
-            expires_at TEXT NOT NULL,
-            last_checked_at TEXT NOT NULL,
-            offline_grace_until TEXT NOT NULL
-        );
-
         CREATE TABLE IF NOT EXISTS app_state (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
@@ -112,13 +95,6 @@ def _baseline_schema(connection: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL
         );
         """
-    )
-    _ensure_column(connection, table="license", column="status", definition="TEXT NOT NULL DEFAULT 'active'")
-    _ensure_column(
-        connection,
-        table="license",
-        column="modules_enabled_json",
-        definition="TEXT NOT NULL DEFAULT '[]'",
     )
     _ensure_job_summary_columns(connection)
 
@@ -185,11 +161,16 @@ def _account_credit_columns(connection: sqlite3.Connection) -> None:
     _ensure_column(connection, table="job", column="credit_status", definition="TEXT")
 
 
+def _job_run_summary_column(connection: sqlite3.Connection) -> None:
+    _ensure_column(connection, table="job", column="run_summary_json", definition="TEXT")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(version=1, name="baseline_schema", apply=_baseline_schema),
     Migration(version=2, name="add_indexes", apply=_add_indexes),
     Migration(version=3, name="job_record_summary", apply=_ensure_job_summary_columns),
     Migration(version=4, name="account_credit_columns", apply=_account_credit_columns),
+    Migration(version=5, name="job_run_summary_column", apply=_job_run_summary_column),
 )
 
 _MIGRATION_LOCK = threading.Lock()
@@ -275,11 +256,16 @@ def open_connection(path: Path) -> sqlite3.Connection:
 
 
 @contextmanager
-def connect(path: Path | None = None) -> Iterator[sqlite3.Connection]:
+def connect(path: Path | None = None, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
     target_path = ensure_database_ready(path)
     connection = open_connection(target_path)
     try:
+        if immediate:
+            connection.execute("BEGIN IMMEDIATE")
         yield connection
         connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
     finally:
         connection.close()

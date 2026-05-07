@@ -5,13 +5,18 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from ..account_service import AccountRepository, SessionRecord
 from ..auth import require_account_session
 from ..ocr_service import run_form_converter_ocr
+from ..rate_limit import rate_limit
 from ..schemas import OcrFormConverterRequest, OcrFormConverterResponse
 
 
 router = APIRouter()
 
 
-@router.post("/form-converter", response_model=OcrFormConverterResponse)
+@router.post(
+    "/form-converter",
+    response_model=OcrFormConverterResponse,
+    dependencies=[Depends(rate_limit(scope="ocr.form_converter", limit=30, window_seconds=60))],
+)
 def convert_form_pdf(
     request: OcrFormConverterRequest,
     session: SessionRecord = Depends(require_account_session),

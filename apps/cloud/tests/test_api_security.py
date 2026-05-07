@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.config_signing import canonical_config_payload, sign_config_payload
-from app.db import connect
 from app.main import app
 from app.telemetry_store import TelemetryStore
 
@@ -32,6 +31,34 @@ def use_temp_cloud_db(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(settings, "sqlite_path", str(tmp_path / "cloud-state.sqlite3"))
 
 
+def account_auth_headers(monkeypatch, tmp_path: Path) -> dict[str, str]:
+    setup_test_security(monkeypatch)
+    use_temp_cloud_db(monkeypatch, tmp_path)
+    create = client.post(
+        "/v1/admin/users",
+        headers=auth_headers(),
+        json={
+            "email": "teacher@example.test",
+            "password": "correct-password",
+            "display_name": "Teacher",
+            "status": "active",
+        },
+    )
+    assert create.status_code == 200
+    login = client.post(
+        "/v1/auth/login",
+        json={
+            "email": "teacher@example.test",
+            "password": "correct-password",
+            "device_id": "device-1",
+            "device_name": "desktop-01",
+            "app_version": "0.1.0",
+        },
+    )
+    assert login.status_code == 200
+    return {"Authorization": f"Bearer {login.json()['token']}"}
+
+
 def test_healthz_is_public() -> None:
     response = client.get("/healthz")
     assert response.status_code == 200
@@ -41,27 +68,11 @@ def test_healthz_is_public() -> None:
 
 def test_admin_requires_bearer() -> None:
     settings.api_bearer_token = TEST_API_BEARER_TOKEN
-    response = client.get("/v1/admin/licenses")
+    response = client.get("/v1/admin/users")
     assert response.status_code == 401
 
 
-def test_license_activate_is_public(monkeypatch, tmp_path: Path) -> None:
-    setup_test_security(monkeypatch)
-    use_temp_cloud_db(monkeypatch, tmp_path)
-    response = client.post(
-        "/v1/license/activate",
-        json={
-            "license_key": "DMC-TEST-0001",
-            "device_id": "device-1",
-            "device_name": "desktop-01",
-            "app_version": "0.1.0",
-        },
-    )
-    assert response.status_code == 200
-    assert response.json()["status"] == "active"
-
-
-def test_license_heartbeat_is_public(monkeypatch, tmp_path: Path) -> None:
+def test_license_routes_are_removed(monkeypatch, tmp_path: Path) -> None:
     setup_test_security(monkeypatch)
     use_temp_cloud_db(monkeypatch, tmp_path)
     activate = client.post(
@@ -73,169 +84,12 @@ def test_license_heartbeat_is_public(monkeypatch, tmp_path: Path) -> None:
             "app_version": "0.1.0",
         },
     )
-    assert activate.status_code == 200
+    heartbeat = client.get("/v1/license/heartbeat")
+    admin = client.get("/v1/admin/licenses", headers=auth_headers())
 
-    response = client.get(
-        "/v1/license/heartbeat",
-        headers={
-            "X-DMC-License-Key": "DMC-TEST-0001",
-            "X-DMC-Device-Id": "device-1",
-            "X-DMC-Device-Name": "desktop-01",
-        },
-    )
-    assert response.status_code == 200
-    assert response.json()["status"] == "active"
-
-
-def test_license_activate_rejects_device_limit(monkeypatch, tmp_path: Path) -> None:
-    setup_test_security(monkeypatch)
-    use_temp_cloud_db(monkeypatch, tmp_path)
-    first = client.post(
-        "/v1/license/activate",
-        json={
-            "license_key": "DMC-TEST-0001",
-            "device_id": "device-1",
-            "device_name": "desktop-01",
-            "app_version": "0.1.0",
-        },
-    )
-    assert first.status_code == 200
-
-    with connect(Path(settings.sqlite_path)) as connection:
-        connection.execute(
-            "UPDATE licenses SET max_devices = 1 WHERE license_key = ?",
-            ("DMC-TEST-0001",),
-        )
-
-    second = client.post(
-        "/v1/license/activate",
-        json={
-            "license_key": "DMC-TEST-0001",
-            "device_id": "device-2",
-            "device_name": "desktop-02",
-            "app_version": "0.1.0",
-        },
-    )
-    assert second.status_code == 409
-
-
-def test_license_activate_rejects_expired_license(monkeypatch, tmp_path: Path) -> None:
-    setup_test_security(monkeypatch)
-    use_temp_cloud_db(monkeypatch, tmp_path)
-    seed = client.post(
-        "/v1/license/activate",
-        json={
-            "license_key": "DMC-TEST-0001",
-            "device_id": "device-seed",
-            "device_name": "desktop-seed",
-            "app_version": "0.1.0",
-        },
-    )
-    assert seed.status_code == 200
-    with connect(Path(settings.sqlite_path)) as connection:
-        connection.execute(
-            "UPDATE licenses SET expires_at = ? WHERE license_key = ?",
-            ("2020-01-01T00:00:00Z", "DMC-TEST-0001"),
-        )
-
-    response = client.post(
-        "/v1/license/activate",
-        json={
-            "license_key": "DMC-TEST-0001",
-            "device_id": "device-expired",
-            "device_name": "desktop-expired",
-            "app_version": "0.1.0",
-        },
-    )
-
-    assert response.status_code == 410
-
-
-def test_license_heartbeat_rejects_unactivated_device(monkeypatch, tmp_path: Path) -> None:
-    setup_test_security(monkeypatch)
-    use_temp_cloud_db(monkeypatch, tmp_path)
-
-    response = client.get(
-        "/v1/license/heartbeat",
-        headers={
-            "X-DMC-License-Key": "DMC-TEST-0001",
-            "X-DMC-Device-Id": "device-never-activated",
-            "X-DMC-Device-Name": "desktop-02",
-        },
-    )
-
-    assert response.status_code == 403
-
-
-def test_admin_can_upsert_and_list_licenses(monkeypatch, tmp_path: Path) -> None:
-    setup_test_security(monkeypatch)
-    use_temp_cloud_db(monkeypatch, tmp_path)
-    upsert = client.put(
-        "/v1/admin/licenses/DMC-PAID-0001",
-        headers=auth_headers(),
-        json={
-            "license_key": "DMC-PAID-0001",
-            "license_tier": "school_501_1500",
-            "school_size_tier": "501_1500",
-            "billing_interval": "annual",
-            "student_count_total": 780,
-            "max_devices": 5,
-            "status": "active",
-            "expires_at": "2027-04-22T00:00:00Z",
-            "modules_enabled": ["graduation"],
-        },
-    )
-    assert upsert.status_code == 200
-    assert upsert.json()["license_key"] == "DMC-PAID-0001"
-    assert upsert.json()["active_devices"] == 0
-
-    listing = client.get("/v1/admin/licenses", headers=auth_headers())
-    assert listing.status_code == 200
-    license_keys = [item["license_key"] for item in listing.json()]
-    assert "DMC-PAID-0001" in license_keys
-
-
-def test_admin_upsert_rejects_mismatched_license_key(monkeypatch, tmp_path: Path) -> None:
-    setup_test_security(monkeypatch)
-    use_temp_cloud_db(monkeypatch, tmp_path)
-    response = client.put(
-        "/v1/admin/licenses/DMC-PAID-0001",
-        headers=auth_headers(),
-        json={
-            "license_key": "DMC-PAID-0002",
-            "license_tier": "school_501_1500",
-            "school_size_tier": "501_1500",
-            "billing_interval": "annual",
-            "student_count_total": 780,
-            "max_devices": 5,
-            "status": "active",
-            "expires_at": "2027-04-22T00:00:00Z",
-            "modules_enabled": ["graduation"],
-        },
-    )
-    assert response.status_code == 400
-
-
-def test_admin_upsert_rejects_unknown_tier_values(monkeypatch, tmp_path: Path) -> None:
-    setup_test_security(monkeypatch)
-    use_temp_cloud_db(monkeypatch, tmp_path)
-    response = client.put(
-        "/v1/admin/licenses/DMC-PAID-0001",
-        headers=auth_headers(),
-        json={
-            "license_key": "DMC-PAID-0001",
-            "license_tier": "standard",
-            "school_size_tier": "le_1500",
-            "billing_interval": "yearly",
-            "student_count_total": 780,
-            "max_devices": 5,
-            "status": "active",
-            "expires_at": "2027-04-22T00:00:00Z",
-            "modules_enabled": ["graduation"],
-        },
-    )
-
-    assert response.status_code == 422
+    assert activate.status_code == 404
+    assert heartbeat.status_code == 404
+    assert admin.status_code == 404
 
 
 def test_config_returns_signed_payload(monkeypatch) -> None:
@@ -267,7 +121,7 @@ def test_config_returns_204_when_current_version_matches(monkeypatch) -> None:
     assert response.text == ""
 
 
-def test_telemetry_requires_activated_device() -> None:
+def test_telemetry_requires_account_session() -> None:
     response = client.post(
         "/v1/telemetry",
         json={
@@ -285,25 +139,11 @@ def test_telemetry_requires_activated_device() -> None:
 
 
 def test_telemetry_accepts_allowlisted_payload(monkeypatch, tmp_path: Path) -> None:
-    setup_test_security(monkeypatch)
-    use_temp_cloud_db(monkeypatch, tmp_path)
-    activate = client.post(
-        "/v1/license/activate",
-        json={
-            "license_key": "DMC-TEST-0001",
-            "device_id": "device-1",
-            "device_name": "desktop-01",
-            "app_version": "0.1.0",
-        },
-    )
-    assert activate.status_code == 200
+    headers = account_auth_headers(monkeypatch, tmp_path)
     store = TelemetryStore(settings.sqlite_path)
     response = client.post(
         "/v1/telemetry",
-        headers={
-            "X-DMC-License-Key": "DMC-TEST-0001",
-            "X-DMC-Device-Id": "device-1",
-        },
+        headers=headers,
         json={
             "events": [
                 {
@@ -323,26 +163,12 @@ def test_telemetry_accepts_allowlisted_payload(monkeypatch, tmp_path: Path) -> N
     assert store.count() >= 1
 
 
-def test_telemetry_persists_license_and_device_headers(monkeypatch, tmp_path: Path) -> None:
-    setup_test_security(monkeypatch)
-    use_temp_cloud_db(monkeypatch, tmp_path)
-    activate = client.post(
-        "/v1/license/activate",
-        json={
-            "license_key": "DMC-TEST-0001",
-            "device_id": "device-1",
-            "device_name": "desktop-01",
-            "app_version": "0.1.0",
-        },
-    )
-    assert activate.status_code == 200
+def test_telemetry_persists_account_authorized_events(monkeypatch, tmp_path: Path) -> None:
+    headers = account_auth_headers(monkeypatch, tmp_path)
     store = TelemetryStore(settings.sqlite_path)
     response = client.post(
         "/v1/telemetry",
-        headers={
-            "X-DMC-License-Key": "DMC-TEST-0001",
-            "X-DMC-Device-Id": "device-1",
-        },
+        headers=headers,
         json={
             "events": [
                 {
@@ -356,8 +182,7 @@ def test_telemetry_persists_license_and_device_headers(monkeypatch, tmp_path: Pa
     )
     assert response.status_code == 200
     rows = store.list_events()
-    assert rows[0]["license_key"] == "DMC-TEST-0001"
-    assert rows[0]["device_id"] == "device-1"
+    assert rows[0]["user_id"] is not None
     assert rows[0]["payload"]["event"] == "app_started"
 
 
@@ -421,5 +246,5 @@ def test_config_rejects_invalid_module_name(monkeypatch) -> None:
 
 def test_auth_returns_500_when_bearer_not_configured(monkeypatch) -> None:
     monkeypatch.setattr(settings, "api_bearer_token", "")
-    response = client.get("/v1/admin/licenses")
+    response = client.get("/v1/admin/users")
     assert response.status_code == 500

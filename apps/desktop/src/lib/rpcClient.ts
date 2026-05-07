@@ -14,7 +14,6 @@ import type {
   CurrentStudentsReconciliationResponse,
   DatabaseStatus,
   JobStatusSnapshot,
-  LicenseStatus,
   ListJobsResponse,
   ModuleCatalogResponse,
   ModuleConfigStatus,
@@ -47,7 +46,6 @@ import {
   parseGeneratePsarReportResponse,
   parseJobActionResponse,
   parseJobStatusSnapshot,
-  parseLicenseStatus,
   parseListJobsResponse,
   parseModuleCatalogResponse,
   parseModuleConfigStatus,
@@ -323,11 +321,6 @@ export async function syncModuleConfig(
   return parseModuleConfigStatus(result);
 }
 
-export async function getLicenseStatus(): Promise<LicenseStatus> {
-  const result = await sidecarRequest<unknown>("get_license_status", {});
-  return parseLicenseStatus(result);
-}
-
 export async function signIn(input: {
   email: string;
   password: string;
@@ -361,24 +354,6 @@ export async function refreshWallet(): Promise<AccountStatus> {
 export async function getModuleCatalog(): Promise<ModuleCatalogResponse> {
   const result = await sidecarRequest<unknown>("get_module_catalog", {});
   return parseModuleCatalogResponse(result);
-}
-
-export async function activateLicense(input: {
-  licenseKey: string;
-  deviceName: string;
-  appVersion: string;
-}): Promise<LicenseStatus> {
-  const result = await sidecarRequest<unknown>("activate_license", {
-    license_key: input.licenseKey,
-    device_name: input.deviceName,
-    app_version: input.appVersion,
-  });
-  return parseLicenseStatus(result);
-}
-
-export async function refreshLicenseStatus(): Promise<LicenseStatus> {
-  const result = await sidecarRequest<unknown>("refresh_license_status", {});
-  return parseLicenseStatus(result);
 }
 
 export async function getBrowserRuntimeStatus(): Promise<BrowserRuntimeStatus> {

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 
 from ..account_service import AccountRepository, SessionRecord
 from ..auth import require_account_session
+from ..rate_limit import rate_limit
 from ..schemas import AccountResponse, AuthLoginRequest, AuthLoginResponse
 
 
@@ -14,7 +15,7 @@ def get_account_repository() -> AccountRepository:
     return AccountRepository()
 
 
-@router.post("/login", response_model=AuthLoginResponse)
+@router.post("/login", response_model=AuthLoginResponse, dependencies=[Depends(rate_limit(scope="auth.login", limit=20, window_seconds=60))])
 def login(request: AuthLoginRequest) -> AuthLoginResponse:
     token, account = get_account_repository().authenticate(
         email=request.email,

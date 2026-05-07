@@ -4,14 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from ..account_service import AccountRepository
 from ..auth import require_api_bearer
-from ..license_service import LicenseRepository
 from ..schemas import (
     CloudCreditTopupRequest,
     CloudCreditTopupDecisionRequest,
     CloudCreditTopupRequestCreate,
     CloudCreditTopupRequestResponse,
-    CloudLicenseAdminResponse,
-    CloudLicenseUpsertRequest,
     CloudUserAdminResponse,
     CloudUserCreateRequest,
     CloudUserUpdateRequest,
@@ -24,10 +21,6 @@ from ..schemas import (
 router = APIRouter(dependencies=[Depends(require_api_bearer)])
 
 
-def get_license_repository() -> LicenseRepository:
-    return LicenseRepository()
-
-
 def get_account_repository() -> AccountRepository:
     return AccountRepository()
 
@@ -35,22 +28,6 @@ def get_account_repository() -> AccountRepository:
 def admin_actor(request: Request) -> str:
     actor = getattr(request.state, "admin_actor", None)
     return str(actor) if actor else "admin:unknown"
-
-
-@router.get("/licenses", response_model=list[CloudLicenseAdminResponse])
-def list_licenses() -> list[CloudLicenseAdminResponse]:
-    return get_license_repository().list_licenses()
-
-
-@router.put("/licenses/{license_key}", response_model=CloudLicenseAdminResponse)
-def upsert_license(
-    license_key: str,
-    request: CloudLicenseUpsertRequest,
-) -> CloudLicenseAdminResponse:
-    return get_license_repository().upsert_license(
-        license_key=license_key,
-        request=request,
-    )
 
 
 @router.post("/users", response_model=CloudUserAdminResponse)
@@ -162,5 +139,9 @@ def list_admin_audit(
 
 
 @router.get("/users/{user_id}/ledger", response_model=list[CreditLedgerEntry])
-def user_credit_ledger(user_id: str) -> list[CreditLedgerEntry]:
-    return get_account_repository().list_ledger(user_id)
+def user_credit_ledger(
+    user_id: str,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> list[CreditLedgerEntry]:
+    return get_account_repository().list_ledger(user_id, limit=limit, offset=offset)

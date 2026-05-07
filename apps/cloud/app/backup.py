@@ -48,6 +48,20 @@ def _restore_sqlite_database(source: Path, target: Path) -> None:
         source_connection.close()
 
 
+def _ensure_relative_member_path(root: Path, member: str) -> Path:
+    if not member or Path(member).is_absolute():
+        raise RuntimeError("BACKUP_PATH_INVALID")
+    target = (root / member).resolve()
+    if not target.is_relative_to(root.resolve()):
+        raise RuntimeError("BACKUP_PATH_INVALID")
+    return target
+
+
+def _validate_archive_members(archive: zipfile.ZipFile, temp_root: Path) -> None:
+    for info in archive.infolist():
+        _ensure_relative_member_path(temp_root, info.filename)
+
+
 def create_backup_archive(output_path: Path | None = None) -> Path:
     source_db = Path(settings.sqlite_path)
     migrate_database(source_db)
@@ -84,6 +98,7 @@ def restore_backup_archive(archive_path: Path) -> dict[str, str]:
     with tempfile.TemporaryDirectory(prefix="dmc-cloud-restore-") as temp_dir:
         temp_root = Path(temp_dir)
         with zipfile.ZipFile(archive_path, "r") as archive:
+            _validate_archive_members(archive, temp_root)
             archive.extractall(temp_root)
 
         manifest_path = temp_root / "manifest.json"

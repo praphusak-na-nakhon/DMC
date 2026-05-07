@@ -68,6 +68,20 @@ def _iter_data_files() -> list[tuple[Path, str]]:
     return files
 
 
+def _ensure_relative_member_path(root: Path, member: str) -> Path:
+    if not member or Path(member).is_absolute():
+        raise DomainError("BACKUP_PATH_INVALID")
+    target = (root / member).resolve()
+    if not target.is_relative_to(root.resolve()):
+        raise DomainError("BACKUP_PATH_INVALID")
+    return target
+
+
+def _validate_archive_members(archive: zipfile.ZipFile, temp_root: Path) -> None:
+    for info in archive.infolist():
+        _ensure_relative_member_path(temp_root, info.filename)
+
+
 def create_backup_archive(output_path: Path | None = None) -> Path:
     source_db = config.sqlite_path()
     migrate_database(source_db)
@@ -81,13 +95,13 @@ def create_backup_archive(output_path: Path | None = None) -> Path:
         _snapshot_sqlite_database(source_db, db_snapshot)
 
         manifest = {
-                "kind": "dmc-sidecar-backup",
-                "created_at": utc_now(),
-                "sidecar_version": __version__,
-                "schema": get_database_metadata(source_db),
-                "data_dir": str(config.default_data_dir()),
-                "files": ["desktop.sqlite3", *[relative for _, relative in _iter_data_files()]],
-            }
+            "kind": "dmc-sidecar-backup",
+            "created_at": utc_now(),
+            "sidecar_version": __version__,
+            "schema": get_database_metadata(source_db),
+            "data_dir": str(config.default_data_dir()),
+            "files": ["desktop.sqlite3", *[relative for _, relative in _iter_data_files()]],
+        }
 
         with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
@@ -109,6 +123,7 @@ def restore_backup_archive(archive_path: Path) -> dict[str, str]:
     with tempfile.TemporaryDirectory(prefix="dmc-sidecar-restore-") as temp_dir:
         temp_root = Path(temp_dir)
         with zipfile.ZipFile(archive_path, "r") as archive:
+            _validate_archive_members(archive, temp_root)
             archive.extractall(temp_root)
 
         manifest_path = temp_root / "manifest.json"
@@ -129,13 +144,19 @@ def restore_backup_archive(archive_path: Path) -> dict[str, str]:
         sqlite_target = config.sqlite_path()
         _restore_sqlite_database(restored_db, sqlite_target)
 
-        for relative in manifest.get("files", []):
+        manifest_files = manifest.get("files", [])
+        if not isinstance(manifest_files, list):
+            raise DomainError("BACKUP_MANIFEST_INVALID")
+
+        for relative in manifest_files:
             if relative in {"manifest.json", "desktop.sqlite3"}:
                 continue
-            source_path = temp_root / relative
+            if not isinstance(relative, str):
+                raise DomainError("BACKUP_MANIFEST_INVALID")
+            source_path = _ensure_relative_member_path(temp_root, relative)
             if not source_path.exists() or not source_path.is_file():
                 continue
-            destination_path = current_data_dir / relative
+            destination_path = _ensure_relative_member_path(current_data_dir, relative)
             destination_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_path, destination_path)
 

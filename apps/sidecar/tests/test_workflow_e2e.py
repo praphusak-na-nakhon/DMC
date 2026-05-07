@@ -19,12 +19,12 @@ from app.config import settings
 from app.main import app as cloud_app
 from app.telemetry_store import TelemetryStore as CloudTelemetryStore
 from dmc_sidecar import config as sidecar_config
+from dmc_sidecar.account_store import AccountSessionStore
 from dmc_sidecar.checkpoint import JobCheckpoint
-from dmc_sidecar.license_store import LicenseStore
 from dmc_sidecar.module_config import load_effective_config, sync_module_config
 from dmc_sidecar.rpc import RpcServer
 from dmc_sidecar.runtime import utc_now
-from dmc_sidecar.schemas import LicenseRecord
+from dmc_sidecar.schemas import WalletSnapshot
 
 
 class _UrlopenResponse:
@@ -137,20 +137,6 @@ def _make_cloud_urlopen(client: TestClient):
     return fake_urlopen
 
 
-def _configure_cloud_bridge(monkeypatch, tmp_path: Path, client: TestClient) -> None:
-    monkeypatch.setattr(settings, "sqlite_path", str(tmp_path / "cloud-state.sqlite3"))
-    monkeypatch.setattr(settings, "trial_license_keys", "DMC-E2E-0001")
-    monkeypatch.setattr(sidecar_config, "default_data_dir", lambda: tmp_path)
-    monkeypatch.setattr(sidecar_config, "cloud_base_url", lambda: "https://cloud.test")
-    monkeypatch.setattr("dmc_sidecar.license_client.secure_cloud_base_url", lambda: "https://cloud.test")
-    monkeypatch.setattr("dmc_sidecar.telemetry.secure_cloud_base_url", lambda: "https://cloud.test")
-    monkeypatch.setattr("dmc_sidecar.license_client.get_or_create_device_id", lambda: "device-1")
-    monkeypatch.setattr("dmc_sidecar.license_client.default_device_name", lambda: "desktop-01")
-    fake_urlopen = _make_cloud_urlopen(client)
-    monkeypatch.setattr("dmc_sidecar.license_client.urlopen", fake_urlopen)
-    monkeypatch.setattr("dmc_sidecar.telemetry.urlopen", fake_urlopen)
-
-
 def _configure_account_cloud_bridge(monkeypatch, tmp_path: Path, client: TestClient) -> None:
     monkeypatch.setattr(settings, "sqlite_path", str(tmp_path / "cloud-account-state.sqlite3"))
     monkeypatch.setattr(settings, "api_bearer_token", "dmc-test-token")
@@ -221,63 +207,6 @@ class _ResumeAfterAuthModule:
             started_at=utc_now(),
         )
         context.job_store.mark_done(job_id, checkpoint=checkpoint, finished_at=utc_now())
-
-
-def test_activate_heartbeat_and_start_job_workflow(monkeypatch, tmp_path: Path) -> None:
-    client = TestClient(cloud_app)
-    _configure_cloud_bridge(monkeypatch, tmp_path, client)
-    notifications: list[dict[str, Any]] = []
-
-    monkeypatch.setattr("dmc_sidecar.modules.get_module", lambda module_name: _CompletingModule())
-    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
-
-    server = RpcServer(emit_notification=notifications.append)
-    server.telemetry.background_flush = False
-
-    activate = _rpc_call(
-        server,
-        "activate_license",
-        {
-            "license_key": "DMC-E2E-0001",
-            "device_name": "desktop-01",
-            "app_version": "0.1.0",
-        },
-    )
-    assert activate["result"]["status"] == "active"
-    assert activate["result"]["configured"] is True
-
-    refresh = _rpc_call(server, "refresh_license_status", {})
-    assert refresh["result"]["message"] == "HEARTBEAT_OK"
-    assert refresh["result"]["can_start_jobs"] is True
-
-    started = _rpc_call(
-        server,
-        "start_job",
-        {
-            "job_id": "job-e2e-1",
-            "module": "graduation",
-            "excel_path": "C:\\data\\m3.xlsx",
-            "options": {"dry_run": True},
-        },
-    )
-    assert started["result"] == {
-        "accepted": True,
-        "job_id": "job-e2e-1",
-        "credit_reservation_id": None,
-        "credits_reserved": 0,
-    }
-
-    _wait_until(lambda: server.job_store.get_status("job-e2e-1")["status"] == "done")
-    server.telemetry.flush()
-    telemetry_store = CloudTelemetryStore(settings.sqlite_path)
-    _wait_until(
-        lambda: "job_completed" in [row["payload"]["event"] for row in telemetry_store.list_events()]
-    )
-
-    payloads = [row["payload"]["event"] for row in telemetry_store.list_events()]
-    assert "app_started" in payloads
-    assert "license_checked" in payloads
-    assert "job_completed" in payloads
 
 
 def test_account_credit_live_job_reserves_captures_and_releases(monkeypatch, tmp_path: Path) -> None:
@@ -631,23 +560,16 @@ def test_invalid_signed_config_falls_back_to_cached_workflow(monkeypatch, tmp_pa
 
 def test_backup_restore_reopen_workflow(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(sidecar_config, "default_data_dir", lambda: tmp_path)
-    store = LicenseStore()
-    store.save_activation(
-        LicenseRecord(
-            license_key="DMC-BACKUP-0001",
-            status="active",
-            device_id="device-backup-1",
-            license_tier="trial",
-            school_size_tier="le_500",
-            billing_interval=None,
-            student_count_total=120,
-            modules_enabled=["graduation"],
-            max_devices=3,
-            activated_at="2026-04-22T00:00:00Z",
-            expires_at="2026-05-22T00:00:00Z",
-            last_checked_at="2026-04-22T00:00:00Z",
-            offline_grace_until="2026-04-29T00:00:00Z",
-        )
+    store = AccountSessionStore()
+    store.save_session(
+        token="token-before-backup",
+        user_id="user-backup",
+        email="teacher@example.test",
+        display_name="Teacher",
+        status="active",
+        token_expires_at="2026-05-22T00:00:00Z",
+        checked_at="2026-04-22T00:00:00Z",
+        wallet=WalletSnapshot(user_id="user-backup", balance=20, reserved=0, available=20),
     )
 
     server = RpcServer(emit_notification=lambda payload: None)
@@ -655,26 +577,24 @@ def test_backup_restore_reopen_workflow(monkeypatch, tmp_path: Path) -> None:
     backup = _rpc_call(server, "create_backup", {"path": str(backup_path)})
     assert Path(backup["result"]["backup_path"]).exists()
 
-    store.update_heartbeat(
-        status="suspended",
-        license_tier="trial",
-        school_size_tier="le_500",
-        billing_interval=None,
-        student_count_total=120,
-        modules_enabled=["graduation"],
-        max_devices=3,
-        expires_at="2026-05-22T00:00:00Z",
-        last_checked_at="2026-04-23T00:00:00Z",
-        offline_grace_until="2026-04-23T01:00:00Z",
+    store.save_session(
+        token="token-after-backup",
+        user_id="user-backup",
+        email="teacher@example.test",
+        display_name="Teacher",
+        status="active",
+        token_expires_at="2026-05-22T00:00:00Z",
+        checked_at="2026-04-23T00:00:00Z",
+        wallet=WalletSnapshot(user_id="user-backup", balance=3, reserved=0, available=3),
     )
-    mutated_status = _rpc_call(server, "get_license_status", {})
-    assert mutated_status["result"]["status"] == "suspended"
+    mutated_status = _rpc_call(server, "get_account_status", {})
+    assert mutated_status["result"]["wallet"]["available"] == 3
 
     restored = _rpc_call(server, "restore_backup", {"path": str(backup_path)})
     assert restored["result"]["restored_from"] == str(backup_path)
     assert Path(restored["result"]["safety_backup_path"]).exists()
 
     reopened_server = RpcServer(emit_notification=lambda payload: None)
-    restored_status = _rpc_call(reopened_server, "get_license_status", {})
-    assert restored_status["result"]["status"] == "active"
-    assert restored_status["result"]["license_tier"] == "trial"
+    restored_status = _rpc_call(reopened_server, "get_account_status", {})
+    assert restored_status["result"]["wallet"]["available"] == 20
+    assert restored_status["result"]["message"] is None

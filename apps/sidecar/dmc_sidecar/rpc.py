@@ -40,14 +40,11 @@ from .current_students import (
     validate_current_students_import_form,
 )
 from .job_store import JobStore
-from .license_client import activate_license, build_license_status_snapshot, refresh_license_status
-from .license_store import LicenseStore
 from .module_config import load_effective_config, sync_module_config
 from .modules import get_module
 from .p_sar_readiness import PsarReadinessService
 from .runtime import JobManager, build_event_notification
 from .schemas import (
-    ActivateLicenseRequest,
     AddPsarEvidenceRequest,
     ArchiveJobsRequest,
     ExportStudentBasicInfoFormRequest,
@@ -74,13 +71,11 @@ class RpcServer:
     def __init__(self, emit_notification: Callable[[dict[str, Any]], None]) -> None:
         self.emit_notification = emit_notification
         self.job_store = JobStore()
-        self.license_store = LicenseStore()
         self.account_store = AccountSessionStore()
-        self.telemetry = TelemetryClient(account_store=self.account_store, license_store=self.license_store)
+        self.telemetry = TelemetryClient(account_store=self.account_store)
         self.psar_readiness = PsarReadinessService()
         self.job_manager = JobManager(
             job_store=self.job_store,
-            license_store=self.license_store,
             account_store=self.account_store,
             telemetry=self.telemetry,
             emit_notification=emit_notification,
@@ -167,10 +162,6 @@ class RpcServer:
                 ).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
-            if request.method == "get_license_status":
-                result = build_license_status_snapshot(self.license_store.get_license()).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
-
             if request.method == "sign_in":
                 sign_in_params = SignInRequest.model_validate(request.params)
                 result = sign_in(
@@ -230,29 +221,6 @@ class RpcServer:
                         message="Stop active jobs before restoring a backup.",
                     )
                 result = restore_backup_archive(Path(restore_params.path))
-                return RpcSuccessResponse(id=request.id, result=result)
-
-            if request.method == "activate_license":
-                license_params = ActivateLicenseRequest.model_validate(request.params)
-                snapshot = activate_license(
-                    self.license_store,
-                    license_key=license_params.license_key,
-                    device_name=license_params.device_name,
-                    app_version=license_params.app_version,
-                )
-                self.telemetry.record_license_checked(
-                    result=snapshot.message or snapshot.status,
-                    offline_mode=snapshot.offline_mode,
-                )
-                return RpcSuccessResponse(id=request.id, result=snapshot.model_dump())
-
-            if request.method == "refresh_license_status":
-                snapshot = refresh_license_status(self.license_store)
-                self.telemetry.record_license_checked(
-                    result=snapshot.message or snapshot.status,
-                    offline_mode=snapshot.offline_mode,
-                )
-                result = snapshot.model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "sync_module_config":

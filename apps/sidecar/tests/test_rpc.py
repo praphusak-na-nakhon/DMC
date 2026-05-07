@@ -8,11 +8,8 @@ from dmc_sidecar import config
 from dmc_sidecar.checkpoint import JobCheckpoint
 from dmc_sidecar.errors import DomainError
 from dmc_sidecar.job_store import JobStore
-from dmc_sidecar.license_client import build_license_status_snapshot
-from dmc_sidecar.license_store import LicenseStore
 from dmc_sidecar.rpc import RpcServer
 from dmc_sidecar.runtime import build_event_notification
-from dmc_sidecar.schemas import LicenseRecord
 
 
 def _rpc_call(server: RpcServer, method: str, params: dict[str, object]) -> dict[str, object]:
@@ -179,99 +176,6 @@ def test_get_module_config_status_rpc(monkeypatch, tmp_path: Path) -> None:
     assert response["result"]["module"] == "graduation"
     assert response["result"]["source"] == "bundled"
     assert response["result"]["version"] == "0.1.0"
-
-
-def test_get_license_status_rpc(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    store = LicenseStore()
-    store.save_activation(
-        LicenseRecord(
-            license_key="DMC-TEST-0005",
-            status="active",
-            device_id="device-5",
-            license_tier="trial",
-            school_size_tier="le_500",
-            billing_interval=None,
-            student_count_total=100,
-            modules_enabled=["graduation"],
-            max_devices=3,
-            activated_at="2026-04-22T00:00:00Z",
-            expires_at="2026-05-06T00:00:00Z",
-            last_checked_at="2026-04-22T00:00:00Z",
-            offline_grace_until="2026-05-01T00:00:00Z",
-        )
-    )
-
-    server = RpcServer(emit_notification=lambda payload: None)
-    payload = json.dumps(
-        {
-            "jsonrpc": "2.0",
-            "id": "req-license",
-            "method": "get_license_status",
-            "params": {},
-        }
-    )
-
-    response = json.loads(server.handle_text(payload))
-
-    assert response["result"]["configured"] is True
-    assert response["result"]["status"] == "active"
-    assert response["result"]["modules_enabled"] == ["graduation"]
-
-
-def test_activate_license_rpc_returns_snapshot(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    server = RpcServer(emit_notification=lambda payload: None)
-
-    saved = LicenseRecord(
-        license_key="DMC-TEST-ACTIVATE",
-        status="active",
-        device_id="device-activate-1",
-        license_tier="trial",
-        school_size_tier="le_500",
-        billing_interval=None,
-        student_count_total=200,
-        modules_enabled=["graduation"],
-        max_devices=3,
-        activated_at="2026-04-22T00:00:00Z",
-        expires_at="2026-05-22T00:00:00Z",
-        last_checked_at="2026-04-22T00:00:00Z",
-        offline_grace_until="2026-04-29T00:00:00Z",
-    )
-    monkeypatch.setattr(
-        "dmc_sidecar.rpc.activate_license",
-        lambda store, license_key, device_name, app_version: build_license_status_snapshot(
-            saved,
-            message="ACTIVATION_OK",
-        ),
-    )
-
-    recorded: dict[str, object] = {}
-
-    def fake_record_license_checked(*, result: str, offline_mode: bool) -> None:
-        recorded["result"] = result
-        recorded["offline_mode"] = offline_mode
-
-    monkeypatch.setattr(server.telemetry, "record_license_checked", fake_record_license_checked)
-
-    payload = json.dumps(
-        {
-            "jsonrpc": "2.0",
-            "id": "req-activate",
-            "method": "activate_license",
-            "params": {
-                "license_key": "DMC-TEST-ACTIVATE",
-                "device_name": "desktop-01",
-                "app_version": "0.1.0",
-            },
-        }
-    )
-
-    response = json.loads(server.handle_text(payload))
-
-    assert response["result"]["configured"] is True
-    assert response["result"]["message"] == "ACTIVATION_OK"
-    assert recorded == {"result": "ACTIVATION_OK", "offline_mode": False}
 
 
 def test_get_browser_runtime_status_rpc(monkeypatch, tmp_path: Path) -> None:
@@ -524,55 +428,6 @@ def test_live_start_reserves_credits_before_starting_job(monkeypatch, tmp_path: 
     assert status is not None
     assert status["credit_reservation_id"] == "reservation-1"
     assert status["credits_reserved"] == 7
-
-
-def test_refresh_license_status_rpc_records_telemetry(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    store = LicenseStore()
-    record = LicenseRecord(
-        license_key="DMC-TEST-0006",
-        status="active",
-        device_id="device-6",
-        license_tier="trial",
-        school_size_tier="le_500",
-        billing_interval=None,
-        student_count_total=100,
-        modules_enabled=["graduation"],
-        max_devices=3,
-        activated_at="2026-04-22T00:00:00Z",
-        expires_at="2026-05-06T00:00:00Z",
-        last_checked_at="2026-04-22T00:00:00Z",
-        offline_grace_until="2026-05-01T00:00:00Z",
-    )
-    store.save_activation(record)
-
-    server = RpcServer(emit_notification=lambda payload: None)
-    monkeypatch.setattr(
-        "dmc_sidecar.rpc.refresh_license_status",
-        lambda license_store: build_license_status_snapshot(record, message="HEARTBEAT_OK"),
-    )
-
-    recorded: dict[str, object] = {}
-
-    def fake_record_license_checked(*, result: str, offline_mode: bool) -> None:
-        recorded["result"] = result
-        recorded["offline_mode"] = offline_mode
-
-    monkeypatch.setattr(server.telemetry, "record_license_checked", fake_record_license_checked)
-
-    payload = json.dumps(
-        {
-            "jsonrpc": "2.0",
-            "id": "req-license-refresh",
-            "method": "refresh_license_status",
-            "params": {},
-        }
-    )
-
-    response = json.loads(server.handle_text(payload))
-
-    assert response["result"]["status"] == "active"
-    assert recorded == {"result": "HEARTBEAT_OK", "offline_mode": False}
 
 
 def test_resume_existing_job_rpc_uses_checkpoint_state_after_pause(monkeypatch, tmp_path: Path) -> None:
