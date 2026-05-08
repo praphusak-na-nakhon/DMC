@@ -192,6 +192,7 @@ export async function validateCurrentStudentSources(input: {
   rosterExcelPath: string;
   thaiIdCsvPath: string | null;
   ocrMarkdownPaths: string[];
+  civilRegistrationMarkdownPaths?: string[];
   schoolYear: number;
   gradeLevels: number[] | null;
   operationType: CurrentStudentOperationType;
@@ -200,6 +201,7 @@ export async function validateCurrentStudentSources(input: {
     roster_excel_path: input.rosterExcelPath,
     thai_id_csv_path: input.thaiIdCsvPath,
     ocr_markdown_paths: input.ocrMarkdownPaths,
+    civil_registration_markdown_paths: input.civilRegistrationMarkdownPaths ?? [],
     school_year: input.schoolYear,
     grade_levels: input.gradeLevels,
     operation_type: input.operationType,
@@ -211,6 +213,7 @@ export async function exportCurrentStudentImportExcel(input: {
   rosterExcelPath: string;
   thaiIdCsvPath: string | null;
   ocrMarkdownPaths: string[];
+  civilRegistrationMarkdownPaths?: string[];
   schoolYear: number;
   gradeLevels: number[] | null;
   operationType: CurrentStudentOperationType;
@@ -220,6 +223,7 @@ export async function exportCurrentStudentImportExcel(input: {
     roster_excel_path: input.rosterExcelPath,
     thai_id_csv_path: input.thaiIdCsvPath,
     ocr_markdown_paths: input.ocrMarkdownPaths,
+    civil_registration_markdown_paths: input.civilRegistrationMarkdownPaths ?? [],
     school_year: input.schoolYear,
     grade_levels: input.gradeLevels,
     operation_type: input.operationType,
@@ -232,6 +236,7 @@ export async function previewDmcFormJson(input: {
   rosterExcelPath: string;
   thaiIdCsvPath: string | null;
   ocrMarkdownPaths: string[];
+  civilRegistrationMarkdownPaths?: string[];
   schoolYear: number;
   gradeLevels: number[] | null;
 }): Promise<PreviewDmcFormJsonResponse> {
@@ -239,6 +244,7 @@ export async function previewDmcFormJson(input: {
     roster_excel_path: input.rosterExcelPath,
     thai_id_csv_path: input.thaiIdCsvPath,
     ocr_markdown_paths: input.ocrMarkdownPaths,
+    civil_registration_markdown_paths: input.civilRegistrationMarkdownPaths ?? [],
     school_year: input.schoolYear,
     grade_levels: input.gradeLevels,
   });
@@ -249,6 +255,7 @@ export async function exportDmcFormJson(input: {
   rosterExcelPath: string;
   thaiIdCsvPath: string | null;
   ocrMarkdownPaths: string[];
+  civilRegistrationMarkdownPaths?: string[];
   schoolYear: number;
   gradeLevels: number[] | null;
   outputPath: string | null;
@@ -257,6 +264,7 @@ export async function exportDmcFormJson(input: {
     roster_excel_path: input.rosterExcelPath,
     thai_id_csv_path: input.thaiIdCsvPath,
     ocr_markdown_paths: input.ocrMarkdownPaths,
+    civil_registration_markdown_paths: input.civilRegistrationMarkdownPaths ?? [],
     school_year: input.schoolYear,
     grade_levels: input.gradeLevels,
     output_path: input.outputPath,

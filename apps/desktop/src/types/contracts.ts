@@ -196,7 +196,7 @@ export type ExportStudentBasicInfoFormResponse = {
   classes: StudentBasicInfoClassSummary[];
 };
 
-export type CurrentStudentSourceType = "roster" | "thai_id_scan" | "ocr_form" | "manual";
+export type CurrentStudentSourceType = "roster" | "thai_id_scan" | "ocr_form" | "civil_registration" | "manual";
 export type CurrentStudentFieldConfidence = "authoritative" | "high" | "review" | "missing";
 export type CurrentStudentFieldValue = string | number | boolean | null;
 export type CurrentStudentOperationType = "current" | "transfer_in" | "add_new";
@@ -289,6 +289,7 @@ export type CurrentStudentsSummary = {
   roster_records: number;
   thai_id_scan_records: number;
   ocr_form_records: number;
+  civil_registration_records: number;
   records_total: number;
   auto_matched: number;
   needs_review: number;
@@ -311,6 +312,7 @@ export type CurrentStudentsReconciliationResponse = {
   roster_excel_path: string;
   thai_id_csv_path: string | null;
   ocr_markdown_paths: string[];
+  civil_registration_markdown_paths: string[];
   summary: CurrentStudentsSummary;
   records: CurrentStudentRecord[];
   review_queue: CurrentStudentRecord[];
@@ -876,7 +878,13 @@ export function parseExportStudentBasicInfoFormResponse(value: unknown): ExportS
 }
 
 function parseCurrentStudentSourceType(value: string, context: string): CurrentStudentSourceType {
-  if (value !== "roster" && value !== "thai_id_scan" && value !== "ocr_form" && value !== "manual") {
+  if (
+    value !== "roster" &&
+    value !== "thai_id_scan" &&
+    value !== "ocr_form" &&
+    value !== "civil_registration" &&
+    value !== "manual"
+  ) {
     throw new Error(`${context}.source is invalid`);
   }
   return value;
@@ -1084,6 +1092,8 @@ function parseCurrentStudentsSummary(value: unknown): CurrentStudentsSummary {
     roster_records: readNumber(record, "roster_records", "current_students_summary"),
     thai_id_scan_records: readNumber(record, "thai_id_scan_records", "current_students_summary"),
     ocr_form_records: readNumber(record, "ocr_form_records", "current_students_summary"),
+    civil_registration_records:
+      readOptionalNumber(record, "civil_registration_records", "current_students_summary") ?? 0,
     records_total: readNumber(record, "records_total", "current_students_summary"),
     auto_matched: readNumber(record, "auto_matched", "current_students_summary"),
     needs_review: readNumber(record, "needs_review", "current_students_summary"),
@@ -1126,6 +1136,10 @@ export function parseCurrentStudentsReconciliationResponse(value: unknown): Curr
     roster_excel_path: readString(record, "roster_excel_path", "current_students_reconciliation_response"),
     thai_id_csv_path: readOptionalString(record, "thai_id_csv_path", "current_students_reconciliation_response"),
     ocr_markdown_paths: readStringArray(record, "ocr_markdown_paths", "current_students_reconciliation_response"),
+    civil_registration_markdown_paths:
+      record.civil_registration_markdown_paths === undefined
+        ? []
+        : readStringArray(record, "civil_registration_markdown_paths", "current_students_reconciliation_response"),
     summary: parseCurrentStudentsSummary(record.summary),
     records: readArray(record, "records", "current_students_reconciliation_response").map(parseCurrentStudentRecord),
     review_queue: readArray(record, "review_queue", "current_students_reconciliation_response").map(

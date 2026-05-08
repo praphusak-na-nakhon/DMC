@@ -125,6 +125,7 @@ export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPag
   const [rosterPath, setRosterPath] = useState("");
   const [thaiIdCsvPath, setThaiIdCsvPath] = useState("");
   const [ocrMarkdownPaths, setOcrMarkdownPaths] = useState("");
+  const [civilRegistrationMarkdownPaths, setCivilRegistrationMarkdownPaths] = useState("");
   const [schoolYear, setSchoolYear] = useState("2569");
   const [gradeLevels, setGradeLevels] = useState("1");
   const [jsonPreview, setJsonPreview] = useState<PreviewDmcFormJsonResponse | null>(null);
@@ -160,9 +161,18 @@ export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPag
     }
   }
 
+  async function handleBrowseCivilRegistrationMarkdown() {
+    const selected = await openMarkdownDialog();
+    if (selected) {
+      setCivilRegistrationMarkdownPaths((current) => [...markdownPaths(current), selected].join("\n"));
+      resetResult();
+    }
+  }
+
   function readFormInput() {
     const selectedRosterPath = rosterPath.trim();
     const selectedOcrPaths = markdownPaths(ocrMarkdownPaths);
+    const selectedCivilRegistrationPaths = markdownPaths(civilRegistrationMarkdownPaths);
     if (!selectedRosterPath) {
       setErrorMessage("กรุณาเลือกไฟล์บัญชีรายชื่อก่อนสร้าง JSON");
       return null;
@@ -180,6 +190,7 @@ export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPag
       rosterExcelPath: selectedRosterPath,
       thaiIdCsvPath: thaiIdCsvPath.trim() || null,
       ocrMarkdownPaths: selectedOcrPaths,
+      civilRegistrationMarkdownPaths: selectedCivilRegistrationPaths,
       schoolYear: parsedSchoolYear,
       gradeLevels: parseGradeLevels(gradeLevels),
     };
@@ -340,6 +351,26 @@ export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPag
                   </Button>
                 </div>
               </div>
+
+              <div className="grid gap-2">
+                <Label>ไฟล์ OCR จากสำเนาทะเบียนบ้านนักเรียน</Label>
+                <textarea
+                  className="min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  value={civilRegistrationMarkdownPaths}
+                  onChange={(event) => {
+                    setCivilRegistrationMarkdownPaths(event.target.value);
+                    resetResult();
+                  }}
+                  placeholder="หนึ่งไฟล์ต่อหนึ่งบรรทัด เช่น D:\\DMC\\2569\\CivilDoc.md"
+                />
+                <div className="flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                  <span>ใช้เติมเลขรหัสประจำบ้าน ที่อยู่ตามทะเบียนบ้าน และข้อมูลบิดา/มารดาที่ OCR จากเอกสารทะเบียนบ้านแม่นยำกว่าแบบฟอร์ม</span>
+                  <Button variant="outline" size="sm" onClick={() => void handleBrowseCivilRegistrationMarkdown()}>
+                    <FileText className="h-4 w-4" />
+                    เพิ่มไฟล์ทะเบียนบ้าน
+                  </Button>
+                </div>
+              </div>
             </div>
 
             <div className="grid content-start gap-4">
@@ -377,9 +408,10 @@ export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPag
 
           {activeResult ? (
             <div className="grid gap-4 rounded-md border bg-muted/30 p-4 lg:grid-cols-[minmax(0,1fr)_auto]">
-              <div className="grid gap-3 sm:grid-cols-5">
+              <div className="grid gap-3 sm:grid-cols-6">
                 <SummaryItem label="รายการที่พบ" value={jsonExport?.records_exported ?? jsonPreview?.records_previewed ?? 0} />
                 <SummaryItem label="จับคู่ได้" value={activeResult.summary.auto_matched} />
+                <SummaryItem label="ทะเบียนบ้าน" value={activeResult.summary.civil_registration_records} />
                 <SummaryItem label="ต้องตรวจ" value={activeResult.summary.review_queue_records} />
                 <SummaryItem label="ข้อมูลจำเป็นขาด" value={activeConflicts.length} />
                 <SummaryItem label="คำเตือน" value={activeResult.summary.warnings_total} />

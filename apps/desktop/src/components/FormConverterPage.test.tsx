@@ -16,6 +16,7 @@ const summary = {
   roster_records: 4,
   thai_id_scan_records: 6,
   ocr_form_records: 1,
+  civil_registration_records: 1,
   records_total: 1,
   auto_matched: 1,
   needs_review: 0,
@@ -131,7 +132,9 @@ describe("FormConverterPage", () => {
     const onRevealPath = vi.fn();
     mockRpc.openExcelDialog.mockResolvedValue("C:\\dmc\\uploadTest\\studentListM1-M4 2569.xlsx");
     mockRpc.openCsvDialog.mockResolvedValue("C:\\dmc\\uploadTest\\ThaiID M1-2569.CSV");
-    mockRpc.openMarkdownDialog.mockResolvedValue("C:\\dmc\\uploadTest\\1-3ex.md");
+    mockRpc.openMarkdownDialog
+      .mockResolvedValueOnce("C:\\dmc\\uploadTest\\1-3ex.md")
+      .mockResolvedValueOnce("D:\\DMC\\2569\\CivilDoc.md");
     mockRpc.previewDmcFormJson.mockResolvedValue({
       module: "formConverter",
       schema_version: "dmc_form_json.v1",
@@ -165,9 +168,11 @@ describe("FormConverterPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /เลือก Excel/ }));
     fireEvent.click(screen.getByRole("button", { name: /เลือก CSV/ }));
     fireEvent.click(screen.getByRole("button", { name: /เพิ่มไฟล์ OCR/ }));
+    fireEvent.click(screen.getByRole("button", { name: /เพิ่มไฟล์ทะเบียนบ้าน/ }));
     await waitFor(() =>
       expect(screen.getByDisplayValue("C:\\dmc\\uploadTest\\studentListM1-M4 2569.xlsx")).toBeInTheDocument(),
     );
+    expect(screen.getByDisplayValue("D:\\DMC\\2569\\CivilDoc.md")).toBeInTheDocument();
 
     expect(screen.queryByText("ประเภทงาน")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /ตรวจและแสดงตัวอย่าง/ }));
@@ -203,6 +208,7 @@ describe("FormConverterPage", () => {
       rosterExcelPath: "C:\\dmc\\uploadTest\\studentListM1-M4 2569.xlsx",
       thaiIdCsvPath: "C:\\dmc\\uploadTest\\ThaiID M1-2569.CSV",
       ocrMarkdownPaths: ["C:\\dmc\\uploadTest\\1-3ex.md"],
+      civilRegistrationMarkdownPaths: ["D:\\DMC\\2569\\CivilDoc.md"],
       schoolYear: 2569,
       gradeLevels: [1],
     });
@@ -210,6 +216,7 @@ describe("FormConverterPage", () => {
       rosterExcelPath: "C:\\dmc\\uploadTest\\studentListM1-M4 2569.xlsx",
       thaiIdCsvPath: "C:\\dmc\\uploadTest\\ThaiID M1-2569.CSV",
       ocrMarkdownPaths: ["C:\\dmc\\uploadTest\\1-3ex.md"],
+      civilRegistrationMarkdownPaths: ["D:\\DMC\\2569\\CivilDoc.md"],
       schoolYear: 2569,
       gradeLevels: [1],
       outputPath: null,

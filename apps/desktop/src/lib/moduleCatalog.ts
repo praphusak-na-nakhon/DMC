@@ -33,7 +33,14 @@ export const moduleDefinitions: ModuleDefinition[] = [
     productionDryRunEnabled: false,
     contract: {
       version: "0.2",
-      inputs: ["student_roster_excel_path", "thai_id_csv_path", "ocr_markdown_paths", "school_year", "grade_levels"],
+      inputs: [
+        "student_roster_excel_path",
+        "thai_id_csv_path",
+        "ocr_markdown_paths",
+        "civil_registration_markdown_paths",
+        "school_year",
+        "grade_levels",
+      ],
       validations: ["roster_sheet_structure", "thai_id_format", "thai_id_checksum", "field_provenance"],
       outputs: ["dmc_form_json_path", "match_summary", "warnings"],
       events: ["export_dmc_form_json"],

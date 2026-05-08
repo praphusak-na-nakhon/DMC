@@ -103,6 +103,24 @@ def _write_ocr_markdown(path: Path) -> None:
     )
 
 
+def _write_civil_registration_markdown(path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "สำเนาทะเบียนบ้าน",
+                "เลขรหัสประจำบ้าน 8101-008408-9",
+                "รายการที่อยู่ 28 หมู่ที่ 4 ตำบลคลองขนาน อำเภอเหนือคลอง จังหวัดกระบี่ ชื่อหมู่บ้าน -",
+                "รายการบุคคลในบ้าน ชื่อ ด.ญ. กัญญาณัฐ กุลดี สัญชาติ ไทย เพศ หญิง",
+                "เลขประจำตัวประชาชน 1-8199-00905-15-7 สถานภาพ ผู้อาศัย",
+                "เกิดเมื่อ 13 ก.พ. 2557",
+                "มารดาผู้ให้กำเนิด ชื่อ กรานณิภา ตุ้มดำ เลขประจำตัวประชาชน 1-7603-00002-25-6 สัญชาติ ไทย",
+                "บิดาผู้ให้กำเนิด ชื่อ ชวลิต ตุ้มดำ เลขประจำตัวประชาชน 3-4101-00748-56-1 สัญชาติ ไทย",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_reconcile_current_students_builds_canonical_records_and_review_queue(tmp_path: Path) -> None:
     roster_path = tmp_path / "studentListM1-M4 2569.xlsx"
     thai_id_path = tmp_path / "ThaiID M1-2569.CSV"
@@ -343,6 +361,59 @@ def test_preview_dmc_form_json_reports_missing_required_data_read_only(tmp_path:
     assert result.records[0].fields["mother.first_name"] is None
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["records"][0]["fields"]["mother.last_name"] is None
+
+
+def test_dmc_form_json_uses_civil_registration_ocr_as_supplement(tmp_path: Path) -> None:
+    roster_path = tmp_path / "studentListM1-M4 2569.xlsx"
+    thai_id_path = tmp_path / "ThaiID M1-2569.CSV"
+    ocr_path = tmp_path / "1-3ex.md"
+    civil_path = tmp_path / "CivilDoc.md"
+    output_path = tmp_path / "dmc-form-data-2569.json"
+    _write_roster(roster_path)
+    _write_thai_id_csv(thai_id_path)
+    _write_ocr_markdown(ocr_path)
+    _write_civil_registration_markdown(civil_path)
+
+    preview = preview_dmc_form_json(
+        PreviewDmcFormJsonRequest(
+            roster_excel_path=str(roster_path),
+            thai_id_csv_path=str(thai_id_path),
+            ocr_markdown_paths=[str(ocr_path)],
+            civil_registration_markdown_paths=[str(civil_path)],
+            school_year=2569,
+            grade_levels=[1],
+        )
+    )
+
+    record = preview.records[0]
+    conflict_fields = {conflict.field_name for conflict in preview.conflicts}
+    assert preview.summary.civil_registration_records == 1
+    assert record.fields["registered_address.house_id"] == "8101-008408-9"
+    assert record.fields["father.citizen_id"] == "3410100748561"
+    assert record.fields["father.first_name"] == "ชวลิต"
+    assert record.fields["mother.citizen_id"] == "1760300002256"
+    assert record.fields["mother.first_name"] == "กรานณิภา"
+    assert record.fields["mother.last_name"] == "ตุ้มดำ"
+    assert record.field_details["registered_address.house_id"].source == "civil_registration"
+    assert record.field_details["mother.first_name"].source == "civil_registration"
+    assert "mother.first_name" not in conflict_fields
+    assert "mother.last_name" not in conflict_fields
+
+    result = export_dmc_form_json(
+        ExportDmcFormJsonRequest(
+            roster_excel_path=str(roster_path),
+            thai_id_csv_path=str(thai_id_path),
+            ocr_markdown_paths=[str(ocr_path)],
+            civil_registration_markdown_paths=[str(civil_path)],
+            school_year=2569,
+            grade_levels=[1],
+            output_path=str(output_path),
+        )
+    )
+
+    assert result.records[0].fields["registered_address.house_id"] == "8101-008408-9"
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["records"][0]["field_details"]["mother.first_name"]["source"] == "civil_registration"
 
 
 UPLOAD_TEST_DIR = Path(__file__).parents[3] / "uploadTest"

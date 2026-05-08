@@ -147,7 +147,7 @@ MISSING_BLOCKER_BASIS = (
     "ต้องเติมข้อมูลนี้ก่อนนำเข้า DMC"
 )
 
-SourceType = Literal["roster", "thai_id_scan", "ocr_form", "manual"]
+SourceType = Literal["roster", "thai_id_scan", "ocr_form", "civil_registration", "manual"]
 FieldConfidence = Literal["authoritative", "high", "review", "missing"]
 OperationType = Literal["current", "transfer_in", "add_new"]
 MatchStatus = Literal["auto_matched", "needs_review", "duplicate", "invalid_id", "new_or_transfer_candidate"]
@@ -282,6 +282,21 @@ class OcrFormRecord(BaseModel):
     row_index: int | None = None
 
 
+class CivilRegistrationRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    record_id: str
+    citizen_id: str | None
+    citizen_id_valid: bool
+    prefix: str | None
+    first_name: str | None
+    last_name: str | None
+    full_name: str | None
+    name_key: str | None
+    fields: dict[str, CurrentStudentField]
+    source_path: str
+
+
 class CanonicalStudentRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -311,6 +326,7 @@ class CurrentStudentsSummary(BaseModel):
     roster_records: int
     thai_id_scan_records: int
     ocr_form_records: int
+    civil_registration_records: int = 0
     records_total: int
     auto_matched: int
     needs_review: int
@@ -331,6 +347,7 @@ class ReconcileCurrentStudentsRequest(BaseModel):
     roster_excel_path: str
     thai_id_csv_path: str | None = None
     ocr_markdown_paths: list[str] = Field(default_factory=list)
+    civil_registration_markdown_paths: list[str] = Field(default_factory=list)
     school_year: int
     grade_levels: list[int] | None = None
     operation_type: OperationType = "current"
@@ -347,6 +364,7 @@ class CurrentStudentsReconciliationResponse(BaseModel):
     roster_excel_path: str
     thai_id_csv_path: str | None
     ocr_markdown_paths: list[str]
+    civil_registration_markdown_paths: list[str]
     summary: CurrentStudentsSummary
     records: list[CanonicalStudentRecord]
     review_queue: list[CanonicalStudentRecord]
@@ -374,6 +392,7 @@ class ExportCurrentStudentsImportExcelRequest(BaseModel):
     roster_excel_path: str
     thai_id_csv_path: str | None = None
     ocr_markdown_paths: list[str] = Field(default_factory=list)
+    civil_registration_markdown_paths: list[str] = Field(default_factory=list)
     school_year: int
     grade_levels: list[int] | None = None
     operation_type: OperationType = "current"
@@ -421,6 +440,7 @@ class PreviewDmcFormJsonRequest(BaseModel):
     roster_excel_path: str
     thai_id_csv_path: str | None = None
     ocr_markdown_paths: list[str] = Field(default_factory=list)
+    civil_registration_markdown_paths: list[str] = Field(default_factory=list)
     school_year: int
     grade_levels: list[int] | None = None
 
@@ -447,6 +467,7 @@ class ExportDmcFormJsonRequest(BaseModel):
     roster_excel_path: str
     thai_id_csv_path: str | None = None
     ocr_markdown_paths: list[str] = Field(default_factory=list)
+    civil_registration_markdown_paths: list[str] = Field(default_factory=list)
     school_year: int
     grade_levels: list[int] | None = None
     output_path: str | None = None
@@ -532,10 +553,18 @@ def reconcile_current_students(request: ReconcileCurrentStudentsRequest) -> Curr
         ocr_records.append(ocr_record)
         warnings.extend(ocr_warnings)
 
+    civil_records: list[CivilRegistrationRecord] = []
+    for index, markdown_path in enumerate(request.civil_registration_markdown_paths, start=1):
+        path = _validated_file(Path(markdown_path), suffixes={".md", ".txt"})
+        civil_record, civil_warnings = read_civil_registration_markdown(path, record_index=index)
+        civil_records.append(civil_record)
+        warnings.extend(civil_warnings)
+
     records, ocr_attached, ocr_unmatched = _build_canonical_records(
         roster=roster,
         scans=scans,
         ocr_records=ocr_records,
+        civil_records=civil_records,
         operation_type=request.operation_type,
         fuzzy_match_threshold=request.fuzzy_match_threshold,
     )
@@ -545,6 +574,7 @@ def reconcile_current_students(request: ReconcileCurrentStudentsRequest) -> Curr
         roster=roster,
         scans=scans,
         ocr_records=ocr_records,
+        civil_records=civil_records,
         records=records,
         ocr_attached=ocr_attached,
         ocr_unmatched=ocr_unmatched,
@@ -558,6 +588,7 @@ def reconcile_current_students(request: ReconcileCurrentStudentsRequest) -> Curr
         roster_excel_path=str(roster_path),
         thai_id_csv_path=request.thai_id_csv_path,
         ocr_markdown_paths=request.ocr_markdown_paths,
+        civil_registration_markdown_paths=request.civil_registration_markdown_paths,
         summary=summary,
         records=records,
         review_queue=review_queue,
@@ -593,6 +624,7 @@ def export_current_students_import_excel(
             roster_excel_path=request.roster_excel_path,
             thai_id_csv_path=request.thai_id_csv_path,
             ocr_markdown_paths=request.ocr_markdown_paths,
+            civil_registration_markdown_paths=request.civil_registration_markdown_paths,
             school_year=request.school_year,
             grade_levels=request.grade_levels,
             operation_type=request.operation_type,
@@ -625,6 +657,7 @@ def preview_dmc_form_json(request: PreviewDmcFormJsonRequest) -> PreviewDmcFormJ
         roster_excel_path=request.roster_excel_path,
         thai_id_csv_path=request.thai_id_csv_path,
         ocr_markdown_paths=request.ocr_markdown_paths,
+        civil_registration_markdown_paths=request.civil_registration_markdown_paths,
         school_year=request.school_year,
         grade_levels=request.grade_levels,
     )
@@ -648,6 +681,7 @@ def export_dmc_form_json(request: ExportDmcFormJsonRequest) -> ExportDmcFormJson
         roster_excel_path=request.roster_excel_path,
         thai_id_csv_path=request.thai_id_csv_path,
         ocr_markdown_paths=request.ocr_markdown_paths,
+        civil_registration_markdown_paths=request.civil_registration_markdown_paths,
         school_year=request.school_year,
         grade_levels=request.grade_levels,
     )
@@ -692,6 +726,7 @@ def _build_dmc_form_json_payload(
     roster_excel_path: str,
     thai_id_csv_path: str | None,
     ocr_markdown_paths: list[str],
+    civil_registration_markdown_paths: list[str],
     school_year: int,
     grade_levels: list[int] | None,
 ) -> _DmcFormJsonPayload:
@@ -705,6 +740,7 @@ def _build_dmc_form_json_payload(
             roster_excel_path=roster_excel_path,
             thai_id_csv_path=thai_id_csv_path,
             ocr_markdown_paths=ocr_markdown_paths,
+            civil_registration_markdown_paths=civil_registration_markdown_paths,
             school_year=school_year,
             grade_levels=grade_levels,
             operation_type="current",
@@ -1007,6 +1043,94 @@ def read_ocr_markdown(path: Path, *, record_index: int = 1) -> tuple[OcrFormReco
     )
 
 
+def read_civil_registration_markdown(
+    path: Path,
+    *,
+    record_index: int = 1,
+) -> tuple[CivilRegistrationRecord, list[CurrentStudentsWarning]]:
+    text, _encoding = _decode_text(path)
+    compact_text = _clean_text(text)
+    warnings: list[CurrentStudentsWarning] = []
+    fields: dict[str, CurrentStudentField] = {}
+
+    house_id = _clean_house_id(_regex_first(compact_text, r"เลขรหัสประจำบ้าน\s+([0-9][0-9\-\s]{8,})"))
+    address_match = re.search(
+        r"รายการที่อยู่\s+(?P<house_no>\S+)\s+หมู่ที่\s+(?P<moo>\S+)\s+ตำบล(?P<subdistrict>.+?)\s+อำเภอ(?P<district>.+?)\s+จังหวัด(?P<province>.+?)(?:\s+ชื่อหมู่บ้าน|\s+ลงชื่อ|\s+ประเภทบ้าน|\s+วันเดือนปี|$)",
+        compact_text,
+    )
+    if address_match is not None:
+        _put_field(fields, "registered_address.house_no", address_match.group("house_no"), "civil_registration", "high")
+        _put_field(fields, "registered_address.moo", address_match.group("moo"), "civil_registration", "high")
+        _put_field(fields, "registered_address.subdistrict", address_match.group("subdistrict"), "civil_registration", "high")
+        _put_field(fields, "registered_address.district", address_match.group("district"), "civil_registration", "high")
+        _put_field(fields, "registered_address.province", address_match.group("province"), "civil_registration", "high")
+    _put_field(fields, "registered_address.house_id", house_id, "civil_registration", "high")
+
+    name_match = re.search(
+        r"รายการบุคคลในบ้าน.*?ชื่อ\s+(?P<full_name>.+?)\s+สัญชาติ\s+(?P<nationality>\S+)\s+เพศ\s+(?P<sex>\S+)",
+        compact_text,
+    )
+    prefix: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    full_name: str | None = None
+    name_key: str | None = None
+    if name_match is not None:
+        prefix, first_name, last_name = _split_civil_name(name_match.group("full_name"))
+        full_name = _full_name(prefix or "", first_name or "", last_name or "") if first_name or last_name else None
+        name_key = normalized_name(first_name or "", last_name or "") if first_name or last_name else None
+        _put_field(fields, "prefix", prefix, "civil_registration", "high")
+        _put_field(fields, "first_name", first_name, "civil_registration", "high")
+        _put_field(fields, "last_name", last_name, "civil_registration", "high")
+        _put_field(fields, "nationality", name_match.group("nationality"), "civil_registration", "high")
+        _put_field(fields, "race", name_match.group("nationality"), "civil_registration", "high")
+        _put_field(fields, "sex", name_match.group("sex"), "civil_registration", "high")
+
+    citizen_id = _clean_citizen_id(
+        _regex_first(compact_text, r"เลขประจำตัวประชาชน\s+([0-9][0-9\-\s]{10,})\s+สถานภาพ")
+    )
+    citizen_id_valid = citizen_id is not None and is_valid_thai_citizen_id(citizen_id)
+    if not citizen_id_valid:
+        warnings.append(
+            CurrentStudentsWarning(
+                code="CIVIL_REGISTRATION_CITIZEN_ID_INVALID_OR_MISSING",
+                message="Civil registration student citizen ID is missing or failed checksum validation.",
+                source="civil_registration",
+                source_path=str(path),
+            )
+        )
+    _put_field(fields, "citizen_id", citizen_id, "civil_registration", "high")
+    _put_field(fields, "birth_date", _regex_first(compact_text, r"เกิดเมื่อ\s+(.+?)(?:\s+มาจาก|\s+ลงชื่อ|$)"), "civil_registration", "high")
+    _put_civil_parent_fields(fields, compact_text, person="mother", marker="มารดาผู้ให้กำเนิด")
+    _put_civil_parent_fields(fields, compact_text, person="father", marker="บิดาผู้ให้กำเนิด")
+
+    if citizen_id is None and name_key is None:
+        warnings.append(
+            CurrentStudentsWarning(
+                code="CIVIL_REGISTRATION_NO_MATCH_KEY",
+                message="Civil registration OCR did not contain a usable citizen ID or student name.",
+                source="civil_registration",
+                source_path=str(path),
+            )
+        )
+
+    return (
+        CivilRegistrationRecord(
+            record_id=f"civil-{record_index}",
+            citizen_id=citizen_id,
+            citizen_id_valid=citizen_id_valid,
+            prefix=prefix,
+            first_name=first_name,
+            last_name=last_name,
+            full_name=full_name,
+            name_key=name_key,
+            fields=fields,
+            source_path=str(path),
+        ),
+        warnings,
+    )
+
+
 def normalized_name(first_name: str | None, last_name: str | None = None) -> str:
     value = _clean_text(f"{first_name or ''}{last_name or ''}").replace(".", "")
     for prefix in TITLE_PREFIXES:
@@ -1031,6 +1155,7 @@ def _build_canonical_records(
     roster: list[RosterStudent],
     scans: list[ThaiIdScanRecord],
     ocr_records: list[OcrFormRecord],
+    civil_records: list[CivilRegistrationRecord],
     operation_type: OperationType,
     fuzzy_match_threshold: float,
 ) -> tuple[list[CanonicalStudentRecord], int, int]:
@@ -1092,6 +1217,25 @@ def _build_canonical_records(
     records_by_citizen_id = {record.citizen_id: record for record in records if record.citizen_id}
     records_by_student_no = {record.student_no: record for record in records if record.student_no}
     records_by_name = {normalized_name(record.first_name, record.last_name): record for record in records if record.first_name or record.last_name}
+
+    for civil_record in civil_records:
+        target = None
+        if civil_record.citizen_id:
+            target = records_by_citizen_id.get(civil_record.citizen_id)
+        if target is None and civil_record.name_key:
+            target = records_by_name.get(civil_record.name_key)
+        if target is None:
+            target = _civil_registration_only_record(civil_record, operation_type)
+            records.append(target)
+        else:
+            _attach_civil_registration(target, civil_record)
+        if target.citizen_id:
+            records_by_citizen_id[target.citizen_id] = target
+        if target.student_no:
+            records_by_student_no[target.student_no] = target
+        if target.first_name or target.last_name:
+            records_by_name[normalized_name(target.first_name, target.last_name)] = target
+
     ocr_attached = 0
     ocr_unmatched = 0
     for ocr_record in ocr_records:
@@ -1428,6 +1572,8 @@ def _selected_basis(field_name: str, source: SourceType | None) -> str:
         return "ยึด CSV เครื่องสแกนบัตร เพราะเป็นข้อมูลจากบัตรประชาชนและมีความน่าเชื่อถือสูงกว่า OCR"
     if source == "ocr_form":
         return "ยึด OCR แบบฟอร์ม เพราะเป็นข้อมูลที่นักเรียนกรอกในแบบฟอร์ม DMC และไม่มีแหล่งที่น่าเชื่อถือกว่ามาทับ"
+    if source == "civil_registration":
+        return "ยึด OCR สำเนาทะเบียนบ้าน เพราะตัวเลขทะเบียนบ้าน เลขบัตรผู้ปกครอง และชื่อบิดามารดามาจากเอกสารทะเบียนราษฎร"
     if source == "manual":
         return "ยึดค่าที่ผู้ใช้เลือกในหน้าจอสร้างไฟล์"
     return "ยังระบุแหล่งหลักไม่ได้ ต้องตรวจข้อมูลด้วยผู้ใช้"
@@ -1595,6 +1741,64 @@ def _attach_ocr(record: CanonicalStudentRecord, ocr_record: OcrFormRecord) -> No
         record.dmc_fields.setdefault(field_name, field_value)
 
 
+def _attach_civil_registration(record: CanonicalStudentRecord, civil_record: CivilRegistrationRecord) -> None:
+    record.sources.append(SourceReference(source="civil_registration", source_path=civil_record.source_path))
+    if civil_record.citizen_id:
+        if record.citizen_id and record.citizen_id != civil_record.citizen_id:
+            _add_reason(record, "civil_registration_conflicts_with_citizen_id")
+            if record.match_status == "auto_matched":
+                record.match_status = "needs_review"
+            _add_field_conflict(
+                record,
+                field_name="citizen_id",
+                reason="civil_registration_conflicts_with_citizen_id",
+                source_fields=[_field(record.citizen_id, _selected_import_source(record, "citizen_id") or "manual", "high"), civil_record.fields["citizen_id"]],
+            )
+        else:
+            record.citizen_id = civil_record.citizen_id
+    for field_name, field_value in civil_record.fields.items():
+        if field_value.value is None:
+            continue
+        if field_name in {"prefix", "first_name", "last_name"}:
+            if not getattr(record, field_name):
+                setattr(record, field_name, field_value.value)
+                record.dmc_fields[field_name] = field_value
+            continue
+        _merge_civil_registration_field(record, field_name, field_value)
+
+
+def _merge_civil_registration_field(
+    record: CanonicalStudentRecord,
+    field_name: str,
+    incoming: CurrentStudentField,
+) -> None:
+    existing = record.dmc_fields.get(field_name)
+    if existing is None or existing.value in {None, ""}:
+        record.dmc_fields[field_name] = incoming
+        return
+    if existing.value == incoming.value:
+        return
+    _add_field_conflict(
+        record,
+        field_name=field_name,
+        reason=f"civil_registration_conflicts_with_{field_name}",
+        source_fields=[existing, incoming],
+    )
+    if existing.source == "ocr_form":
+        record.dmc_fields[field_name] = incoming
+        return
+    if field_name in {
+        "registered_address.house_id",
+        "father.citizen_id",
+        "father.first_name",
+        "father.last_name",
+        "mother.citizen_id",
+        "mother.first_name",
+        "mother.last_name",
+    } and existing.source not in {"roster", "thai_id_scan"}:
+        record.dmc_fields[field_name] = incoming
+
+
 def _merge_authoritative_field(
     record: CanonicalStudentRecord,
     field_name: str,
@@ -1685,11 +1889,39 @@ def _ocr_only_record(ocr_record: OcrFormRecord, operation_type: OperationType) -
     )
 
 
+def _civil_registration_only_record(
+    civil_record: CivilRegistrationRecord,
+    operation_type: OperationType,
+) -> CanonicalStudentRecord:
+    reasons = ["civil_registration_not_linked_to_roster_or_thai_id_scan"]
+    status: MatchStatus = "new_or_transfer_candidate" if civil_record.citizen_id_valid else "invalid_id"
+    if not civil_record.citizen_id_valid:
+        reasons.append("invalid_or_missing_civil_registration_citizen_id")
+    return CanonicalStudentRecord(
+        record_id=f"civil:{Path(civil_record.source_path).name}:{civil_record.record_id}",
+        operation_type=operation_type,
+        match_status=status,
+        student_no=None,
+        citizen_id=civil_record.citizen_id,
+        grade=None,
+        room=None,
+        seat_no=None,
+        prefix=civil_record.prefix,
+        first_name=civil_record.first_name,
+        last_name=civil_record.last_name,
+        full_name=civil_record.full_name,
+        review_reasons=reasons,
+        dmc_fields=civil_record.fields,
+        sources=[SourceReference(source="civil_registration", source_path=civil_record.source_path)],
+    )
+
+
 def _summary(
     *,
     roster: list[RosterStudent],
     scans: list[ThaiIdScanRecord],
     ocr_records: list[OcrFormRecord],
+    civil_records: list[CivilRegistrationRecord],
     records: list[CanonicalStudentRecord],
     ocr_attached: int,
     ocr_unmatched: int,
@@ -1701,6 +1933,7 @@ def _summary(
         roster_records=len(roster),
         thai_id_scan_records=len(scans),
         ocr_form_records=len(ocr_records),
+        civil_registration_records=len(civil_records),
         records_total=len(records),
         auto_matched=status_counts["auto_matched"],
         needs_review=status_counts["needs_review"],
@@ -1853,6 +2086,58 @@ def _put_guardian_fields(
     _put_field(fields, f"{person}.occupation", _extract_between(segment, "อาชีพ*", ("รายได้ต่อเดือน",)), "ocr_form", "review")
     _put_field(fields, f"{person}.income_text", _extract_between(segment, "รายได้ต่อเดือน(บาท)*", ("หมายเลขโทรศัพท์",)), "ocr_form", "review")
     _put_field(fields, f"{person}.phone", _phone_text(segment), "ocr_form", "review")
+
+
+def _put_civil_parent_fields(
+    fields: dict[str, CurrentStudentField],
+    text: str,
+    *,
+    person: Literal["father", "mother"],
+    marker: str,
+) -> None:
+    pattern = rf"{re.escape(marker)}\s+ชื่อ\s+(.+?)\s+เลขประจำตัวประชาชน\s+([0-9][0-9\-\s]{{10,}})(?:\s+สัญชาติ|\s+สถานภาพ|$)"
+    match = re.search(pattern, text)
+    if match is None:
+        return
+    _prefix, first_name, last_name = _split_civil_name(match.group(1))
+    _put_field(fields, f"{person}.citizen_id", _clean_citizen_id(match.group(2)), "civil_registration", "high")
+    _put_field(fields, f"{person}.first_name", first_name, "civil_registration", "high")
+    _put_field(fields, f"{person}.last_name", last_name, "civil_registration", "high")
+
+
+def _split_civil_name(value: str | None) -> tuple[str | None, str | None, str | None]:
+    text = _clean_text(value)
+    if not text:
+        return None, None, None
+    prefix: str | None = None
+    for candidate in TITLE_PREFIXES:
+        compact_candidate = candidate.replace(".", "")
+        if text.startswith(candidate):
+            prefix = candidate
+            text = text[len(candidate) :].strip()
+            break
+        if text.startswith(compact_candidate):
+            prefix = candidate
+            text = text[len(compact_candidate) :].strip()
+            break
+    parts = [part for part in re.split(r"\s+", text) if part]
+    if not parts:
+        return prefix, None, None
+    if len(parts) == 1:
+        return prefix, parts[0], None
+    return prefix, parts[0], " ".join(parts[1:])
+
+
+def _regex_first(text: str, pattern: str) -> str | None:
+    match = re.search(pattern, text)
+    return _none_if_empty(match.group(1)) if match is not None else None
+
+
+def _clean_house_id(value: str | None) -> str | None:
+    text = _clean_text(value)
+    if not text:
+        return None
+    return re.sub(r"\s+", "", text)
 
 
 def _person_label(person: Literal["father", "mother", "guardian"]) -> str:
