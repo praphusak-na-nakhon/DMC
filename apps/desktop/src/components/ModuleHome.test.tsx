@@ -90,6 +90,58 @@ function renderHomeWithAccountWarning() {
   render(<ModuleHome {...props} />);
 }
 
+function renderHomeWithSignedInAccount() {
+  const props = {
+    onOpenModule: vi.fn(),
+    updaterStatus: null,
+    availableUpdate: null,
+    updateMessage: null,
+    updateProgress: null,
+    isCheckingUpdate: false,
+    isInstallingUpdate: false,
+    connectionState: "ready" as const,
+    databaseStatus: null,
+    accountStatus: {
+      signed_in: true,
+      user_id: "user-1",
+      email: "teacher@example.test",
+      display_name: "Teacher Demo",
+      status: "active",
+      token_expires_at: "2026-05-09T00:00:00Z",
+      last_checked_at: "2026-05-08T00:00:00Z",
+      wallet: {
+        user_id: "user-1",
+        balance: 20,
+        reserved: 5,
+        available: 15,
+      },
+      can_start_credit_jobs: true,
+      needs_attention: false,
+      message: null,
+      last_error: null,
+    },
+    errorMessage: null,
+    accountEmail: "",
+    accountPassword: "",
+    isSigningIn: false,
+    isCreatingBackup: false,
+    isRestoringBackup: false,
+    isExportingDiagnostics: false,
+    onAccountEmailChange: vi.fn(),
+    onAccountPasswordChange: vi.fn(),
+    onSignIn: vi.fn(),
+    onSignOut: vi.fn(),
+    onRefreshWallet: vi.fn(),
+    onCheckForUpdates: vi.fn(),
+    onInstallUpdate: vi.fn(),
+    onRefreshDatabaseStatus: vi.fn(),
+    onCreateBackup: vi.fn(),
+    onRestoreBackup: vi.fn(),
+    onExportDiagnostics: vi.fn(),
+  };
+  render(<ModuleHome {...props} />);
+}
+
 describe("ModuleHome", () => {
   it("renders all module entry points from i18n copy", () => {
     renderHome();
@@ -102,6 +154,11 @@ describe("ModuleHome", () => {
     expect(screen.getByText(messages.app.home.modules.currentStudents.title)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.graduation.title)).toBeInTheDocument();
     expect(screen.getAllByText(/ใช้เครดิต 1\/รายการ/)).toHaveLength(2);
+    expect(screen.getByText(messages.app.account.topup.title)).toBeInTheDocument();
+    for (const packageOption of messages.app.account.topup.packages) {
+      expect(screen.getByText(packageOption.name)).toBeInTheDocument();
+      expect(screen.getByText(packageOption.unitRate)).toBeInTheDocument();
+    }
     expect(screen.queryByText("License Activation")).not.toBeInTheDocument();
   });
 
@@ -122,6 +179,21 @@ describe("ModuleHome", () => {
     renderHomeWithAccountWarning();
 
     expect(screen.getByText(messages.app.account.errors.ACCOUNT_CLOUD_UNAVAILABLE)).toBeInTheDocument();
+  });
+
+  it("shows feedback after selecting a credit top-up package", () => {
+    renderHomeWithSignedInAccount();
+
+    const packageOption = messages.app.account.topup.packages[1];
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: `${messages.app.account.topup.cta} ${packageOption.name}`,
+      }),
+    );
+
+    expect(
+      screen.getByText(messages.app.account.topup.selectedMessage.replace("{name}", packageOption.name)),
+    ).toBeInTheDocument();
   });
 
   it("shows global login and cloud errors on the home screen", () => {

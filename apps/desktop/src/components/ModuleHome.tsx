@@ -1,4 +1,5 @@
-import { Loader2, LogIn, LogOut, RefreshCw, UploadCloud, WalletCards } from "lucide-react";
+import { useState } from "react";
+import { BadgePercent, CheckCircle2, Loader2, LogIn, LogOut, RefreshCw, UploadCloud, WalletCards } from "lucide-react";
 import messages from "../i18n/th.json";
 import { formatTimestamp } from "../lib/appUi";
 import { describeAccountCode } from "../lib/errorMessages";
@@ -74,11 +75,14 @@ export function ModuleHome({
 }: ModuleHomeProps) {
   const home = messages.app.home;
   const account = messages.app.account;
+  const [selectedTopupPackageId, setSelectedTopupPackageId] = useState<string | null>(null);
   const wallet = accountStatus?.wallet ?? null;
   const accountWarningCode =
     accountStatus?.last_error ??
     (accountStatus?.signed_in && accountStatus.needs_attention ? accountStatus.message : null);
   const accountWarning = describeAccountCode(accountWarningCode) ?? accountWarningCode ?? null;
+  const selectedTopupPackage =
+    account.topup.packages.find((packageOption) => packageOption.id === selectedTopupPackageId) ?? null;
 
   return (
     <div className="space-y-6">
@@ -173,6 +177,78 @@ export function ModuleHome({
                 {account.signIn}
               </Button>
             )}
+          </div>
+
+          <div className="min-w-0 border-t pt-4 lg:col-span-2">
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <BadgePercent className="h-4 w-4 text-muted-foreground" />
+                  <h2 className="text-lg font-semibold tracking-normal">{account.topup.title}</h2>
+                </div>
+                <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+                  {account.topup.description}
+                </p>
+              </div>
+              <Badge variant="outline" className="w-fit">
+                {account.topup.paymentMode}
+              </Badge>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-3">
+              {account.topup.packages.map((packageOption, index) => {
+                const isSelected = packageOption.id === selectedTopupPackageId;
+                return (
+                  <div
+                    key={packageOption.id}
+                    className={`flex min-h-[250px] min-w-0 flex-col rounded-lg border bg-background p-4 transition-colors ${
+                      isSelected ? "border-primary bg-muted/30" : "hover:border-primary/40"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 font-semibold">{packageOption.name}</div>
+                      <Badge variant={index === 0 ? "secondary" : "default"} className="shrink-0">
+                        {packageOption.badge}
+                      </Badge>
+                    </div>
+                    <div className="mt-4 flex items-end gap-2">
+                      <span className="text-3xl font-bold leading-none">{packageOption.credits}</span>
+                      <span className="text-sm text-muted-foreground">{account.topup.creditsUnit}</span>
+                    </div>
+                    <div className="mt-2 text-sm text-muted-foreground">
+                      <span className="text-xl font-semibold text-foreground">{packageOption.price}</span>{" "}
+                      {account.topup.bahtUnit}
+                    </div>
+                    <div className="mt-3 rounded-md bg-muted px-3 py-2 text-sm font-medium">
+                      {packageOption.unitRate}
+                    </div>
+                    <p className="mt-3 flex-1 text-sm leading-6 text-muted-foreground">
+                      {packageOption.description}
+                    </p>
+                    <Button
+                      className="mt-4 w-full"
+                      variant={isSelected ? "secondary" : index === 0 ? "outline" : "default"}
+                      disabled={!accountStatus?.signed_in}
+                      onClick={() => setSelectedTopupPackageId(packageOption.id)}
+                      aria-label={`${account.topup.cta} ${packageOption.name}`}
+                    >
+                      {isSelected ? <CheckCircle2 className="h-4 w-4" /> : <WalletCards className="h-4 w-4" />}
+                      {isSelected ? account.topup.selectedCta : account.topup.cta}
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+
+            {selectedTopupPackage ? (
+              <Alert className="mt-3">
+                <AlertDescription>
+                  {account.topup.selectedMessage.replace("{name}", selectedTopupPackage.name)}
+                </AlertDescription>
+              </Alert>
+            ) : !accountStatus?.signed_in ? (
+              <p className="mt-3 text-sm text-muted-foreground">{account.topup.signedOutNotice}</p>
+            ) : null}
           </div>
         </CardContent>
       </Card>
