@@ -1,6 +1,5 @@
 import {
   AlertTriangle,
-  ArrowLeft,
   ChevronDown,
   ChevronRight,
   FileCheck2,
@@ -28,6 +27,8 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Progress } from "./ui/progress";
 import { AlertDialog } from "./ui/alert-dialog";
+import { PageHeader } from "./PageHeader";
+import { SystemErrorAlert } from "./SystemErrorAlert";
 
 type PsarReadinessPageProps = {
   onBackHome: () => void;
@@ -251,32 +252,15 @@ export function PsarReadinessPage({ onBackHome, onRevealPath }: PsarReadinessPag
           void runGenerateReport();
         }}
       />
-      <header className="flex flex-col gap-4 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <Button variant="outline" size="sm" onClick={onBackHome}>
-            <ArrowLeft className="h-4 w-4" />
-            กลับหน้าหลัก
-          </Button>
-          <div className="mt-5 flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-lg border bg-background">
-              <FileSearch className="h-6 w-6 text-primary" />
-            </div>
-            <div>
-              <Badge variant="default">แดชบอร์ดตรวจความพร้อม</Badge>
-              <h1 className="mt-2 text-3xl font-bold tracking-normal">ตรวจความพร้อม P-SAR</h1>
-              <p className="mt-2 max-w-3xl text-muted-foreground">
-                ระบบช่วยตรวจว่าหลักฐานที่อัปโหลดครอบคลุมหัวข้อ P-SAR แค่ไหน ผลนี้เป็นตัวช่วยเตรียมงาน ไม่ใช่การอนุมัติรายงานอย่างเป็นทางการ
-              </p>
-            </div>
-          </div>
-        </div>
-      </header>
+      <PageHeader
+        onBackHome={onBackHome}
+        badge="แดชบอร์ดตรวจความพร้อม"
+        title="ตรวจความพร้อม P-SAR"
+        description="ระบบช่วยตรวจว่าหลักฐานที่อัปโหลดครอบคลุมหัวข้อ P-SAR แค่ไหน ผลนี้เป็นตัวช่วยเตรียมงาน ไม่ใช่การอนุมัติรายงานอย่างเป็นทางการ"
+        icon={<FileSearch className="h-5 w-5 text-primary" />}
+      />
 
-      {errorMessage ? (
-        <Alert variant="destructive">
-          <AlertDescription>{errorMessage}</AlertDescription>
-        </Alert>
-      ) : null}
+      {errorMessage ? <SystemErrorAlert message={errorMessage} onRetry={() => void loadReadiness(projectId)} /> : null}
 
       {notice ? (
         <Alert>
@@ -327,6 +311,9 @@ export function PsarReadinessPage({ onBackHome, onRevealPath }: PsarReadinessPag
                 สร้างแบบฟอร์ม P-SAR
               </Button>
             ) : null}
+            {!readiness ? (
+              <div className="text-sm text-muted-foreground">โหลดข้อมูลความพร้อมก่อนสร้างแบบฟอร์ม P-SAR</div>
+            ) : null}
             {generationNotice ? (
               <div className="flex flex-col gap-3 rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground lg:flex-row lg:items-center lg:justify-between">
                 <span className="break-words">{generationNotice}</span>
@@ -371,6 +358,9 @@ export function PsarReadinessPage({ onBackHome, onRevealPath }: PsarReadinessPag
               {isAddingEvidence ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
               อัปโหลดหลักฐาน
             </Button>
+            {!evidencePath.trim() ? (
+              <div className="text-sm text-muted-foreground">เลือกไฟล์หลักฐานก่อนอัปโหลดเข้ารายการตรวจ P-SAR</div>
+            ) : null}
           </CardContent>
         </Card>
       </section>

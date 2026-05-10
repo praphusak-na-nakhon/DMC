@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
-  ArrowLeft,
   Award,
   CheckCircle2,
   CloudCog,
@@ -9,7 +8,6 @@ import {
   FileDown,
   FileSpreadsheet,
   FolderOpen,
-  Grid3X3,
   Loader2,
   LogIn,
   Pause,
@@ -19,10 +17,10 @@ import {
   Square,
   Trash2,
   UploadCloud,
-  UserCircle2,
   UsersRound,
 } from "lucide-react";
 import messages from "../i18n/th.json";
+import { describeUserFacingError } from "../lib/errorMessages";
 import {
   describeBrowserRuntimePhase,
   describeCreditStatus,
@@ -41,6 +39,8 @@ import { Separator } from "./ui/separator";
 import { Switch } from "./ui/switch";
 import { ExistingJobsPanel } from "./ExistingJobsPanel";
 import { SidecarLogPanel } from "./SidecarLogPanel";
+import { PageHeader } from "./PageHeader";
+import { SystemErrorAlert } from "./SystemErrorAlert";
 import type {
   AccountStatus,
   BrowserRuntimeStatus,
@@ -139,7 +139,7 @@ function compactPath(path: string) {
 
 function StepBadge({ step }: { step: number }) {
   return (
-    <div className="absolute -left-5 -top-5 flex h-11 w-11 items-center justify-center rounded-full bg-blue-600 text-lg font-bold text-white shadow-lg shadow-blue-600/30 ring-4 ring-white">
+    <div className="absolute -left-3 -top-3 flex h-8 w-8 items-center justify-center rounded-full border bg-background text-sm font-bold shadow-sm">
       {step}
     </div>
   );
@@ -157,17 +157,11 @@ function WizardStep({
   return (
     <div
       data-wizard-step={number}
-      className={`relative flex min-h-16 min-w-[210px] flex-1 items-center justify-center px-5 text-center text-lg font-semibold transition ${
+      className={`relative flex min-h-12 min-w-0 items-center justify-center rounded-md border px-3 text-center text-sm font-semibold transition ${
         active
-          ? "bg-blue-600 text-white shadow-lg shadow-blue-600/20"
-          : "bg-blue-50 text-slate-900"
+          ? "border-primary bg-primary text-primary-foreground"
+          : "bg-background text-muted-foreground"
       }`}
-      style={{
-        clipPath:
-          number === 1
-            ? "polygon(0 0, calc(100% - 28px) 0, 100% 50%, calc(100% - 28px) 100%, 0 100%)"
-            : "polygon(0 0, calc(100% - 28px) 0, 100% 50%, calc(100% - 28px) 100%, 0 100%, 28px 50%)",
-      }}
     >
       <span>ขั้นที่ {number}: {label}</span>
     </div>
@@ -286,7 +280,7 @@ export function GraduationWizard({
       : `${currentJob?.processed ?? 0}/${currentJob?.total ?? "-"}`;
 
   const rowsForPreview = useMemo(() => preview?.preview.slice(0, 5) ?? [], [preview]);
-  const visibleErrorMessage = errorMessage?.includes("transformCallback") ? null : errorMessage;
+  const visibleErrorMessage = errorMessage ? describeUserFacingError(errorMessage) : null;
   const reportTools = messages.app.reportTools;
   const accountCopy = messages.app.account;
   const creditStatus = describeCreditStatus(currentJob?.credit_status);
@@ -296,6 +290,21 @@ export function GraduationWizard({
     danger: "border-destructive/30 bg-destructive/10 text-destructive",
     success: "border-emerald-200 bg-emerald-50 text-emerald-950",
   } as const;
+  const browseFileHint = !selectedGrade ? "เลือกชั้นปีก่อนเลือกไฟล์ Excel" : null;
+  const validateHint = !selectedGrade
+    ? "เลือกชั้นปีก่อนตรวจสอบข้อมูล"
+    : !excelPath.trim()
+      ? "เลือกไฟล์ Excel ก่อนตรวจสอบข้อมูล"
+      : null;
+  const startHint = !selectedGrade
+    ? "เลือกชั้นปีก่อนเริ่มส่งข้อมูล"
+    : validationBlocksStart
+      ? "ตรวจสอบไฟล์ Excel ให้ผ่านก่อนเริ่มส่งข้อมูล"
+      : browserRuntimeBlocksStart
+        ? "ติดตั้งหรือตรวจ Chromium runtime ให้พร้อมก่อนเริ่มงาน"
+        : accountBlocksStart
+          ? "ลงชื่อเข้าใช้และตรวจเครดิตก่อนเริ่มงานจริง"
+          : null;
 
   useEffect(() => {
     if (currentJob || preview) {
@@ -324,55 +333,40 @@ export function GraduationWizard({
   }, [activeStep]);
 
   return (
-    <div className="min-h-screen space-y-6 rounded-[28px] bg-gradient-to-br from-sky-50 via-white to-slate-100 p-3 text-slate-950 sm:p-5">
-      <header className="flex min-w-0 items-center justify-between gap-4 rounded-2xl border border-white/80 bg-white/90 px-4 py-3 shadow-sm backdrop-blur">
-        <div className="flex min-w-0 items-center gap-4">
-          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-600/25">
-            <Award className="h-8 w-8" />
-          </div>
-          <div className="min-w-0">
-            <div className="truncate text-2xl font-bold tracking-normal">
-              แอปกรอกข้อมูลนักเรียนจบการศึกษา (DMC)
-            </div>
-            <div className="mt-1 flex flex-wrap gap-2">
-              <SystemPill
-                label="ตัวเชื่อมระบบ"
-                value={connectionLabel(connectionState)}
-                tone={connectionState === "ready" ? "success" : connectionState === "error" ? "danger" : "warning"}
-              />
-              <SystemPill
-                label="บัญชี"
-                value={accountStatus?.signed_in ? accountStatus.email ?? "signed in" : accountCopy.signInRequired}
-                tone={accountReady ? "success" : "warning"}
-              />
-              <SystemPill
-                label="เครดิต"
-                value={accountStatus?.wallet ? `${accountStatus.wallet.available} พร้อมใช้` : "-"}
-                tone={accountStatus?.wallet && accountStatus.wallet.available > 0 ? "success" : "warning"}
-              />
-              <SystemPill
-                label="เบราว์เซอร์"
-                value={runtimeReady ? "พร้อม" : browserRuntimeStatus?.state ?? "ยังไม่ตรวจ"}
-                tone={runtimeReady ? "success" : "warning"}
-              />
-            </div>
-          </div>
-        </div>
+    <div className="space-y-6">
+      <PageHeader
+        onBackHome={onBackHome}
+        badge="ใช้เครดิต"
+        title="ข้อมูลสิ้นปีการศึกษา (สอบได้ เรียนจบ)"
+        description="ตรวจไฟล์ Excel, ทดสอบก่อนส่งจริง, กรอกข้อมูลจบการศึกษาใน DMC และสรุปรายงานหลังจบงาน"
+        icon={<Award className="h-5 w-5 text-primary" />}
+        status={
+          <>
+            <SystemPill
+              label="ตัวเชื่อมระบบ"
+              value={connectionLabel(connectionState)}
+              tone={connectionState === "ready" ? "success" : connectionState === "error" ? "danger" : "warning"}
+            />
+            <SystemPill
+              label="บัญชี"
+              value={accountStatus?.signed_in ? accountStatus.email ?? "signed in" : accountCopy.signInRequired}
+              tone={accountReady ? "success" : "warning"}
+            />
+            <SystemPill
+              label="เครดิต"
+              value={accountStatus?.wallet ? `${accountStatus.wallet.available} พร้อมใช้` : "-"}
+              tone={accountStatus?.wallet && accountStatus.wallet.available > 0 ? "success" : "warning"}
+            />
+            <SystemPill
+              label="เบราว์เซอร์"
+              value={runtimeReady ? "พร้อม" : browserRuntimeStatus?.state ?? "ยังไม่ตรวจ"}
+              tone={runtimeReady ? "success" : "warning"}
+            />
+          </>
+        }
+      />
 
-        <div className="flex shrink-0 items-center gap-2">
-          <Button variant="outline" size="icon" onClick={onBackHome} title="กลับหน้าหลัก">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" size="icon" title="เมนูระบบ">
-            <Grid3X3 className="h-5 w-5" />
-          </Button>
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400">
-            <UserCircle2 className="h-8 w-8" />
-          </div>
-        </div>
-      </header>
-
-      <div className="flex min-w-0 gap-1 overflow-x-auto px-1 pb-1">
+      <div className="grid min-w-0 gap-2 sm:grid-cols-4">
         <WizardStep number={1} label="เลือกชั้นปี" active={activeStep === 1} />
         <WizardStep number={2} label="อัปโหลดไฟล์" active={activeStep === 2} />
         <WizardStep number={3} label="ตรวจสอบข้อมูล" active={activeStep === 3} />
@@ -380,7 +374,7 @@ export function GraduationWizard({
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
-        <Card className="relative overflow-visible rounded-2xl border-slate-200 bg-white/95 shadow-md shadow-slate-200/60">
+        <Card className="relative overflow-visible">
           <div id="wizard-step-1" className="absolute -top-6" />
           <StepBadge step={1} />
           <CardHeader className="pb-3">
@@ -400,49 +394,49 @@ export function GraduationWizard({
                   }}
                   className={`min-h-[190px] rounded-xl border p-5 text-center transition ${
                     selected
-                      ? "border-blue-500 bg-blue-50 shadow-[0_0_0_2px_rgba(37,99,235,0.12)]"
-                      : "border-slate-200 bg-white hover:border-blue-300"
+                      ? "border-primary bg-muted shadow-[0_0_0_2px_hsl(var(--primary)/0.12)]"
+                      : "border-border bg-background hover:border-primary/40"
                   }`}
                 >
-                  <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-100 text-blue-700">
+                  <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-lg border bg-muted text-primary">
                     <UsersRound className="h-9 w-9" />
                   </div>
                   <div className="text-xl font-bold">{option.title}</div>
-                  <div className="mt-2 text-base leading-7 text-slate-600">{option.subtitle}</div>
-                  <Badge className="mt-4 bg-blue-600">{option.badge}</Badge>
+                  <div className="mt-2 text-base leading-7 text-muted-foreground">{option.subtitle}</div>
+                  <Badge className="mt-4">{option.badge}</Badge>
                 </button>
               );
             })}
           </CardContent>
         </Card>
 
-        <Card className="relative overflow-visible rounded-2xl border-slate-200 bg-white/95 shadow-md shadow-slate-200/60">
+        <Card className="relative overflow-visible">
           <div id="wizard-step-2" className="absolute -top-6" />
           <StepBadge step={2} />
           <CardHeader className="pb-3">
             <CardTitle className="text-2xl">ดาวน์โหลดฟอร์ม & อัปโหลดไฟล์</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4 lg:grid-cols-2">
-            <div className="flex min-h-[210px] flex-col items-center justify-center rounded-xl bg-blue-50 p-5 text-center">
-              <div className="mb-4 flex h-16 w-20 items-center justify-center rounded-full bg-blue-600 text-white shadow-lg shadow-blue-600/25">
+            <div className="flex min-h-[210px] flex-col items-center justify-center rounded-lg border bg-muted/40 p-5 text-center">
+              <div className="mb-4 flex h-14 w-16 items-center justify-center rounded-lg border bg-background text-primary">
                 <FileDown className="h-9 w-9" />
               </div>
-              <div className="text-xl font-bold">ดาวน์โหลดไฟล์ Template (.xlsx)</div>
-              <div className="mt-2 text-slate-600">เตรียมไฟล์ต้นแบบสำหรับกรอกข้อมูลนักเรียน</div>
+              <div className="text-xl font-bold">ดาวน์โหลดไฟล์ต้นแบบ (.xlsx)</div>
+              <div className="mt-2 text-muted-foreground">เตรียมไฟล์ต้นแบบสำหรับกรอกข้อมูลนักเรียน</div>
               <Button className="mt-5" variant="outline" onClick={onDownloadTemplate} disabled={isDownloadingTemplate}>
                 {isDownloadingTemplate ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <FileSpreadsheet className="h-4 w-4" />
                 )}
-                ดาวน์โหลด Template
+                ดาวน์โหลดไฟล์ต้นแบบ
               </Button>
             </div>
 
-            <div className="flex min-h-[210px] flex-col items-center justify-center rounded-xl border border-slate-200 bg-white p-5 text-center">
+            <div className="flex min-h-[210px] flex-col items-center justify-center rounded-lg border bg-background p-5 text-center">
               <UploadCloud className="mb-4 h-16 w-16 text-emerald-600" />
               <div className="text-xl font-bold">เลือกไฟล์ Excel</div>
-              <div className="mt-2 max-w-full break-words text-slate-600">
+              <div className="mt-2 max-w-full break-words text-muted-foreground">
                 {fileName}
                 {preview ? ` (${preview.rows_accepted}/${preview.rows_total} คน)` : ""}
               </div>
@@ -463,20 +457,21 @@ export function GraduationWizard({
                   เลือกไฟล์
                 </Button>
               </div>
+              {browseFileHint ? <div className="mt-3 text-sm text-muted-foreground">{browseFileHint}</div> : null}
             </div>
           </CardContent>
         </Card>
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.65fr)]">
-        <Card className="relative overflow-visible rounded-2xl border-slate-200 bg-white/95 shadow-md shadow-slate-200/60">
+        <Card className="relative overflow-visible">
           <div id="wizard-step-3" className="absolute -top-6" />
           <StepBadge step={3} />
           <CardHeader className="pb-3">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <CardTitle className="text-2xl">ตรวจสอบข้อมูล</CardTitle>
-                <div className="mt-2 text-sm text-slate-600">
+                <div className="mt-2 text-sm text-muted-foreground">
                   {preview
                     ? `${detectedLevel} · รับข้อมูลได้ ${preview.rows_accepted} จากทั้งหมด ${preview.rows_total} แถว`
                     : "เลือกไฟล์แล้วกดตรวจสอบ เพื่อดูตัวอย่างก่อนส่งข้อมูลเข้า DMC"}
@@ -486,13 +481,14 @@ export function GraduationWizard({
                 {isValidating ? <Loader2 className="h-4 w-4 animate-spin" /> : <SearchCheck className="h-4 w-4" />}
                 ตรวจสอบข้อมูล
               </Button>
+              {validateHint ? <div className="text-sm text-muted-foreground lg:text-right">{validateHint}</div> : null}
             </div>
           </CardHeader>
           <CardContent>
             {preview ? (
-              <div className="overflow-hidden rounded-xl border border-slate-200">
+              <div className="overflow-auto rounded-lg border">
                 <table className="w-full min-w-[760px] border-collapse text-base">
-                  <thead className="bg-slate-50 text-left">
+                  <thead className="bg-muted/50 text-left">
                     <tr>
                       <th className="px-5 py-4 font-semibold">เลขประจำตัว</th>
                       <th className="px-5 py-4 font-semibold">ชื่อ-นามสกุล</th>
@@ -502,12 +498,12 @@ export function GraduationWizard({
                   </thead>
                   <tbody>
                     {rowsForPreview.map((row) => (
-                      <tr key={`${row.order}-${row.student_no}`} className="border-t border-slate-100">
+                      <tr key={`${row.order}-${row.student_no}`} className="border-t">
                         <td className="px-5 py-4 font-medium">{row.student_no}</td>
                         <td className="px-5 py-4">
                           {row.first_name} {row.last_name}
                         </td>
-                        <td className="px-5 py-4 text-slate-600">{row.status_text}</td>
+                        <td className="px-5 py-4 text-muted-foreground">{row.status_text}</td>
                         <td className="px-5 py-4 text-right">
                           <Badge variant="outline">{row.status_code}</Badge>
                         </td>
@@ -517,15 +513,15 @@ export function GraduationWizard({
                 </table>
               </div>
             ) : (
-              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-slate-500">
-                ยังไม่มีข้อมูลตัวอย่าง
+              <div className="rounded-lg border border-dashed bg-muted/40 p-8 text-center text-muted-foreground">
+                ยังไม่มีข้อมูลตัวอย่าง เลือกชั้นปีและไฟล์ Excel แล้วกดตรวจสอบข้อมูล
               </div>
             )}
 
             {preview?.warnings.length ? (
               <Alert className="mt-4 border-amber-200 bg-amber-50 text-amber-900">
                 <AlertCircle className="h-4 w-4" />
-                <AlertTitle>มีรายการที่ควรตรวจสอบ {preview.warnings.length} รายการ</AlertTitle>
+                <AlertTitle>มีรายการที่ควรตรวจทาน {preview.warnings.length} รายการ</AlertTitle>
                 <AlertDescription className="mt-2 grid gap-1">
                   {preview.warnings.slice(0, 4).map((warning) => (
                     <div key={`${warning.code}-${warning.row_index}`}>
@@ -537,13 +533,13 @@ export function GraduationWizard({
             ) : preview ? (
               <Alert className="mt-4 border-emerald-200 bg-emerald-50 text-emerald-900">
                 <CheckCircle2 className="h-4 w-4" />
-                <AlertTitle>ไม่พบ warning จากไฟล์นี้</AlertTitle>
+                <AlertTitle>ไม่พบคำเตือนจากไฟล์นี้</AlertTitle>
               </Alert>
             ) : null}
           </CardContent>
         </Card>
 
-        <Card className="relative overflow-visible rounded-2xl border-slate-200 bg-white/95 shadow-md shadow-slate-200/60">
+        <Card className="relative overflow-visible">
           <div id="wizard-step-4" className="absolute -top-6" />
           <StepBadge step={4} />
           <CardHeader className="pb-3">
@@ -557,8 +553,8 @@ export function GraduationWizard({
                 คน
                 {totalRows !== null ? ` จาก ${totalRows} แถว` : ""}
               </div>
-              <div className="text-sm text-slate-600">ระดับชั้น: {detectedLevel}</div>
-              <div className="rounded-lg border bg-blue-50 px-3 py-2 text-sm text-blue-900">
+              <div className="text-sm text-muted-foreground">ระดับชั้น: {detectedLevel}</div>
+              <div className="rounded-lg border bg-muted/40 px-3 py-2 text-sm text-foreground">
                 งานจริงนี้จะกันเครดิตไว้ประมาณ {acceptedRows} เครดิต
                 {accountStatus?.wallet ? ` · ${accountCopy.availableCredits} ${accountStatus.wallet.available}` : ` · ${accountCopy.signInBeforeLive}`}
               </div>
@@ -572,7 +568,7 @@ export function GraduationWizard({
               <Progress value={currentJob ? progressPercent : 0} className="h-3" />
             </div>
 
-            <div className="grid gap-3 rounded-xl border bg-slate-50 p-4">
+            <div className="grid gap-3 rounded-lg border bg-muted/40 p-4">
               <div className="grid grid-cols-[1fr_auto] items-center gap-3">
                 <Label htmlFor="wizard-min-score">คะแนนจับคู่ขั้นต่ำ</Label>
                 <Input
@@ -612,30 +608,31 @@ export function GraduationWizard({
                 </Alert>
               ) : null}
               <Button
-                className="h-16 bg-blue-600 text-lg hover:bg-blue-700"
+                className="h-11"
                 disabled={!canStart}
                 onClick={onStartLive}
               >
-                <RefreshCw className="h-7 w-7" />
+                <RefreshCw className="h-4 w-4" />
                 เริ่มส่งข้อมูลเข้า DMC
               </Button>
+              {startHint ? <div className="text-sm text-muted-foreground">{startHint}</div> : null}
               {showDryRun ? (
                 <Button variant="outline" disabled={!canDryRun} onClick={onStartDryRun}>
                   <FileCheck2 className="h-4 w-4" />
-                  เริ่ม Dry Run ก่อนส่งจริง
+                  ทดสอบก่อนส่งจริง
                 </Button>
               ) : null}
             </div>
 
             <div className="space-y-2">
               <Progress value={progressPercent} className="h-2" />
-              <div className="text-center text-sm text-slate-600">
+              <div className="text-center text-sm text-muted-foreground">
                 {currentJob ? `อัปโหลดข้อมูลคนที่ ${processedLabel}` : "ยังไม่มีงานที่กำลังทำ"}
               </div>
             </div>
 
             {currentJob ? (
-              <div className="grid gap-2 rounded-xl border bg-white p-4 text-sm">
+              <div className="grid gap-2 rounded-lg border bg-background p-4 text-sm">
                 <div className="flex items-center justify-between gap-3">
                   <span className="font-semibold">สถานะ</span>
                   <Badge variant="outline">{describeJobStatus(currentJob.status)}</Badge>
@@ -653,8 +650,8 @@ export function GraduationWizard({
                 {runSummary ? (
                   <>
                     <Separator />
-                    <div>DMC rows ทั้งหมด: {runSummary.dmc_rows_total}</div>
-                    <div>matched จาก Excel: {runSummary.matched_from_excel}</div>
+                    <div>แถวใน DMC ทั้งหมด: {runSummary.dmc_rows_total}</div>
+                    <div>จับคู่จาก Excel: {runSummary.matched_from_excel}</div>
                     <div>default 207: {runSummary.default_207}</div>
                     <div>Excel ไม่พบใน DMC: {runSummary.excel_missing}</div>
                   </>
@@ -681,9 +678,9 @@ export function GraduationWizard({
               </Button>
             </div>
 
-            <div className="rounded-xl border bg-white p-4">
+            <div className="rounded-lg border bg-background p-4">
               <div className="font-semibold">{reportTools.title}</div>
-              <div className="mt-1 text-sm text-slate-600">
+              <div className="mt-1 text-sm text-muted-foreground">
                 {reportTools.description}
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
@@ -713,9 +710,7 @@ export function GraduationWizard({
       </div>
 
       {visibleErrorMessage ? (
-        <Alert variant="destructive">
-          <AlertDescription className="break-words">{visibleErrorMessage}</AlertDescription>
-        </Alert>
+        <SystemErrorAlert message={visibleErrorMessage} onRetry={onConnect} />
       ) : null}
       {supportMessage ? (
         <Alert>
@@ -723,12 +718,12 @@ export function GraduationWizard({
         </Alert>
       ) : null}
 
-      <Card className="rounded-2xl border-slate-200 bg-white/95 shadow-sm">
+      <Card>
         <CardHeader className="pb-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <CardTitle>เครื่องมือเพิ่มเติม</CardTitle>
-              <div className="mt-1 text-sm text-slate-600">
+              <div className="mt-1 text-sm text-muted-foreground">
                 การตั้งค่า, ประวัติการใช้งาน และข้อความจากตัวเชื่อมระบบ
               </div>
             </div>
@@ -762,31 +757,31 @@ export function GraduationWizard({
 
             {supportSection === "settings" ? (
               <div className="grid gap-4 lg:grid-cols-3">
-                <div className="space-y-3 rounded-xl border bg-slate-50 p-4">
+                <div className="space-y-3 rounded-lg border bg-muted/40 p-4">
                   <div className="font-semibold">เชื่อมต่อตัวเชื่อมระบบ</div>
-                  <div className="text-sm text-slate-600">{connectionLabel(connectionState)}</div>
+                  <div className="text-sm text-muted-foreground">{connectionLabel(connectionState)}</div>
                   <Button className="w-full" variant="outline" onClick={onConnect} disabled={connectionState === "connecting"}>
                     {connectionState === "connecting" ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                     เชื่อมต่อระบบ
                   </Button>
                 </div>
 
-                <div className="space-y-3 rounded-xl border bg-slate-50 p-4">
+                <div className="space-y-3 rounded-lg border bg-muted/40 p-4">
                   <div className="font-semibold">บัญชีและเครดิต</div>
-                  <div className="text-sm text-slate-600">
+                  <div className="text-sm text-muted-foreground">
                     {accountStatus?.signed_in ? accountStatus.email : accountCopy.signInRequired}
                   </div>
                   <div className="grid grid-cols-3 gap-2 text-sm">
-                    <div className="rounded-lg border bg-white p-2">
-                      <div className="text-xs text-slate-500">เครดิตรวม</div>
+                    <div className="rounded-lg border bg-background p-2">
+                      <div className="text-xs text-muted-foreground">เครดิตรวม</div>
                       <div className="font-semibold">{accountStatus?.wallet?.balance ?? "-"}</div>
                     </div>
-                    <div className="rounded-lg border bg-white p-2">
-                      <div className="text-xs text-slate-500">กันไว้</div>
+                    <div className="rounded-lg border bg-background p-2">
+                      <div className="text-xs text-muted-foreground">กันไว้</div>
                       <div className="font-semibold">{accountStatus?.wallet?.reserved ?? "-"}</div>
                     </div>
-                    <div className="rounded-lg border bg-white p-2">
-                      <div className="text-xs text-slate-500">พร้อมใช้</div>
+                    <div className="rounded-lg border bg-background p-2">
+                      <div className="text-xs text-muted-foreground">พร้อมใช้</div>
                       <div className="font-semibold">{accountStatus?.wallet?.available ?? "-"}</div>
                     </div>
                   </div>
@@ -796,18 +791,18 @@ export function GraduationWizard({
                   </Button>
                 </div>
 
-                <div className="space-y-3 rounded-xl border bg-slate-50 p-4">
+                <div className="space-y-3 rounded-lg border bg-muted/40 p-4">
                   <div className="font-semibold">Config และ Chromium</div>
-                  <div className="text-sm text-slate-600">
+                  <div className="text-sm text-muted-foreground">
                     สถานะ config: {moduleConfigStatus ? `${moduleConfigStatus.version} (${moduleConfigStatus.source})` : "-"}
                   </div>
-                  <div className="text-sm text-slate-600">
+                  <div className="text-sm text-muted-foreground">
                     สถานะ runtime: {browserRuntimeStatus?.message ?? browserRuntimeStatus?.state ?? "-"}
                   </div>
                   {browserRuntimeProgress ? (
-                    <div className="rounded-lg border bg-white p-3 text-sm">
+                    <div className="rounded-lg border bg-background p-3 text-sm">
                       <div className="font-semibold">{describeBrowserRuntimePhase(browserRuntimeProgress.phase)}</div>
-                      <div className="mt-1 text-slate-600">{browserRuntimeProgress.message}</div>
+                      <div className="mt-1 text-muted-foreground">{browserRuntimeProgress.message}</div>
                       {browserRuntimeProgress.percent !== null ? (
                         <Progress className="mt-2" value={browserRuntimeProgress.percent} />
                       ) : null}
@@ -834,7 +829,7 @@ export function GraduationWizard({
                     )}
                   </div>
                   {browserRuntimeStatus?.estimated_download_bytes ? (
-                    <div className="text-xs text-slate-500">
+                    <div className="text-xs text-muted-foreground">
                       ขนาดดาวน์โหลด: {formatBytes(browserRuntimeStatus.estimated_download_bytes)}
                     </div>
                   ) : null}
@@ -860,8 +855,8 @@ export function GraduationWizard({
         ) : null}
       </Card>
 
-      <Card className="rounded-2xl border-slate-200 bg-white/80 px-4 py-3 text-xs text-slate-500">
-        สถานะล่าสุด: account checked {formatTimestamp(accountStatus?.last_checked_at ?? null)} · config checked{" "}
+      <Card className="px-4 py-3 text-xs text-muted-foreground">
+        สถานะล่าสุด: บัญชีตรวจเมื่อ {formatTimestamp(accountStatus?.last_checked_at ?? null)} · config ตรวจเมื่อ{" "}
         {formatTimestamp(moduleConfigStatus?.checked_at ?? null)}
       </Card>
     </div>

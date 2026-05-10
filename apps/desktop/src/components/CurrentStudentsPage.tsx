@@ -1,19 +1,22 @@
-import { AlertTriangle, ArrowLeft, CheckCircle2, Download, FileSpreadsheet, Loader2, Search, UploadCloud, UserPlus } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, FileSpreadsheet, Loader2, Search, UploadCloud, UserPlus } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { describeUserFacingError } from "../lib/errorMessages";
 import { exportCurrentStudentBlankForm, openExcelDialog, saveTemplateDialog, validateCurrentStudentImportForm } from "../lib/rpcClient";
 import type { CurrentStudentsImportRowPreview, ValidateCurrentStudentsImportFormResponse } from "../types/contracts";
-import { Alert, AlertDescription } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Progress } from "./ui/progress";
+import { PageHeader } from "./PageHeader";
+import { SystemErrorAlert } from "./SystemErrorAlert";
 
 type CurrentStudentsPageProps = {
   onBackHome: () => void;
   onRevealPath: (path: string) => void;
+  onRetryRuntime?: () => void;
 };
 
 const errorMessages: Record<string, string> = {
@@ -36,7 +39,11 @@ const issueLabels: Record<string, string> = {
   MISSING_LAST_NAME: "ยังไม่กรอกนามสกุล",
 };
 
-export function CurrentStudentsPage({ onBackHome, onRevealPath }: CurrentStudentsPageProps) {
+export function CurrentStudentsPage({
+  onBackHome,
+  onRevealPath,
+  onRetryRuntime,
+}: CurrentStudentsPageProps) {
   const [excelPath, setExcelPath] = useState("");
   const [blankFormPath, setBlankFormPath] = useState<string | null>(null);
   const [validation, setValidation] = useState<ValidateCurrentStudentsImportFormResponse | null>(null);
@@ -100,36 +107,21 @@ export function CurrentStudentsPage({ onBackHome, onRevealPath }: CurrentStudent
   function readableError(error: unknown): string {
     const raw = error instanceof Error ? error.message : String(error);
     const code = raw.match(/[A-Z][A-Z0-9_]+/)?.[0] ?? raw;
-    return errorMessages[code] ?? raw;
+    return errorMessages[code] ?? describeUserFacingError(error);
   }
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-4 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <Button variant="outline" size="sm" onClick={onBackHome}>
-            <ArrowLeft className="h-4 w-4" />
-            กลับหน้าหลัก
-          </Button>
-          <div className="mt-5 flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-lg border bg-background">
-              <UserPlus className="h-6 w-6 text-primary" />
-            </div>
-            <div>
-              <Badge variant="default">รับไฟล์พร้อมนำเข้า</Badge>
-              <h1 className="mt-2 text-3xl font-bold tracking-normal">นักเรียนปัจจุบัน (ย้ายเข้า/เพิ่มนักเรียน)</h1>
-              <p className="mt-2 max-w-3xl text-muted-foreground">
-                ดาวน์โหลดฟอร์มเปล่า หรืออัปโหลด Excel ที่กรอกครบแล้วจากเมนูแปลงฟอร์ม/จากผู้ใช้ เพื่อเตรียมตรวจข้อมูลก่อนนำเข้า DMC
-              </p>
-            </div>
-          </div>
-        </div>
-      </header>
+      <PageHeader
+        onBackHome={onBackHome}
+        badge="รับไฟล์พร้อมนำเข้า"
+        title="นักเรียนปัจจุบัน (ย้ายเข้า/เพิ่มนักเรียน)"
+        description="ดาวน์โหลดฟอร์มเปล่า หรืออัปโหลด Excel ที่กรอกครบแล้วจากเมนูแปลงฟอร์ม/จากผู้ใช้ เพื่อเตรียมตรวจข้อมูลก่อนนำเข้า DMC"
+        icon={<UserPlus className="h-5 w-5 text-primary" />}
+      />
 
       {errorMessage ? (
-        <Alert variant="destructive">
-          <AlertDescription>{errorMessage}</AlertDescription>
-        </Alert>
+        <SystemErrorAlert message={errorMessage} onRetry={onRetryRuntime} retryWhen="runtime" />
       ) : null}
 
       <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_390px]">
@@ -177,6 +169,9 @@ export function CurrentStudentsPage({ onBackHome, onRevealPath }: CurrentStudent
                 ตรวจไฟล์นำเข้า
               </Button>
             </div>
+            {!excelPath.trim() ? (
+              <div className="text-sm text-muted-foreground">เลือก Excel ที่กรอกข้อมูลครบแล้วก่อนตรวจไฟล์นำเข้า</div>
+            ) : null}
           </CardContent>
         </Card>
 
@@ -198,7 +193,9 @@ export function CurrentStudentsPage({ onBackHome, onRevealPath }: CurrentStudent
                 <SummaryRow label="ผิดรูปแบบ" value={`${validation.summary.invalid_rows}`} />
               </div>
             ) : (
-              <div className="text-sm text-muted-foreground">ยังไม่มีผลตรวจ</div>
+              <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+                ยังไม่มีผลตรวจ เลือกไฟล์ Excel แล้วกดตรวจไฟล์นำเข้าเพื่อดูสถานะ
+              </div>
             )}
           </CardContent>
         </Card>

@@ -112,6 +112,7 @@ def _account_credit_schema(connection: sqlite3.Connection) -> None:
             user_id TEXT NOT NULL,
             type TEXT NOT NULL,
             amount INTEGER NOT NULL,
+            requested_units INTEGER,
             reservation_id TEXT,
             job_id TEXT,
             module TEXT,
@@ -247,6 +248,15 @@ def _ocr_form_converter_requests(connection: sqlite3.Connection) -> None:
     )
 
 
+def _credit_transaction_requested_units_column(connection: sqlite3.Connection) -> None:
+    existing_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(credit_transactions)").fetchall()
+    }
+    if "requested_units" not in existing_columns:
+        connection.execute("ALTER TABLE credit_transactions ADD COLUMN requested_units INTEGER")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(version=1, name="baseline_schema", apply=_baseline_schema),
     Migration(version=2, name="add_indexes", apply=_add_indexes),
@@ -256,6 +266,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(version=6, name="telemetry_user_id_column", apply=_telemetry_user_id_column),
     Migration(version=7, name="rate_limit_events", apply=_rate_limit_events),
     Migration(version=8, name="ocr_form_converter_requests", apply=_ocr_form_converter_requests),
+    Migration(version=9, name="credit_transaction_requested_units_column", apply=_credit_transaction_requested_units_column),
 )
 
 _MIGRATION_LOCK = threading.Lock()

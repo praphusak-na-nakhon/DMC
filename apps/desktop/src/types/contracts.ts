@@ -733,18 +733,25 @@ function parseJobRunSummary(value: unknown, context = "job_run_summary"): JobRun
   const record = asRecord(value, context);
   return {
     dmc_rows_total: readNumber(record, "dmc_rows_total", context),
-    matched_from_excel: readNumber(record, "matched_from_excel", context),
-    default_207: readNumber(record, "default_207", context),
-    excel_missing: readNumber(record, "excel_missing", context),
-    review_rows: readNumber(record, "review_rows", context),
-    applied_rows: readNumber(record, "applied_rows", context),
-    dry_run_rows: readNumber(record, "dry_run_rows", context),
+    matched_from_excel: readOptionalNumber(record, "matched_from_excel", context) ?? 0,
+    default_207: readOptionalNumber(record, "default_207", context) ?? 0,
+    excel_missing: readOptionalNumber(record, "excel_missing", context) ?? 0,
+    review_rows: readOptionalNumber(record, "review_rows", context) ?? 0,
+    applied_rows: readOptionalNumber(record, "applied_rows", context) ?? 0,
+    dry_run_rows: readOptionalNumber(record, "dry_run_rows", context) ?? 0,
   };
 }
 
 function parseOptionalJobRunSummary(record: UnknownRecord, key: string, context: string): JobRunSummary | null {
   const value = readObjectOrNull(record, key, context);
-  return value ? parseJobRunSummary(value, `${context}.${key}`) : null;
+  if (!value) {
+    return null;
+  }
+  const summaryRecord = value as UnknownRecord;
+  if (typeof summaryRecord.dmc_rows_total !== "number" || Number.isNaN(summaryRecord.dmc_rows_total)) {
+    return null;
+  }
+  return parseJobRunSummary(value, `${context}.${key}`);
 }
 
 export function parseJobStatusSnapshot(value: unknown): JobStatusSnapshot {

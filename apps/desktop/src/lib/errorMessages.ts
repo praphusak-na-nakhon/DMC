@@ -15,6 +15,60 @@ const generalErrors: Record<string, string> = {
 };
 
 const errorMaps = [accountErrors, formConverterErrors, generalErrors];
+const desktopRuntimeRecoveryMessage =
+  "Desktop runtime ยังไม่เชื่อมต่อ ฟังก์ชันนี้ต้องเปิดผ่านหน้าต่าง DMC Assistant desktop ไม่ใช่ browser preview/localhost หากกำลังทดสอบให้รัน `corepack pnpm --dir apps/desktop exec tauri dev` แล้วใช้หน้าต่างแอปที่เด้งขึ้นมา หรือกดลองเชื่อมต่อใหม่";
+const sidecarRecoveryMessage =
+  "ตัวเชื่อมระบบยังไม่พร้อม กรุณากดลองเชื่อมต่อใหม่ หากยังไม่หายให้ปิดหน้าต่าง DMC Assistant แล้วรัน `corepack pnpm --dir apps/desktop exec tauri dev` ใหม่อีกครั้ง";
+const genericRecoveryMessage = "ระบบทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง หากยังเกิดซ้ำให้ส่ง diagnostics ให้ผู้ดูแล";
+
+export type RuntimeConnectionErrorKind = "desktop" | "sidecar";
+
+function includesAny(value: string, patterns: string[]): boolean {
+  return patterns.some((pattern) => value.includes(pattern));
+}
+
+export function getRuntimeConnectionErrorKind(error: unknown): RuntimeConnectionErrorKind | null {
+  const raw = error instanceof Error ? error.message : String(error);
+  const normalized = raw.toLowerCase();
+  const isOwnDesktopRecoveryMessage =
+    normalized.includes("desktop runtime") && normalized.includes("browser preview/localhost");
+  const isOwnSidecarRecoveryMessage = raw.includes("ตัวเชื่อมระบบยังไม่พร้อม");
+  if (
+    isOwnDesktopRecoveryMessage ||
+    includesAny(normalized, [
+      "desktop_runtime_unavailable",
+      "tauri ipc is not available",
+      "window.__tauri",
+      "__tauri",
+      "transformcallback",
+      "reading 'invoke'",
+      'reading "invoke"',
+      "invoke is not a function",
+      "invoke is undefined",
+    ])
+  ) {
+    return "desktop";
+  }
+  if (
+    isOwnSidecarRecoveryMessage ||
+    includesAny(normalized, [
+      "sidecar",
+      "timed out waiting for sidecar response",
+      "stdout closed before a response",
+      "stdin closed while writing",
+      "failed writing to sidecar stdin",
+      "no sidecar runtime candidate",
+      "could not start sidecar",
+    ])
+  ) {
+    return "sidecar";
+  }
+  return null;
+}
+
+export function isRuntimeConnectionError(error: unknown): boolean {
+  return getRuntimeConnectionErrorKind(error) !== null;
+}
 
 export function describeAccountCode(code: string | null | undefined): string | null {
   if (!code) {
@@ -37,12 +91,27 @@ export function describeErrorCode(code: string | null | undefined): string | nul
 
 export function describeUserFacingError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
+  const runtimeKind = getRuntimeConnectionErrorKind(raw);
+  if (runtimeKind === "desktop") {
+    return desktopRuntimeRecoveryMessage;
+  }
+  if (runtimeKind === "sidecar") {
+    return sidecarRecoveryMessage;
+  }
   for (const mapping of errorMaps) {
     for (const [code, message] of Object.entries(mapping)) {
       if (raw.includes(code)) {
         return message;
       }
     }
+  }
+  if (
+    raw.includes("Cannot read properties") ||
+    raw.includes("TypeError") ||
+    raw.includes("undefined") ||
+    raw.includes("null")
+  ) {
+    return genericRecoveryMessage;
   }
   return raw;
 }

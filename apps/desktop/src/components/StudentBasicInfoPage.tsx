@@ -1,18 +1,20 @@
-import { ArrowLeft, Download, FileSpreadsheet, Loader2, UploadCloud } from "lucide-react";
+import { Download, FileSpreadsheet, Loader2, UploadCloud } from "lucide-react";
 import { useMemo, useState } from "react";
+import { describeUserFacingError } from "../lib/errorMessages";
 import { exportStudentBasicInfoForm, openExcelDialog } from "../lib/rpcClient";
 import type { ExportStudentBasicInfoFormResponse } from "../types/contracts";
-import { Alert, AlertDescription } from "./ui/alert";
-import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Progress } from "./ui/progress";
+import { PageHeader } from "./PageHeader";
+import { SystemErrorAlert } from "./SystemErrorAlert";
 
 type StudentBasicInfoPageProps = {
   onBackHome: () => void;
   onRevealPath: (path: string) => void;
+  onRetryRuntime?: () => void;
 };
 
 const errorMessages: Record<string, string> = {
@@ -25,7 +27,11 @@ const errorMessages: Record<string, string> = {
   STUDENT_BASIC_INFO_NO_ROWS: "ไม่พบข้อมูลนักเรียนในไฟล์ DMC",
 };
 
-export function StudentBasicInfoPage({ onBackHome, onRevealPath }: StudentBasicInfoPageProps) {
+export function StudentBasicInfoPage({
+  onBackHome,
+  onRevealPath,
+  onRetryRuntime,
+}: StudentBasicInfoPageProps) {
   const [excelPath, setExcelPath] = useState("");
   const [result, setResult] = useState<ExportStudentBasicInfoFormResponse | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -76,36 +82,21 @@ export function StudentBasicInfoPage({ onBackHome, onRevealPath }: StudentBasicI
   function readableError(error: unknown): string {
     const raw = error instanceof Error ? error.message : String(error);
     const code = raw.match(/[A-Z][A-Z0-9_]+/)?.[0] ?? raw;
-    return errorMessages[code] ?? raw;
+    return errorMessages[code] ?? describeUserFacingError(error);
   }
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-4 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <Button variant="outline" size="sm" onClick={onBackHome}>
-            <ArrowLeft className="h-4 w-4" />
-            กลับหน้าหลัก
-          </Button>
-          <div className="mt-5 flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-lg border bg-background">
-              <FileSpreadsheet className="h-6 w-6 text-primary" />
-            </div>
-            <div>
-              <Badge variant="default">พร้อมใช้งาน</Badge>
-              <h1 className="mt-2 text-3xl font-bold tracking-normal">บันทึกข้อมูลพื้นฐานนักเรียน(งานพยาบาล)</h1>
-              <p className="mt-2 max-w-3xl text-muted-foreground">
-                อัปโหลดไฟล์นักเรียนจาก DMC แล้วระบบจะสร้าง Excel ตามฟอร์ม แยกเป็นชีตตามระดับชั้นและห้องเรียน
-              </p>
-            </div>
-          </div>
-        </div>
-      </header>
+      <PageHeader
+        onBackHome={onBackHome}
+        badge="พร้อมใช้งาน"
+        title="บันทึกข้อมูลพื้นฐานนักเรียน (งานพยาบาล)"
+        description="อัปโหลดไฟล์นักเรียนจาก DMC แล้วระบบจะสร้าง Excel ตามฟอร์ม แยกเป็นชีตตามระดับชั้นและห้องเรียน"
+        icon={<FileSpreadsheet className="h-5 w-5 text-primary" />}
+      />
 
       {errorMessage ? (
-        <Alert variant="destructive">
-          <AlertDescription>{errorMessage}</AlertDescription>
-        </Alert>
+        <SystemErrorAlert message={errorMessage} onRetry={onRetryRuntime} retryWhen="runtime" />
       ) : null}
 
       <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -146,6 +137,9 @@ export function StudentBasicInfoPage({ onBackHome, onRevealPath }: StudentBasicI
                 </Button>
               ) : null}
             </div>
+            {!excelPath.trim() ? (
+              <div className="text-sm text-muted-foreground">เลือกไฟล์นักเรียนจาก DMC ก่อนสร้างไฟล์ตามฟอร์ม</div>
+            ) : null}
           </CardContent>
         </Card>
 
@@ -159,12 +153,18 @@ export function StudentBasicInfoPage({ onBackHome, onRevealPath }: StudentBasicI
           </CardHeader>
           <CardContent className="space-y-4">
             <Progress value={progress} />
-            <div className="grid gap-3 text-sm">
-              <SummaryRow label="นักเรียน" value={result ? String(result.students_exported) : "-"} />
-              <SummaryRow label="ระดับชั้น/ห้อง" value={result ? String(result.classes_exported) : "-"} />
-              <SummaryRow label="ปีการศึกษา" value={result?.school_year ?? "-"} />
-              <SummaryRow label="เทอม" value={result?.term ?? "-"} />
-            </div>
+            {result ? (
+              <div className="grid gap-3 text-sm">
+                <SummaryRow label="นักเรียน" value={String(result.students_exported)} />
+                <SummaryRow label="ระดับชั้น/ห้อง" value={String(result.classes_exported)} />
+                <SummaryRow label="ปีการศึกษา" value={result.school_year ?? "-"} />
+                <SummaryRow label="เทอม" value={result.term ?? "-"} />
+              </div>
+            ) : (
+              <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+                ยังไม่มีผลลัพธ์ เลือกไฟล์ Excel แล้วกดสร้างไฟล์ตามฟอร์มเพื่อดูสรุป
+              </div>
+            )}
           </CardContent>
         </Card>
       </section>

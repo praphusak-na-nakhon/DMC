@@ -8,7 +8,8 @@
     "packages/*"
   ],
   "scripts": {
-    "desktop:dev": "corepack pnpm --dir apps/desktop dev",
+    "desktop:dev": "corepack pnpm --dir apps/desktop exec tauri dev",
+    "desktop:web": "corepack pnpm --dir apps/desktop dev",
     "desktop:build": "corepack pnpm --dir apps/desktop build",
     "desktop:test": "corepack pnpm --dir apps/desktop test",
     "desktop:prepare-release-config": ".\\.venv\\Scripts\\python .\\scripts\\write_release_config.py --environment development",

@@ -47,6 +47,8 @@ import { CurrentStudentsPage } from "./components/CurrentStudentsPage";
 import { ModuleHome } from "./components/ModuleHome";
 import { PsarReadinessPage } from "./components/PsarReadinessPage";
 import { StudentBasicInfoPage } from "./components/StudentBasicInfoPage";
+import { AccountSignInPage } from "./components/AccountSignInPage";
+import { CreditTopupPage } from "./components/CreditTopupPage";
 import { AlertDialog } from "./components/ui/alert-dialog";
 import type { ModuleId } from "./lib/moduleCatalog";
 import type {
@@ -162,7 +164,7 @@ export function App() {
   const [updateProgress, setUpdateProgress] = useState<{ downloaded: number; contentLength: number | null } | null>(
     null,
   );
-  const [activeModule, setActiveModule] = useState<"home" | ModuleId>("home");
+  const [activeModule, setActiveModule] = useState<"home" | "signIn" | "credits" | ModuleId>("home");
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const mountedRef = useRef(false);
   const activeJobRef = useRef(false);
@@ -322,7 +324,7 @@ export function App() {
         return;
       }
       setConnectionState("error");
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setErrorMessage(toUserError(error));
     }
   }, [
     handleLoadBrowserRuntime,
@@ -355,6 +357,7 @@ export function App() {
       setAccountPassword("");
       pushSidecarMessage(`signed in: ${status.email ?? status.user_id ?? "-"}`);
       await handleLoadModuleCatalog();
+      setActiveModule("home");
     } catch (error) {
       setErrorMessage(toUserError(error));
     } finally {
@@ -461,7 +464,7 @@ export function App() {
         return;
       }
       const savedPath = await copyTemplateFile(outputPath);
-      setSupportMessage(`ดาวน์โหลดไฟล์ Template แล้ว: ${savedPath}`);
+      setSupportMessage(`ดาวน์โหลดไฟล์ต้นแบบแล้ว: ${savedPath}`);
       pushSidecarMessage(`template saved: ${savedPath}`);
       await revealPath(savedPath);
     } catch (error) {
@@ -1025,48 +1028,50 @@ export function App() {
         onConfirm={handleConfirmDialog}
       />
     ) : null}
-    <main className="min-h-screen overflow-x-hidden bg-background text-foreground">
-      <section className="mx-auto w-full max-w-[1440px] px-3 py-4 sm:px-5 lg:px-6">
+    <main className="min-h-screen overflow-x-hidden bg-[#f7faff] text-foreground">
+      <section className="mx-auto w-full max-w-[1600px] px-5 py-6 sm:px-8 lg:px-12">
         {activeModule === "home" ? (
           <ModuleHome
             onOpenModule={(moduleId) => setActiveModule(moduleId)}
-            updaterStatus={updaterStatus}
-            availableUpdate={availableUpdate}
-            updateMessage={updateMessage}
-            updateProgress={updateProgress}
-            isCheckingUpdate={isCheckingUpdate}
-            isInstallingUpdate={isInstallingUpdate}
             connectionState={connectionState}
-            databaseStatus={databaseStatus}
             accountStatus={accountStatus}
             errorMessage={errorMessage}
+            onOpenSignIn={() => setActiveModule("signIn")}
+            onOpenTopup={() => setActiveModule("credits")}
+            onSignOut={() => void handleSignOut()}
+            onRetryRuntime={() => void handleConnect()}
+          />
+        ) : activeModule === "credits" ? (
+          <CreditTopupPage
+            accountStatus={accountStatus}
+            onBackHome={() => setActiveModule("home")}
+            onOpenSignIn={() => setActiveModule("signIn")}
+          />
+        ) : activeModule === "signIn" ? (
+          <AccountSignInPage
+            accountStatus={accountStatus}
             accountEmail={accountEmail}
             accountPassword={accountPassword}
+            errorMessage={errorMessage}
             isSigningIn={isSigningIn}
-            isCreatingBackup={isCreatingBackup}
-            isRestoringBackup={isRestoringBackup}
-            isExportingDiagnostics={isExportingDiagnostics}
+            onBackHome={() => setActiveModule("home")}
             onAccountEmailChange={setAccountEmail}
             onAccountPasswordChange={setAccountPassword}
             onSignIn={() => void handleSignIn()}
             onSignOut={() => void handleSignOut()}
             onRefreshWallet={() => void handleRefreshAccount(true)}
-            onCheckForUpdates={() => void handleCheckForUpdates()}
-            onInstallUpdate={() => void handleInstallUpdate()}
-            onRefreshDatabaseStatus={() => void handleLoadDatabaseStatus()}
-            onCreateBackup={() => void handleCreateBackup()}
-            onRestoreBackup={() => void handleRestoreBackup()}
-            onExportDiagnostics={() => void handleExportDiagnostics()}
           />
         ) : activeModule === "formConverter" ? (
           <FormConverterPage
             onBackHome={() => setActiveModule("home")}
             onRevealPath={(path) => void handleRevealPath(path)}
+            onRetryRuntime={() => void handleConnect()}
           />
         ) : activeModule === "studentBasicInfo" ? (
           <StudentBasicInfoPage
             onBackHome={() => setActiveModule("home")}
             onRevealPath={(path) => void handleRevealPath(path)}
+            onRetryRuntime={() => void handleConnect()}
           />
         ) : activeModule === "psar" ? (
           <PsarReadinessPage
@@ -1077,6 +1082,7 @@ export function App() {
           <CurrentStudentsPage
             onBackHome={() => setActiveModule("home")}
             onRevealPath={(path) => void handleRevealPath(path)}
+            onRetryRuntime={() => void handleConnect()}
           />
         ) : (
           <GraduationWizard

@@ -85,6 +85,31 @@ export type JsonRpcFailure = {
 
 let requestCounter = 0;
 
+type TauriWindow = Window &
+  typeof globalThis & {
+    __TAURI_INTERNALS__?: unknown;
+  };
+
+export function isDesktopRuntimeAvailable(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  return Boolean((window as TauriWindow).__TAURI_INTERNALS__);
+}
+
+function desktopRuntimeUnavailableError(command: string): Error {
+  return new Error(
+    `DESKTOP_RUNTIME_UNAVAILABLE: Tauri IPC is not available for command "${command}". Open this feature in the DMC Assistant desktop window, not browser preview/localhost.`,
+  );
+}
+
+async function desktopInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (!isDesktopRuntimeAvailable()) {
+    throw desktopRuntimeUnavailableError(command);
+  }
+  return invoke<T>(command, args);
+}
+
 function buildRequest(method: string, params: Record<string, unknown>): JsonRpcRequest {
   requestCounter += 1;
   return {
@@ -100,75 +125,75 @@ async function sidecarRequest<T>(
   params: Record<string, unknown>,
 ): Promise<T> {
   const request = buildRequest(method, params);
-  return invoke<T>("rpc_request", {
+  return desktopInvoke<T>("rpc_request", {
     requestJson: JSON.stringify(request),
   });
 }
 
 export async function initializeSidecar(): Promise<void> {
-  await invoke("initialize_sidecar");
+  await desktopInvoke("initialize_sidecar");
 }
 
 export async function shutdownSidecar(): Promise<void> {
-  await invoke("shutdown_sidecar");
+  await desktopInvoke("shutdown_sidecar");
 }
 
 export async function openExcelDialog(): Promise<string | null> {
-  return invoke<string | null>("open_excel_dialog");
+  return desktopInvoke<string | null>("open_excel_dialog");
 }
 
 export async function openCsvDialog(): Promise<string | null> {
-  return invoke<string | null>("open_csv_dialog");
+  return desktopInvoke<string | null>("open_csv_dialog");
 }
 
 export async function openMarkdownDialog(): Promise<string | null> {
-  return invoke<string | null>("open_markdown_dialog");
+  return desktopInvoke<string | null>("open_markdown_dialog");
 }
 
 export async function openEvidenceDialog(): Promise<string | null> {
-  return invoke<string | null>("open_evidence_dialog");
+  return desktopInvoke<string | null>("open_evidence_dialog");
 }
 
 export async function openBackupArchiveDialog(): Promise<string | null> {
-  return invoke<string | null>("open_backup_archive_dialog");
+  return desktopInvoke<string | null>("open_backup_archive_dialog");
 }
 
 export async function saveBackupDialog(defaultName?: string): Promise<string | null> {
-  return invoke<string | null>("save_backup_dialog", { defaultName });
+  return desktopInvoke<string | null>("save_backup_dialog", { defaultName });
 }
 
 export async function saveDiagnosticsDialog(defaultName?: string): Promise<string | null> {
-  return invoke<string | null>("save_diagnostics_dialog", { defaultName });
+  return desktopInvoke<string | null>("save_diagnostics_dialog", { defaultName });
 }
 
 export async function saveTemplateDialog(defaultName?: string): Promise<string | null> {
-  return invoke<string | null>("save_template_dialog", { defaultName });
+  return desktopInvoke<string | null>("save_template_dialog", { defaultName });
 }
 
 export async function copyTemplateFile(destinationPath: string): Promise<string> {
-  return invoke<string>("copy_template_file", { destinationPath });
+  return desktopInvoke<string>("copy_template_file", { destinationPath });
 }
 
 export async function writeTextFile(path: string, contents: string): Promise<void> {
-  await invoke("write_text_file", { path, contents });
+  await desktopInvoke("write_text_file", { path, contents });
 }
 
 export async function revealPath(path: string): Promise<void> {
-  await invoke("reveal_path", { path });
+  await desktopInvoke("reveal_path", { path });
 }
 
 export async function getUpdaterStatus(): Promise<UpdaterStatus> {
-  const result = await invoke<unknown>("get_updater_status");
+  const result = await desktopInvoke<unknown>("get_updater_status");
   return parseUpdaterStatus(result);
 }
 
 export async function checkForAppUpdate(): Promise<AvailableUpdate | null> {
-  const result = await invoke<unknown>("check_for_app_update");
+  const result = await desktopInvoke<unknown>("check_for_app_update");
   return parseAvailableUpdate(result);
 }
 
 export async function installAppUpdate(): Promise<void> {
-  await invoke("install_app_update");
+  await desktopInvoke("install_app_update");
 }
 
 export async function validateExcel(

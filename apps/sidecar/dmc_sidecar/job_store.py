@@ -533,11 +533,13 @@ class JobStore:
                 pass
             else:
                 if isinstance(parsed, dict):
-                    return {
+                    summary = {
                         str(key): int(value)
                         for key, value in parsed.items()
                         if isinstance(value, int)
                     }
+                    if "dmc_rows_total" in summary:
+                        return summary
         if row["status"] not in SUMMARY_FALLBACK_STATUSES:
             return None
         return self._run_summary(connection, str(row["id"]), row["total_records"])

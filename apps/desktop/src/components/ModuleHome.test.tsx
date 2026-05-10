@@ -1,59 +1,33 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
 import messages from "../i18n/th.json";
 import { ModuleHome } from "./ModuleHome";
 
-function renderHome(onOpenModule = vi.fn()) {
-  const props = {
-    onOpenModule,
-    updaterStatus: {
-      configured: false,
-      endpoint: null,
-      current_version: "0.1.0",
-      pubkey_configured: false,
-    },
-    availableUpdate: null,
-    updateMessage: null,
-    updateProgress: null,
-    isCheckingUpdate: false,
-    isInstallingUpdate: false,
+type ModuleHomeProps = ComponentProps<typeof ModuleHome>;
+
+function buildHomeProps(overrides: Partial<ModuleHomeProps> = {}) {
+  return {
+    onOpenModule: vi.fn(),
     connectionState: "ready" as const,
-    databaseStatus: null,
     accountStatus: null,
     errorMessage: null,
-    accountEmail: "",
-    accountPassword: "",
-    isSigningIn: false,
-    isCreatingBackup: false,
-    isRestoringBackup: false,
-    isExportingDiagnostics: false,
-    onAccountEmailChange: vi.fn(),
-    onAccountPasswordChange: vi.fn(),
-    onSignIn: vi.fn(),
+    onOpenSignIn: vi.fn(),
+    onOpenTopup: vi.fn(),
     onSignOut: vi.fn(),
-    onRefreshWallet: vi.fn(),
-    onCheckForUpdates: vi.fn(),
-    onInstallUpdate: vi.fn(),
-    onRefreshDatabaseStatus: vi.fn(),
-    onCreateBackup: vi.fn(),
-    onRestoreBackup: vi.fn(),
-    onExportDiagnostics: vi.fn(),
+    onRetryRuntime: vi.fn(),
+    ...overrides,
   };
+}
+
+function renderHome(overrides: Partial<ModuleHomeProps> = {}) {
+  const props = buildHomeProps(overrides);
   render(<ModuleHome {...props} />);
   return props;
 }
 
 function renderHomeWithAccountWarning() {
-  const props = {
-    onOpenModule: vi.fn(),
-    updaterStatus: null,
-    availableUpdate: null,
-    updateMessage: null,
-    updateProgress: null,
-    isCheckingUpdate: false,
-    isInstallingUpdate: false,
-    connectionState: "ready" as const,
-    databaseStatus: null,
+  renderHome({
     accountStatus: {
       signed_in: false,
       user_id: null,
@@ -68,109 +42,37 @@ function renderHomeWithAccountWarning() {
       message: null,
       last_error: "ACCOUNT_CLOUD_UNAVAILABLE",
     },
-    errorMessage: null,
-    accountEmail: "",
-    accountPassword: "",
-    isSigningIn: false,
-    isCreatingBackup: false,
-    isRestoringBackup: false,
-    isExportingDiagnostics: false,
-    onAccountEmailChange: vi.fn(),
-    onAccountPasswordChange: vi.fn(),
-    onSignIn: vi.fn(),
-    onSignOut: vi.fn(),
-    onRefreshWallet: vi.fn(),
-    onCheckForUpdates: vi.fn(),
-    onInstallUpdate: vi.fn(),
-    onRefreshDatabaseStatus: vi.fn(),
-    onCreateBackup: vi.fn(),
-    onRestoreBackup: vi.fn(),
-    onExportDiagnostics: vi.fn(),
-  };
-  render(<ModuleHome {...props} />);
-}
-
-function renderHomeWithSignedInAccount() {
-  const props = {
-    onOpenModule: vi.fn(),
-    updaterStatus: null,
-    availableUpdate: null,
-    updateMessage: null,
-    updateProgress: null,
-    isCheckingUpdate: false,
-    isInstallingUpdate: false,
-    connectionState: "ready" as const,
-    databaseStatus: null,
-    accountStatus: {
-      signed_in: true,
-      user_id: "user-1",
-      email: "teacher@example.test",
-      display_name: "Teacher Demo",
-      status: "active",
-      token_expires_at: "2026-05-09T00:00:00Z",
-      last_checked_at: "2026-05-08T00:00:00Z",
-      wallet: {
-        user_id: "user-1",
-        balance: 20,
-        reserved: 5,
-        available: 15,
-      },
-      can_start_credit_jobs: true,
-      needs_attention: false,
-      message: null,
-      last_error: null,
-    },
-    errorMessage: null,
-    accountEmail: "",
-    accountPassword: "",
-    isSigningIn: false,
-    isCreatingBackup: false,
-    isRestoringBackup: false,
-    isExportingDiagnostics: false,
-    onAccountEmailChange: vi.fn(),
-    onAccountPasswordChange: vi.fn(),
-    onSignIn: vi.fn(),
-    onSignOut: vi.fn(),
-    onRefreshWallet: vi.fn(),
-    onCheckForUpdates: vi.fn(),
-    onInstallUpdate: vi.fn(),
-    onRefreshDatabaseStatus: vi.fn(),
-    onCreateBackup: vi.fn(),
-    onRestoreBackup: vi.fn(),
-    onExportDiagnostics: vi.fn(),
-  };
-  render(<ModuleHome {...props} />);
+  });
 }
 
 describe("ModuleHome", () => {
-  it("renders all module entry points from i18n copy", () => {
+  it("renders the account bar and all module entry points from i18n copy", () => {
     renderHome();
 
     expect(screen.getByRole("heading", { name: messages.app.home.title })).toBeInTheDocument();
-    expect(screen.getByText("บัญชีและเครดิต")).toBeInTheDocument();
+    expect(screen.getByText(messages.app.home.accountSignedOut)).toBeInTheDocument();
+    expect(screen.getByText(messages.app.home.creditBalance)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.formConverter.title)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.studentBasicInfo.title)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.psar.title)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.currentStudents.title)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.graduation.title)).toBeInTheDocument();
-    expect(screen.getAllByText(/ใช้เครดิต 1\/รายการ/)).toHaveLength(2);
-    expect(screen.getByText(messages.app.account.topup.title)).toBeInTheDocument();
-    for (const packageOption of messages.app.account.topup.packages) {
-      expect(screen.getByText(packageOption.name)).toBeInTheDocument();
-      expect(screen.getByText(packageOption.unitRate)).toBeInTheDocument();
-    }
+    expect(screen.getAllByText("ใช้เครดิต 1 เครดิต/รายการ")).toHaveLength(2);
+    expect(screen.queryByText(messages.app.account.topup.title)).not.toBeInTheDocument();
+    expect(screen.queryByText(messages.app.account.topup.packages[0].unitRate)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(messages.app.account.emailLabel)).not.toBeInTheDocument();
     expect(screen.queryByText("License Activation")).not.toBeInTheDocument();
   });
 
   it("opens currentStudents from the ready module list", () => {
     const onOpenModule = vi.fn();
-    renderHome(onOpenModule);
+    renderHome({ onOpenModule });
 
-    fireEvent.click(screen.getAllByRole("button", { name: messages.app.home.openModule })[0]);
+    fireEvent.click(screen.getByRole("button", { name: messages.app.home.moduleActions.formConverter }));
 
     expect(onOpenModule).toHaveBeenCalledWith("formConverter");
 
-    fireEvent.click(screen.getAllByRole("button", { name: messages.app.home.openModule })[3]);
+    fireEvent.click(screen.getByRole("button", { name: messages.app.home.moduleActions.currentStudents }));
 
     expect(onOpenModule).toHaveBeenCalledWith("currentStudents");
   });
@@ -181,25 +83,29 @@ describe("ModuleHome", () => {
     expect(screen.getByText(messages.app.account.errors.ACCOUNT_CLOUD_UNAVAILABLE)).toBeInTheDocument();
   });
 
-  it("shows feedback after selecting a credit top-up package", () => {
-    renderHomeWithSignedInAccount();
+  it("opens the separate credit top-up page from account actions", () => {
+    const props = renderHome();
 
-    const packageOption = messages.app.account.topup.packages[1];
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: `${messages.app.account.topup.cta} ${packageOption.name}`,
-      }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: messages.app.account.topup.expandLabel }));
 
-    expect(
-      screen.getByText(messages.app.account.topup.selectedMessage.replace("{name}", packageOption.name)),
-    ).toBeInTheDocument();
+    expect(props.onOpenTopup).toHaveBeenCalled();
+    expect(screen.queryByText(messages.app.account.topup.packages[0].unitRate)).not.toBeInTheDocument();
+  });
+
+  it("opens the separate sign-in page from account actions", () => {
+    const props = renderHome();
+
+    fireEvent.click(screen.getByRole("button", { name: messages.app.account.signIn }));
+
+    expect(props.onOpenSignIn).toHaveBeenCalled();
   });
 
   it("shows global login and cloud errors on the home screen", () => {
-    const props = renderHome();
+    const props = buildHomeProps({
+      errorMessage: messages.app.account.errors.INVALID_CREDENTIALS,
+    });
 
-    render(<ModuleHome {...props} errorMessage={messages.app.account.errors.INVALID_CREDENTIALS} />);
+    render(<ModuleHome {...props} />);
 
     expect(screen.getByText(messages.app.account.errors.INVALID_CREDENTIALS)).toBeInTheDocument();
   });

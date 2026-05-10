@@ -9,7 +9,7 @@
     "connect": "เชื่อมต่อ Sidecar",
     "syncConfig": "ซิงก์ config",
     "validate": "ตรวจไฟล์",
-    "startDryRun": "เริ่ม Dry Run",
+    "startDryRun": "ทดสอบก่อนส่งจริง",
     "startLive": "เริ่มงานจริง",
     "refreshStatus": "รีเฟรชสถานะ",
     "refreshJobs": "โหลดรายการงาน",
@@ -36,6 +36,8 @@
       "signInRequired": "ต้องลงชื่อเข้าใช้",
       "emailPlaceholder": "email@example.com",
       "passwordPlaceholder": "รหัสผ่าน",
+      "emailLabel": "อีเมล",
+      "passwordLabel": "รหัสผ่าน",
       "signIn": "ลงชื่อเข้าใช้",
       "signOut": "ออกจากระบบ",
       "refreshCredits": "รีเฟรชเครดิต",
@@ -52,7 +54,10 @@
         "title": "เติมเครดิต",
         "description": "เลือกแพ็กเกจที่ต้องการเติม ระบบจะให้ผู้ดูแลตรวจยอดและเพิ่มเครดิตเข้าบัญชี",
         "paymentMode": "ชำระผ่านผู้ดูแล",
+        "expandLabel": "ดูแพ็กเกจเครดิต",
+        "collapseLabel": "ซ่อนแพ็กเกจเครดิต",
         "cta": "เลือกเติมเครดิต",
+        "signedOutCta": "ลงชื่อเข้าใช้เพื่อเลือกแพ็กเกจนี้",
         "selectedCta": "เลือกแล้ว",
         "creditsUnit": "เครดิต",
         "bahtUnit": "บาท",
@@ -120,7 +125,7 @@
       "tableTitle": "ตัวอย่าง 5 แถวแรก"
     },
     "progress": {
-      "title": "Job Progress",
+      "title": "ความคืบหน้างาน",
       "empty": "ยังไม่มีงานที่กำลังทำ",
       "processed": "ประมวลผลแล้ว",
       "status": "สถานะ",
@@ -131,7 +136,7 @@
       "openReportFolder": "เปิดโฟลเดอร์รายงาน"
     },
     "existingJobs": {
-      "title": "Existing Jobs",
+      "title": "ประวัติงาน",
       "empty": "ยังไม่มีงานใน local checkpoint",
       "sourceFile": "ไฟล์",
       "updatedAt": "เวลา",
@@ -158,12 +163,23 @@
       "openSkeleton": "ดูหน้าตัวอย่าง",
       "ready": "พร้อมใช้งาน",
       "skeleton": "กำลังออกแบบ",
+      "freeModule": "ไม่ใช้เครดิต",
+      "creditModule": "ใช้เครดิต",
+      "accountOnline": "อีเมลนี้ใช้งาน",
+      "accountSignedOut": "ยังไม่ได้ลงชื่อเข้าใช้",
+      "creditBalance": "เครดิตคงเหลือ",
+      "retryConnection": "ลองเชื่อมต่อใหม่",
+      "taskFailedTitle": "ทำรายการไม่สำเร็จ",
+      "systemStatusTitle": "สถานะระบบ",
+      "sidecarStatus": "ตัวเชื่อมระบบ",
+      "databaseStatus": "ฐานข้อมูลในเครื่อง",
+      "accountPanelTitle": "บัญชี",
       "updatesTitle": "อัปเดตระบบ",
       "updatesDescription": "เช็กและติดตั้งอัปเดตของ DMC Assistant ทั้งระบบ ไม่ผูกกับโมดูลใดโมดูลหนึ่ง",
       "updatesReady": "พร้อมใช้งาน",
       "updatesNotConfigured": "ยังไม่ตั้งค่า",
       "currentVersion": "เวอร์ชันปัจจุบัน",
-      "endpoint": "Endpoint",
+      "endpoint": "จุดเชื่อมต่ออัปเดต",
       "checkUpdates": "เช็กอัปเดตทั้งระบบ",
       "installUpdate": "ติดตั้งอัปเดต",
       "updateAvailable": "พบเวอร์ชันใหม่",
@@ -180,7 +196,7 @@
           "description": "อัปโหลดไฟล์นักเรียนจาก DMC แล้วสร้าง Excel ตามฟอร์ม แยกชีตตามระดับชั้นและห้องเรียน"
         },
         "psar": {
-          "title": "P-SAR Readiness Dashboard",
+          "title": "ตรวจความพร้อม P-SAR",
           "description": "ตรวจความพร้อมของหลักฐานที่อัปโหลดก่อนสร้างรายงาน P-SAR"
         },
         "currentStudents": {
@@ -189,8 +205,15 @@
         },
         "graduation": {
           "title": "ข้อมูลสิ้นปีการศึกษา (สอบได้ เรียนจบ)",
-          "description": "ตรวจไฟล์ Excel, dry run, กรอกข้อมูลจบการศึกษาใน DMC และสรุปรายงานหลังจบงาน"
+          "description": "ตรวจไฟล์ Excel, ทดสอบก่อนส่งจริง, กรอกข้อมูลจบการศึกษาใน DMC และสรุปรายงานหลังจบงาน"
         }
+      },
+      "moduleActions": {
+        "formConverter": "แปลงเป็น JSON",
+        "studentBasicInfo": "สร้าง Excel",
+        "psar": "ตรวจ P-SAR",
+        "currentStudents": "จัดการนักเรียน",
+        "graduation": "จัดการข้อมูลสิ้นปี"
       },
       "skeletonPage": {
         "backHome": "กลับหน้าหลัก",

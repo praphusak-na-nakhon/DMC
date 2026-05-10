@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FormConverterPage } from "./FormConverterPage";
 
 const mockRpc = vi.hoisted(() => ({
@@ -11,6 +11,12 @@ const mockRpc = vi.hoisted(() => ({
 }));
 
 vi.mock("../lib/rpcClient", () => mockRpc);
+
+beforeEach(() => {
+  for (const mock of Object.values(mockRpc)) {
+    mock.mockReset();
+  }
+});
 
 const summary = {
   roster_records: 4,
@@ -224,5 +230,23 @@ describe("FormConverterPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /เปิดไฟล์ JSON/ }));
     expect(onRevealPath).toHaveBeenCalledWith("C:\\dmc\\reports\\dmc-form-data-2569.json");
+  });
+
+  it("shows a retryable desktop runtime error when a file dialog is opened from browser preview", async () => {
+    const onRetryRuntime = vi.fn();
+    mockRpc.openExcelDialog.mockRejectedValue(
+      new Error(
+        'DESKTOP_RUNTIME_UNAVAILABLE: Tauri IPC is not available for command "open_excel_dialog". Open this feature in the DMC Assistant desktop window, not browser preview/localhost.',
+      ),
+    );
+
+    render(<FormConverterPage onBackHome={vi.fn()} onRevealPath={vi.fn()} onRetryRuntime={onRetryRuntime} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /เลือก Excel/ }));
+
+    expect(await screen.findByText("Desktop runtime ยังไม่พร้อม")).toBeInTheDocument();
+    expect(screen.getByText(/browser preview\/localhost/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /ลองเชื่อมต่อใหม่/ }));
+    expect(onRetryRuntime).toHaveBeenCalled();
   });
 });

@@ -656,14 +656,21 @@ class AccountRepository:
             if request.idempotency_key:
                 existing = connection.execute(
                     """
-                    SELECT type, amount, reservation_id
+                    SELECT type, amount, requested_units, reservation_id
                     FROM credit_transactions
                     WHERE user_id = ? AND idempotency_key = ?
                     """,
                     (user_id, request.idempotency_key),
                 ).fetchone()
                 if existing is not None:
-                    if existing["type"] != "capture" or existing["reservation_id"] != reservation_id:
+                    if (
+                        existing["type"] != "capture"
+                        or existing["reservation_id"] != reservation_id
+                        or (
+                            existing["requested_units"] is not None
+                            and int(existing["requested_units"]) != int(request.units)
+                        )
+                    ):
                         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="credit transaction idempotency conflict")
                     self._sync_reservation_status(connection, user_id, reservation_id)
                     return_row = self._get_reservation_row(connection, user_id, reservation_id)
@@ -704,18 +711,21 @@ class AccountRepository:
                 )
                 if reservation_cursor.rowcount != 1:
                     raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="credit reservation changed")
+            if delta > 0 or request.idempotency_key:
+                now = utc_now()
                 connection.execute(
                     """
                     INSERT INTO credit_transactions (
-                        id, user_id, type, amount, reservation_id, job_id, module,
+                        id, user_id, type, amount, requested_units, reservation_id, job_id, module,
                         idempotency_key, note, created_at
                     )
-                    VALUES (?, ?, 'capture', ?, ?, ?, ?, ?, NULL, ?)
+                    VALUES (?, ?, 'capture', ?, ?, ?, ?, ?, ?, NULL, ?)
                     """,
                     (
                         str(uuid.uuid4()),
                         user_id,
                         delta,
+                        int(request.units),
                         reservation_id,
                         row["job_id"],
                         row["module"],
@@ -737,14 +747,21 @@ class AccountRepository:
             if request.idempotency_key:
                 existing = connection.execute(
                     """
-                    SELECT type, amount, reservation_id
+                    SELECT type, amount, requested_units, reservation_id
                     FROM credit_transactions
                     WHERE user_id = ? AND idempotency_key = ?
                     """,
                     (user_id, request.idempotency_key),
                 ).fetchone()
                 if existing is not None:
-                    if existing["type"] != "release" or existing["reservation_id"] != reservation_id:
+                    if (
+                        existing["type"] != "release"
+                        or existing["reservation_id"] != reservation_id
+                        or (
+                            existing["requested_units"] is not None
+                            and int(existing["requested_units"]) != int(request.units)
+                        )
+                    ):
                         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="credit transaction idempotency conflict")
                     self._sync_reservation_status(connection, user_id, reservation_id)
                     return_row = self._get_reservation_row(connection, user_id, reservation_id)
@@ -784,18 +801,21 @@ class AccountRepository:
                 )
                 if reservation_cursor.rowcount != 1:
                     raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="credit reservation changed")
+            if delta > 0 or request.idempotency_key:
+                now = utc_now()
                 connection.execute(
                     """
                     INSERT INTO credit_transactions (
-                        id, user_id, type, amount, reservation_id, job_id, module,
+                        id, user_id, type, amount, requested_units, reservation_id, job_id, module,
                         idempotency_key, note, created_at
                     )
-                    VALUES (?, ?, 'release', ?, ?, ?, ?, ?, NULL, ?)
+                    VALUES (?, ?, 'release', ?, ?, ?, ?, ?, ?, NULL, ?)
                     """,
                     (
                         str(uuid.uuid4()),
                         user_id,
                         delta,
+                        int(request.units),
                         reservation_id,
                         row["job_id"],
                         row["module"],

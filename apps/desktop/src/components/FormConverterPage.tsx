@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, FileOutput, FileText, Loader2, UploadCloud } from "lucide-react";
+import { AlertTriangle, FileOutput, FileText, Loader2, UploadCloud } from "lucide-react";
 import { useState } from "react";
 import messages from "../i18n/th.json";
 import { describeUserFacingError } from "../lib/errorMessages";
@@ -15,16 +15,18 @@ import type {
   ExportDmcFormJsonResponse,
   PreviewDmcFormJsonResponse,
 } from "../types/contracts";
-import { Alert, AlertDescription } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+import { PageHeader } from "./PageHeader";
+import { SystemErrorAlert } from "./SystemErrorAlert";
 
 type FormConverterPageProps = {
   onBackHome: () => void;
   onRevealPath: (path: string) => void;
+  onRetryRuntime?: () => void;
 };
 
 const errorMessages: Record<string, string> = {
@@ -121,7 +123,11 @@ const priorityPreviewColumnGroups: PreviewColumnGroupDefinition[] = [
   },
 ];
 
-export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPageProps) {
+export function FormConverterPage({
+  onBackHome,
+  onRevealPath,
+  onRetryRuntime,
+}: FormConverterPageProps) {
   const [rosterPath, setRosterPath] = useState("");
   const [thaiIdCsvPath, setThaiIdCsvPath] = useState("");
   const [ocrMarkdownPaths, setOcrMarkdownPaths] = useState("");
@@ -136,36 +142,59 @@ export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPag
   const [isExporting, setIsExporting] = useState(false);
   const activeResult = jsonExport ?? jsonPreview;
   const activeConflicts = activeResult?.conflicts ?? [];
+  const selectedOcrCount = markdownPaths(ocrMarkdownPaths).length;
+  const canPreview = !isPreviewing && rosterPath.trim().length > 0 && selectedOcrCount > 0;
+  const previewHint = !rosterPath.trim()
+    ? "เลือกไฟล์รายชื่อนักเรียน Excel ก่อนตรวจและแสดงตัวอย่าง"
+    : selectedOcrCount === 0
+      ? "เพิ่มไฟล์ OCR จากแบบฟอร์ม DMC อย่างน้อย 1 ไฟล์ก่อนตรวจและแสดงตัวอย่าง"
+      : null;
 
   async function handleBrowseRoster() {
-    const selected = await openExcelDialog();
-    if (selected) {
-      setRosterPath(selected);
-      resetResult();
+    try {
+      const selected = await openExcelDialog();
+      if (selected) {
+        setRosterPath(selected);
+        resetResult();
+      }
+    } catch (error) {
+      setErrorMessage(readableError(error));
     }
   }
 
   async function handleBrowseThaiIdCsv() {
-    const selected = await openCsvDialog();
-    if (selected) {
-      setThaiIdCsvPath(selected);
-      resetResult();
+    try {
+      const selected = await openCsvDialog();
+      if (selected) {
+        setThaiIdCsvPath(selected);
+        resetResult();
+      }
+    } catch (error) {
+      setErrorMessage(readableError(error));
     }
   }
 
   async function handleBrowseOcrMarkdown() {
-    const selected = await openMarkdownDialog();
-    if (selected) {
-      setOcrMarkdownPaths((current) => [...markdownPaths(current), selected].join("\n"));
-      resetResult();
+    try {
+      const selected = await openMarkdownDialog();
+      if (selected) {
+        setOcrMarkdownPaths((current) => [...markdownPaths(current), selected].join("\n"));
+        resetResult();
+      }
+    } catch (error) {
+      setErrorMessage(readableError(error));
     }
   }
 
   async function handleBrowseCivilRegistrationMarkdown() {
-    const selected = await openMarkdownDialog();
-    if (selected) {
-      setCivilRegistrationMarkdownPaths((current) => [...markdownPaths(current), selected].join("\n"));
-      resetResult();
+    try {
+      const selected = await openMarkdownDialog();
+      if (selected) {
+        setCivilRegistrationMarkdownPaths((current) => [...markdownPaths(current), selected].join("\n"));
+        resetResult();
+      }
+    } catch (error) {
+      setErrorMessage(readableError(error));
     }
   }
 
@@ -255,48 +284,41 @@ export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPag
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-4 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <Button variant="outline" size="sm" onClick={onBackHome}>
-            <ArrowLeft className="h-4 w-4" />
-            {messages.app.formConverter.backHome}
-          </Button>
-          <div className="mt-5 flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl border bg-background">
-              <FileText className="h-6 w-6 text-primary" />
-            </div>
-            <div>
-              <Badge variant="default">พร้อมสร้าง JSON</Badge>
-              <h1 className="mt-2 text-3xl font-bold tracking-normal">แปลงเอกสารแบบฟอร์ม DMC เป็น JSON</h1>
-              <p className="mt-2 max-w-3xl text-muted-foreground">
-                แปลงข้อมูลจากไฟล์ OCR จากแบบฟอร์ม DMC ของแบบฟอร์มที่นักเรียนกรอกจริงเป็น JSON กลาง โดยใช้บัญชีรายชื่อและ CSV เครื่องสแกนบัตรเป็นข้อมูลอ้างอิง
-              </p>
-            </div>
-          </div>
-        </div>
-      </header>
+      <PageHeader
+        onBackHome={onBackHome}
+        backLabel={messages.app.formConverter.backHome}
+        badge="พร้อมสร้างไฟล์ JSON"
+        title="แปลงเอกสารแบบฟอร์ม DMC เป็นไฟล์ JSON"
+        description="แปลงข้อมูลจากไฟล์ OCR ของแบบฟอร์มที่นักเรียนกรอกจริงเป็นไฟล์ JSON กลาง โดยใช้บัญชีรายชื่อและ CSV เครื่องสแกนบัตรเป็นข้อมูลอ้างอิง"
+        icon={<FileText className="h-5 w-5 text-primary" />}
+      />
 
       {errorMessage ? (
-        <Alert variant="destructive">
-          <AlertDescription>{errorMessage}</AlertDescription>
-        </Alert>
+        <SystemErrorAlert message={errorMessage} onRetry={onRetryRuntime} retryWhen="runtime" />
       ) : null}
 
       <Card>
         <CardHeader>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <CardTitle>สร้าง JSON จากแบบฟอร์ม DMC</CardTitle>
+              <CardTitle>เตรียมไฟล์ JSON จากแบบฟอร์ม DMC</CardTitle>
               <CardDescription>
-                ไฟล์ OCR จากแบบฟอร์ม DMC คือรายการหลักที่จะถูก export; บัญชีรายชื่อและ CSV ใช้ช่วยจับคู่นักเรียนและเติมข้อมูลอ้างอิงเท่านั้น โดยยังไม่กำหนดประเภทงาน
+                เริ่มจากไฟล์บังคับ แล้วค่อยเพิ่มไฟล์อ้างอิงเพื่อช่วยเติมข้อมูลให้ครบก่อนตรวจและส่งออก
               </CardDescription>
             </div>
-            <Badge variant="outline">DMC form JSON</Badge>
+            <Badge variant="outline">ไฟล์ JSON สำหรับ DMC</Badge>
           </div>
         </CardHeader>
         <CardContent className="grid gap-5">
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
-            <div className="grid gap-4">
+          <section className="grid gap-4 rounded-lg border bg-muted/20 p-4">
+            <div>
+              <Badge variant="default">1. ไฟล์บังคับ</Badge>
+              <h2 className="mt-2 text-lg font-semibold">ไฟล์หลักสำหรับสร้างข้อมูลนักเรียน</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                ต้องมีไฟล์รายชื่อนักเรียนและไฟล์ OCR จากแบบฟอร์ม DMC ก่อนจึงจะตรวจตัวอย่างได้
+              </p>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-2">
               <div className="grid gap-2">
                 <Label>ไฟล์รายชื่อนักเรียน Excel</Label>
                 <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
@@ -316,24 +338,6 @@ export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPag
               </div>
 
               <div className="grid gap-2">
-                <Label>CSV จากเครื่องสแกนบัตรนักเรียน</Label>
-                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                  <Input
-                    value={thaiIdCsvPath}
-                    onChange={(event) => {
-                      setThaiIdCsvPath(event.target.value);
-                      resetResult();
-                    }}
-                    placeholder="C:\\dmc\\uploadTest\\ThaiID M1-2569.CSV"
-                  />
-                  <Button variant="outline" onClick={() => void handleBrowseThaiIdCsv()}>
-                    <UploadCloud className="h-4 w-4" />
-                    เลือก CSV
-                  </Button>
-                </div>
-              </div>
-
-              <div className="grid gap-2">
                 <Label>ไฟล์ OCR จากแบบฟอร์ม DMC</Label>
                 <textarea
                   className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
@@ -348,6 +352,35 @@ export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPag
                   <Button variant="outline" size="sm" onClick={() => void handleBrowseOcrMarkdown()}>
                     <FileText className="h-4 w-4" />
                     เพิ่มไฟล์ OCR
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="grid gap-4 rounded-lg border bg-background p-4">
+            <div>
+              <Badge variant="secondary">2. ไฟล์ช่วยเติมข้อมูล</Badge>
+              <h2 className="mt-2 text-lg font-semibold">ข้อมูลอ้างอิงเพิ่มเติม</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                ใส่ได้เมื่อมีข้อมูล เพื่อช่วยจับคู่นักเรียนและเติมข้อมูลทะเบียนบ้านให้แม่นยำขึ้น
+              </p>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid gap-2">
+                <Label>CSV จากเครื่องสแกนบัตรนักเรียน</Label>
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                  <Input
+                    value={thaiIdCsvPath}
+                    onChange={(event) => {
+                      setThaiIdCsvPath(event.target.value);
+                      resetResult();
+                    }}
+                    placeholder="C:\\dmc\\uploadTest\\ThaiID M1-2569.CSV"
+                  />
+                  <Button variant="outline" onClick={() => void handleBrowseThaiIdCsv()}>
+                    <UploadCloud className="h-4 w-4" />
+                    เลือก CSV
                   </Button>
                 </div>
               </div>
@@ -372,7 +405,16 @@ export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPag
                 </div>
               </div>
             </div>
+          </section>
 
+          <section className="grid gap-4 rounded-lg border bg-muted/20 p-4 lg:grid-cols-[minmax(0,1fr)_260px]">
+            <div>
+              <Badge variant="default">3. ตรวจและส่งออก</Badge>
+              <h2 className="mt-2 text-lg font-semibold">ตั้งค่าก่อนตรวจตัวอย่าง</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                ตรวจตัวอย่างก่อนสร้างไฟล์ JSON เพื่อดูจำนวนรายการ คำเตือน และข้อมูลจำเป็นที่ยังขาด
+              </p>
+            </div>
             <div className="grid content-start gap-4">
               <div className="grid gap-2">
                 <Label>ปีการศึกษา</Label>
@@ -396,15 +438,13 @@ export function FormConverterPage({ onBackHome, onRevealPath }: FormConverterPag
                   placeholder="1 หรือ 1,2,3"
                 />
               </div>
-              <Button
-                disabled={isPreviewing || !rosterPath.trim() || markdownPaths(ocrMarkdownPaths).length === 0}
-                onClick={() => void handlePreviewDmcFormJson()}
-              >
+              <Button disabled={!canPreview} onClick={() => void handlePreviewDmcFormJson()}>
                 {isPreviewing ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileOutput className="h-4 w-4" />}
                 ตรวจและแสดงตัวอย่าง
               </Button>
+              {previewHint ? <div className="text-sm text-muted-foreground">{previewHint}</div> : null}
             </div>
-          </div>
+          </section>
 
           {activeResult ? (
             <div className="grid gap-4 rounded-md border bg-muted/30 p-4 lg:grid-cols-[minmax(0,1fr)_auto]">

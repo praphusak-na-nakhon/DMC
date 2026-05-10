@@ -1,267 +1,207 @@
-import { useState } from "react";
-import { BadgePercent, CheckCircle2, Loader2, LogIn, LogOut, RefreshCw, UploadCloud, WalletCards } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowRight,
+  BadgePercent,
+  ChevronRight,
+  Link2,
+  LogIn,
+  LogOut,
+  RefreshCw,
+  UserCircle2,
+  WalletCards,
+} from "lucide-react";
 import messages from "../i18n/th.json";
-import { formatTimestamp } from "../lib/appUi";
 import { describeAccountCode } from "../lib/errorMessages";
 import { moduleDefinitions, type ModuleId } from "../lib/moduleCatalog";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Alert, AlertDescription } from "./ui/alert";
-import { Input } from "./ui/input";
-import { SupportToolsPanel } from "./SupportToolsPanel";
-import type { AccountStatus, AvailableUpdate, DatabaseStatus, UpdaterStatus } from "../types/contracts";
+import type { AccountStatus } from "../types/contracts";
 
 type ModuleHomeProps = {
   onOpenModule: (moduleId: ModuleId) => void;
-  updaterStatus: UpdaterStatus | null;
-  availableUpdate: AvailableUpdate | null;
-  updateMessage: string | null;
-  updateProgress: { downloaded: number; contentLength: number | null } | null;
-  isCheckingUpdate: boolean;
-  isInstallingUpdate: boolean;
   connectionState: "idle" | "connecting" | "ready" | "error";
-  databaseStatus: DatabaseStatus | null;
   accountStatus: AccountStatus | null;
   errorMessage: string | null;
-  accountEmail: string;
-  accountPassword: string;
-  isSigningIn: boolean;
-  isCreatingBackup: boolean;
-  isRestoringBackup: boolean;
-  isExportingDiagnostics: boolean;
-  onAccountEmailChange: (value: string) => void;
-  onAccountPasswordChange: (value: string) => void;
-  onSignIn: () => void;
+  onOpenSignIn: () => void;
+  onOpenTopup: () => void;
   onSignOut: () => void;
-  onRefreshWallet: () => void;
-  onCheckForUpdates: () => void;
-  onInstallUpdate: () => void;
-  onRefreshDatabaseStatus: () => void;
-  onCreateBackup: () => void;
-  onRestoreBackup: () => void;
-  onExportDiagnostics: () => void;
+  onRetryRuntime: () => void;
 };
+
+type ModuleActionCopy = Record<ModuleId, string>;
+
+function creditBadgeLabel(module: (typeof moduleDefinitions)[number]) {
+  if (!module.requiresCredits) {
+    return messages.app.home.freeModule;
+  }
+  return `${messages.app.home.creditModule} ${module.creditPerUnit} เครดิต/รายการ`;
+}
+
+function HomeErrorBanner({
+  message,
+  onRetry,
+  isRetrying,
+}: {
+  message: string;
+  onRetry: () => void;
+  isRetrying: boolean;
+}) {
+  const home = messages.app.home;
+
+  return (
+    <div className="flex flex-col gap-4 rounded-xl border border-red-200 bg-red-50/90 p-4 text-red-700 shadow-sm sm:flex-row sm:items-center">
+      <div className="flex min-w-0 flex-1 items-start gap-4">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-red-500 text-white shadow-sm">
+          <AlertCircle className="h-5 w-5" />
+        </div>
+        <div className="min-w-0">
+          <div className="text-base font-bold">{home.taskFailedTitle}</div>
+          <div className="mt-1 break-words text-sm leading-6">{message}</div>
+        </div>
+      </div>
+      <Button
+        variant="outline"
+        className="shrink-0 border-red-300 bg-white text-red-600 hover:bg-red-50 hover:text-red-700"
+        onClick={onRetry}
+        disabled={isRetrying}
+      >
+        <RefreshCw className={`h-4 w-4 ${isRetrying ? "animate-spin" : ""}`} />
+        {home.retryConnection}
+      </Button>
+    </div>
+  );
+}
 
 export function ModuleHome({
   onOpenModule,
-  updaterStatus,
-  availableUpdate,
-  updateMessage,
-  updateProgress,
-  isCheckingUpdate,
-  isInstallingUpdate,
   connectionState,
-  databaseStatus,
   accountStatus,
   errorMessage,
-  accountEmail,
-  accountPassword,
-  isSigningIn,
-  isCreatingBackup,
-  isRestoringBackup,
-  isExportingDiagnostics,
-  onAccountEmailChange,
-  onAccountPasswordChange,
-  onSignIn,
+  onOpenSignIn,
+  onOpenTopup,
   onSignOut,
-  onRefreshWallet,
-  onCheckForUpdates,
-  onInstallUpdate,
-  onRefreshDatabaseStatus,
-  onCreateBackup,
-  onRestoreBackup,
-  onExportDiagnostics,
+  onRetryRuntime,
 }: ModuleHomeProps) {
   const home = messages.app.home;
   const account = messages.app.account;
-  const [selectedTopupPackageId, setSelectedTopupPackageId] = useState<string | null>(null);
+  const moduleActions = home.moduleActions as ModuleActionCopy;
   const wallet = accountStatus?.wallet ?? null;
+  const isSignedIn = Boolean(accountStatus?.signed_in);
+  const accountName = isSignedIn
+    ? accountStatus?.email ?? accountStatus?.display_name ?? accountStatus?.user_id ?? account.signedIn
+    : account.signInRequired;
   const accountWarningCode =
     accountStatus?.last_error ??
     (accountStatus?.signed_in && accountStatus.needs_attention ? accountStatus.message : null);
   const accountWarning = describeAccountCode(accountWarningCode) ?? accountWarningCode ?? null;
-  const selectedTopupPackage =
-    account.topup.packages.find((packageOption) => packageOption.id === selectedTopupPackageId) ?? null;
 
   return (
-    <div className="space-y-6">
-      <header className="flex min-w-0 flex-col gap-4 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
-        <div className="min-w-0">
-          <Badge variant="secondary" className="mb-3 uppercase tracking-normal">
-            {home.badge}
-          </Badge>
-          <h1 className="text-3xl font-bold tracking-normal text-foreground sm:text-4xl">
-            {home.title}
-          </h1>
-          <p className="mt-3 max-w-2xl text-sm leading-7 text-muted-foreground sm:text-base">
-            {home.description}
-          </p>
-        </div>
+    <div className="space-y-6 text-slate-950">
+      <header className="min-w-0 pb-2">
+        <Badge variant="secondary" className="mb-4 rounded-md px-3 py-1 uppercase tracking-normal text-blue-950">
+          {home.badge}
+        </Badge>
+        <h1 className="text-4xl font-bold tracking-normal text-blue-950 sm:text-5xl">
+          {home.title}
+        </h1>
+        <p className="mt-3 max-w-4xl text-base leading-7 text-blue-950/70">
+          {home.description}
+        </p>
       </header>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <CardTitle>{account.title}</CardTitle>
-              <CardDescription>
-                {account.description}
-              </CardDescription>
+      <Card className="border-blue-100 bg-white/95 shadow-sm">
+        <CardContent className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between lg:p-5">
+          <div className="flex min-w-0 flex-1 items-center gap-4">
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-blue-950 text-white shadow-sm">
+              <UserCircle2 className="h-8 w-8" />
             </div>
-            <Badge variant={accountStatus?.signed_in ? "default" : "secondary"}>
-              {accountStatus?.signed_in ? account.signedIn : account.signInRequired}
-            </Badge>
+            <div className="min-w-0">
+              <div className="truncate text-base font-bold text-blue-950">{accountName}</div>
+              <div
+                className={`mt-2 inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium ${
+                  isSignedIn ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"
+                }`}
+              >
+                <span className={`h-2.5 w-2.5 rounded-full ${isSignedIn ? "bg-emerald-500" : "bg-slate-400"}`} />
+                {isSignedIn ? home.accountOnline : home.accountSignedOut}
+              </div>
+            </div>
           </div>
-        </CardHeader>
-        <CardContent className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.65fr)]">
-          {errorMessage ? (
-            <Alert variant="destructive" className="lg:col-span-2">
-              <AlertDescription>{errorMessage}</AlertDescription>
-            </Alert>
-          ) : null}
-          {accountWarning ? (
-            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive lg:col-span-2">
-              {accountWarning}
-            </div>
-          ) : null}
-          {accountStatus?.signed_in ? (
-            <div className="grid gap-3 sm:grid-cols-3">
-              <div className="rounded-lg border bg-muted/40 p-3">
-                <div className="text-xs text-muted-foreground">{account.user}</div>
-                <div className="mt-1 break-words font-semibold">{accountStatus.email ?? accountStatus.user_id}</div>
-              </div>
-              <div className="rounded-lg border bg-muted/40 p-3">
-                <div className="text-xs text-muted-foreground">{account.availableCredits}</div>
-                <div className="mt-1 text-2xl font-bold">{wallet?.available ?? "-"}</div>
-              </div>
-              <div className="rounded-lg border bg-muted/40 p-3">
-                <div className="text-xs text-muted-foreground">{account.reservedTotal}</div>
-                <div className="mt-1 font-semibold">
-                  {wallet ? `${wallet.reserved} / ${wallet.balance}` : "-"}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Input
-                type="email"
-                value={accountEmail}
-                onChange={(event) => onAccountEmailChange(event.target.value)}
-                placeholder={account.emailPlaceholder}
-              />
-              <Input
-                type="password"
-                value={accountPassword}
-                onChange={(event) => onAccountPasswordChange(event.target.value)}
-                placeholder={account.passwordPlaceholder}
-              />
-            </div>
-          )}
 
-          <div className="flex flex-wrap items-start gap-2 lg:justify-end">
-            {accountStatus?.signed_in ? (
-              <>
-                <Button variant="outline" onClick={onRefreshWallet}>
-                  <WalletCards className="h-4 w-4" />
-                  {account.refreshCredits}
-                </Button>
-                <Button variant="secondary" onClick={onSignOut}>
-                  <LogOut className="h-4 w-4" />
-                  {account.signOut}
-                </Button>
-              </>
+          <div className="hidden h-14 w-px bg-blue-100 lg:block" />
+
+          <div className="flex min-w-[190px] items-center gap-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
+              <WalletCards className="h-6 w-6" />
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-blue-950">{home.creditBalance}</div>
+              <div className="text-2xl font-bold text-blue-950">{wallet?.available ?? "-"}</div>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Button
+              className="h-11 min-w-[180px] bg-blue-950 px-5 text-white hover:bg-blue-900"
+              onClick={onOpenTopup}
+            >
+              <BadgePercent className="h-4 w-4" />
+              {account.topup.expandLabel}
+            </Button>
+            <Button
+              variant="outline"
+              className="h-11 min-w-[160px] border-blue-200 bg-white text-blue-950 hover:bg-blue-50"
+              onClick={onRetryRuntime}
+              disabled={connectionState === "connecting"}
+            >
+              <Link2 className="h-4 w-4" />
+              {home.retryConnection}
+            </Button>
+            {isSignedIn ? (
+              <Button
+                variant="outline"
+                className="h-11 min-w-[150px] border-blue-200 bg-white text-blue-950 hover:bg-blue-50"
+                onClick={onSignOut}
+              >
+                <LogOut className="h-4 w-4" />
+                {account.signOut}
+              </Button>
             ) : (
-              <Button disabled={isSigningIn} onClick={onSignIn}>
-                {isSigningIn ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
+              <Button className="h-11 min-w-[150px] bg-blue-950 text-white hover:bg-blue-900" onClick={onOpenSignIn}>
+                <LogIn className="h-4 w-4" />
                 {account.signIn}
               </Button>
             )}
           </div>
-
-          <div className="min-w-0 border-t pt-4 lg:col-span-2">
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <BadgePercent className="h-4 w-4 text-muted-foreground" />
-                  <h2 className="text-lg font-semibold tracking-normal">{account.topup.title}</h2>
-                </div>
-                <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
-                  {account.topup.description}
-                </p>
-              </div>
-              <Badge variant="outline" className="w-fit">
-                {account.topup.paymentMode}
-              </Badge>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-3">
-              {account.topup.packages.map((packageOption, index) => {
-                const isSelected = packageOption.id === selectedTopupPackageId;
-                return (
-                  <div
-                    key={packageOption.id}
-                    className={`flex min-h-[250px] min-w-0 flex-col rounded-lg border bg-background p-4 transition-colors ${
-                      isSelected ? "border-primary bg-muted/30" : "hover:border-primary/40"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 font-semibold">{packageOption.name}</div>
-                      <Badge variant={index === 0 ? "secondary" : "default"} className="shrink-0">
-                        {packageOption.badge}
-                      </Badge>
-                    </div>
-                    <div className="mt-4 flex items-end gap-2">
-                      <span className="text-3xl font-bold leading-none">{packageOption.credits}</span>
-                      <span className="text-sm text-muted-foreground">{account.topup.creditsUnit}</span>
-                    </div>
-                    <div className="mt-2 text-sm text-muted-foreground">
-                      <span className="text-xl font-semibold text-foreground">{packageOption.price}</span>{" "}
-                      {account.topup.bahtUnit}
-                    </div>
-                    <div className="mt-3 rounded-md bg-muted px-3 py-2 text-sm font-medium">
-                      {packageOption.unitRate}
-                    </div>
-                    <p className="mt-3 flex-1 text-sm leading-6 text-muted-foreground">
-                      {packageOption.description}
-                    </p>
-                    <Button
-                      className="mt-4 w-full"
-                      variant={isSelected ? "secondary" : index === 0 ? "outline" : "default"}
-                      disabled={!accountStatus?.signed_in}
-                      onClick={() => setSelectedTopupPackageId(packageOption.id)}
-                      aria-label={`${account.topup.cta} ${packageOption.name}`}
-                    >
-                      {isSelected ? <CheckCircle2 className="h-4 w-4" /> : <WalletCards className="h-4 w-4" />}
-                      {isSelected ? account.topup.selectedCta : account.topup.cta}
-                    </Button>
-                  </div>
-                );
-              })}
-            </div>
-
-            {selectedTopupPackage ? (
-              <Alert className="mt-3">
-                <AlertDescription>
-                  {account.topup.selectedMessage.replace("{name}", selectedTopupPackage.name)}
-                </AlertDescription>
-              </Alert>
-            ) : !accountStatus?.signed_in ? (
-              <p className="mt-3 text-sm text-muted-foreground">{account.topup.signedOutNotice}</p>
-            ) : null}
-          </div>
         </CardContent>
       </Card>
 
-      <section className="grid gap-4 lg:grid-cols-3">
+      {accountWarning ? (
+        <Alert variant="destructive" className="border-red-200 bg-red-50">
+          <AlertDescription>{accountWarning}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      {errorMessage ? (
+        <HomeErrorBanner
+          message={errorMessage}
+          onRetry={onRetryRuntime}
+          isRetrying={connectionState === "connecting"}
+        />
+      ) : null}
+
+      <section className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
         {moduleDefinitions.length === 0 ? (
-          <Card className="lg:col-span-3">
+          <Card className="md:col-span-2 xl:col-span-3">
             <CardHeader>
               <CardTitle>{home.emptyTitle}</CardTitle>
               <CardDescription>{home.emptyDescription}</CardDescription>
             </CardHeader>
           </Card>
         ) : null}
+
         {moduleDefinitions.map((module) => {
           const Icon = module.icon;
           const copy = home.modules[module.id];
@@ -269,28 +209,50 @@ export function ModuleHome({
           return (
             <Card
               key={module.id}
-              className="flex min-h-[260px] min-w-0 flex-col transition-colors hover:border-primary/40 hover:bg-muted/30"
+              role="button"
+              tabIndex={0}
+              onClick={() => onOpenModule(module.id)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onOpenModule(module.id);
+                }
+              }}
+              className="group flex min-h-[248px] min-w-0 cursor-pointer flex-col border-blue-100 bg-white/95 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50/30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-950"
             >
-              <CardHeader>
-                <div className="mb-4 flex items-center justify-between gap-3">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-lg border bg-background">
-                    <Icon className="h-5 w-5 text-muted-foreground" />
+              <CardContent className="flex h-full flex-col p-5">
+                <div className="flex items-start gap-4">
+                  <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                    <Icon className="h-9 w-9" />
                   </div>
-                  <Badge variant={isReady ? "default" : "secondary"}>
-                    {isReady ? home.ready : home.skeleton}
-                  </Badge>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-3">
+                      <CardTitle className="min-w-0 text-xl leading-7 text-blue-950">{copy.title}</CardTitle>
+                      <span className="mt-1 inline-flex shrink-0 items-center gap-2 whitespace-nowrap text-sm font-medium text-emerald-700">
+                        {home.ready}
+                        <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                      </span>
+                    </div>
+                    <Badge variant="secondary" className="mt-3 w-fit bg-blue-50 text-blue-700">
+                      {creditBadgeLabel(module)}
+                    </Badge>
+                  </div>
                 </div>
-                {module.requiresCredits ? (
-                  <Badge variant="outline" className="mb-3 w-fit">
-                    {account.creditBadge.replace("{credits}", String(module.creditPerUnit))}
-                  </Badge>
-                ) : null}
-                <CardTitle className="leading-7">{copy.title}</CardTitle>
-                <CardDescription className="leading-6">{copy.description}</CardDescription>
-              </CardHeader>
-              <CardContent className="mt-auto">
-                <Button className="w-full" variant={isReady ? "default" : "secondary"} onClick={() => onOpenModule(module.id)}>
-                  {isReady ? home.openModule : home.openSkeleton}
+
+                <CardDescription className="mt-5 min-h-[3.5rem] text-base leading-7 text-blue-950/65">
+                  {copy.description}
+                </CardDescription>
+
+                <Button
+                  className="mt-auto h-11 w-full justify-between bg-blue-950 px-5 text-white hover:bg-blue-900"
+                  variant={isReady ? "default" : "secondary"}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onOpenModule(module.id);
+                  }}
+                >
+                  {isReady ? moduleActions[module.id] : home.openSkeleton}
+                  {isReady ? <ArrowRight className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                 </Button>
               </CardContent>
             </Card>
@@ -298,74 +260,6 @@ export function ModuleHome({
         })}
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <CardTitle>{home.updatesTitle}</CardTitle>
-                <CardDescription>{home.updatesDescription}</CardDescription>
-              </div>
-              <Badge variant={updaterStatus?.configured ? "default" : "secondary"}>
-                {updaterStatus?.configured ? home.updatesReady : home.updatesNotConfigured}
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="grid gap-4">
-            <div className="grid gap-3 lg:grid-cols-3">
-              <div className="rounded-lg border bg-muted/40 p-3">
-                <div className="text-xs text-muted-foreground">{home.currentVersion}</div>
-                <div className="mt-1 font-semibold">{updaterStatus?.current_version ?? "-"}</div>
-              </div>
-              <div className="rounded-lg border bg-muted/40 p-3 lg:col-span-2">
-                <div className="text-xs text-muted-foreground">{home.endpoint}</div>
-                <div className="mt-1 break-words text-sm font-medium">{updaterStatus?.endpoint ?? "-"}</div>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" disabled={isCheckingUpdate} onClick={onCheckForUpdates}>
-                {isCheckingUpdate ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                {home.checkUpdates}
-              </Button>
-              <Button disabled={!availableUpdate || isInstallingUpdate} onClick={onInstallUpdate}>
-                {isInstallingUpdate ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
-                {home.installUpdate}
-              </Button>
-            </div>
-
-            {availableUpdate ? (
-              <div className="grid gap-1 rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
-                <div className="font-medium text-foreground">{home.updateAvailable}: {availableUpdate.version}</div>
-                <div>{home.publishedAt}: {formatTimestamp(availableUpdate.date)}</div>
-                <div className="break-words">{home.updateDetails}: {availableUpdate.body ?? "-"}</div>
-              </div>
-            ) : null}
-
-            {updateProgress ? (
-              <div className="text-sm text-muted-foreground">
-                {home.downloadProgress} {updateProgress.downloaded}
-                {updateProgress.contentLength ? ` / ${updateProgress.contentLength}` : ""} bytes
-              </div>
-            ) : null}
-
-            {updateMessage ? <div className="break-words text-sm text-muted-foreground">{updateMessage}</div> : null}
-          </CardContent>
-        </Card>
-
-        <SupportToolsPanel
-          connectionState={connectionState}
-          databaseStatus={databaseStatus}
-          accountStatus={accountStatus}
-          isCreatingBackup={isCreatingBackup}
-          isRestoringBackup={isRestoringBackup}
-          isExportingDiagnostics={isExportingDiagnostics}
-          onRefreshDatabaseStatus={onRefreshDatabaseStatus}
-          onCreateBackup={onCreateBackup}
-          onRestoreBackup={onRestoreBackup}
-          onExportDiagnostics={onExportDiagnostics}
-        />
-      </section>
     </div>
   );
 }

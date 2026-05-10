@@ -233,6 +233,21 @@ def test_manual_topup_wallet_and_reservation_flow(monkeypatch, tmp_path: Path) -
     assert capture.json()["units_captured"] == 2
     assert capture.json()["wallet"] == {"user_id": user_id, "balance": 3, "reserved": 1, "available": 2}
 
+    repeated_capture = client.post(
+        f"/v1/credits/reservations/{reservation['reservation_id']}/capture",
+        headers=headers,
+        json={"units": 2, "idempotency_key": "capture-1"},
+    )
+    assert repeated_capture.status_code == 200
+    assert repeated_capture.json()["units_captured"] == 2
+
+    changed_capture = client.post(
+        f"/v1/credits/reservations/{reservation['reservation_id']}/capture",
+        headers=headers,
+        json={"units": 3, "idempotency_key": "capture-1"},
+    )
+    assert changed_capture.status_code == 409
+
     release = client.post(
         f"/v1/credits/reservations/{reservation['reservation_id']}/release",
         headers=headers,
@@ -243,9 +258,77 @@ def test_manual_topup_wallet_and_reservation_flow(monkeypatch, tmp_path: Path) -
     assert release.json()["units_released"] == 1
     assert release.json()["wallet"] == {"user_id": user_id, "balance": 3, "reserved": 0, "available": 3}
 
+    repeated_release = client.post(
+        f"/v1/credits/reservations/{reservation['reservation_id']}/release",
+        headers=headers,
+        json={"units": 1, "idempotency_key": "release-1"},
+    )
+    assert repeated_release.status_code == 200
+    assert repeated_release.json()["units_released"] == 1
+
+    changed_release = client.post(
+        f"/v1/credits/reservations/{reservation['reservation_id']}/release",
+        headers=headers,
+        json={"units": 2, "idempotency_key": "release-1"},
+    )
+    assert changed_release.status_code == 409
+
     ledger = client.get(f"/v1/admin/users/{user_id}/ledger", headers=_admin_headers())
     assert ledger.status_code == 200
     assert sorted(entry["type"] for entry in ledger.json()) == ["capture", "release", "reserve", "topup"]
+
+
+def test_credit_capture_idempotency_records_noop_requests(monkeypatch, tmp_path: Path) -> None:
+    user_id = _create_user(monkeypatch, tmp_path)
+    topup = client.post(
+        f"/v1/admin/users/{user_id}/credits/topup",
+        headers=_admin_headers(),
+        json={"amount": 3, "idempotency_key": "topup-noop-capture"},
+    )
+    assert topup.status_code == 200
+
+    token = _login()
+    headers = {"Authorization": f"Bearer {token}"}
+    reserve = client.post(
+        "/v1/credits/reservations",
+        headers=headers,
+        json={
+            "job_id": "job-credit-noop-capture",
+            "module": "graduation",
+            "units": 3,
+            "idempotency_key": "reserve-noop-capture",
+        },
+    )
+    assert reserve.status_code == 200
+    reservation = reserve.json()
+
+    capture = client.post(
+        f"/v1/credits/reservations/{reservation['reservation_id']}/capture",
+        headers=headers,
+        json={"units": 2, "idempotency_key": "capture-noop-initial"},
+    )
+    assert capture.status_code == 200
+    assert capture.json()["units_captured"] == 2
+
+    noop_capture = client.post(
+        f"/v1/credits/reservations/{reservation['reservation_id']}/capture",
+        headers=headers,
+        json={"units": 2, "idempotency_key": "capture-noop"},
+    )
+    assert noop_capture.status_code == 200
+    assert noop_capture.json()["units_captured"] == 2
+
+    changed_noop_capture = client.post(
+        f"/v1/credits/reservations/{reservation['reservation_id']}/capture",
+        headers=headers,
+        json={"units": 3, "idempotency_key": "capture-noop"},
+    )
+    assert changed_noop_capture.status_code == 409
+
+    ledger = client.get(f"/v1/admin/users/{user_id}/ledger", headers=_admin_headers())
+    assert ledger.status_code == 200
+    capture_entries = [entry for entry in ledger.json() if entry["type"] == "capture"]
+    assert sorted(entry["amount"] for entry in capture_entries) == [0, 2]
 
 
 def test_admin_topup_request_approval_records_audit(monkeypatch, tmp_path: Path) -> None:
