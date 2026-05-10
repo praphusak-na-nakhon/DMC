@@ -196,7 +196,7 @@ export type ExportStudentBasicInfoFormResponse = {
   classes: StudentBasicInfoClassSummary[];
 };
 
-export type CurrentStudentSourceType = "roster" | "thai_id_scan" | "ocr_form" | "civil_registration" | "manual";
+export type CurrentStudentSourceType = "roster" | "thai_id_scan" | "ocr_form" | "civil_registration" | "derived" | "manual";
 export type CurrentStudentFieldConfidence = "authoritative" | "high" | "review" | "missing";
 export type CurrentStudentFieldValue = string | number | boolean | null;
 export type CurrentStudentOperationType = "current" | "transfer_in" | "add_new";
@@ -890,6 +890,7 @@ function parseCurrentStudentSourceType(value: string, context: string): CurrentS
     value !== "thai_id_scan" &&
     value !== "ocr_form" &&
     value !== "civil_registration" &&
+    value !== "derived" &&
     value !== "manual"
   ) {
     throw new Error(`${context}.source is invalid`);

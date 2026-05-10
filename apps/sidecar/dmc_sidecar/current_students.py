@@ -89,6 +89,8 @@ IMPORT_FIELD_DEFINITIONS: tuple[tuple[str, str, bool], ...] = (
     ("younger_brothers", "จำนวนน้องชาย", False),
     ("older_sisters", "จำนวนพี่สาว", False),
     ("younger_sisters", "จำนวนน้องสาว", False),
+    ("siblings_studying_count", "จำนวนพี่น้องที่ศึกษาอยู่", False),
+    ("child_order", "นักเรียนเป็นบุตรคนที่", False),
     ("father.citizen_id", "เลขบัตรบิดา", False),
     ("father.first_name", "ชื่อบิดา", False),
     ("father.last_name", "นามสกุลบิดา", False),
@@ -113,6 +115,18 @@ IMPORT_FIELD_NAMES = tuple(field_name for field_name, _label, _required in IMPOR
 IMPORT_FIELD_LABELS = {field_name: label for field_name, label, _required in IMPORT_FIELD_DEFINITIONS}
 REQUIRED_IMPORT_FIELDS = tuple(field_name for field_name, _label, required in IMPORT_FIELD_DEFINITIONS if required)
 FORM_JSON_FIELD_NAMES = tuple(field_name for field_name in IMPORT_FIELD_NAMES if field_name != "operation_type")
+ADDRESS_FIELD_SUFFIXES: tuple[str, ...] = (
+    "house_id",
+    "house_no",
+    "moo",
+    "road",
+    "subdistrict",
+    "district",
+    "province",
+    "postal_code",
+)
+ADDRESS_COPY_MIN_COMPARABLE_FIELDS = 3
+ADDRESS_COPY_MIN_MATCH_RATIO = 0.6
 DMC_BLOCKING_MISSING_FIELDS: tuple[str, ...] = (
     "student_no",
     "citizen_id",
@@ -147,7 +161,7 @@ MISSING_BLOCKER_BASIS = (
     "ต้องเติมข้อมูลนี้ก่อนนำเข้า DMC"
 )
 
-SourceType = Literal["roster", "thai_id_scan", "ocr_form", "civil_registration", "manual"]
+SourceType = Literal["roster", "thai_id_scan", "ocr_form", "civil_registration", "derived", "manual"]
 FieldConfidence = Literal["authoritative", "high", "review", "missing"]
 OperationType = Literal["current", "transfer_in", "add_new"]
 MatchStatus = Literal["auto_matched", "needs_review", "duplicate", "invalid_id", "new_or_transfer_candidate"]
@@ -1019,7 +1033,9 @@ def read_ocr_markdown(path: Path, *, record_index: int = 1) -> tuple[OcrFormReco
     _put_field(fields, "older_brothers", _number_text(_extract_between(text, "จำนวนพี่ชาย*", ("คน จำนวนน้องชาย*",))), "ocr_form", "review")
     _put_field(fields, "younger_brothers", _number_text(_extract_between(text, "จำนวนน้องชาย*", ("คน จำนวนพี่สาว*",))), "ocr_form", "review")
     _put_field(fields, "older_sisters", _number_text(_extract_between(text, "จำนวนพี่สาว*", ("คน จำนวนน้องสาว*",))), "ocr_form", "review")
-    _put_field(fields, "younger_sisters", _number_text(_extract_between(text, "จำนวนน้องสาว*", ("คน จำนวนพี่น้องที่ศึกษาอยู่",))), "ocr_form", "review")
+    _put_field(fields, "younger_sisters", _number_text(_extract_between(text, "จำนวนน้องสาว*", ("คน จำนวนพี่น้องที่ศึกษาอยู่", "ข้อมูลบิดา"))), "ocr_form", "review")
+    _put_field(fields, "siblings_studying_count", _first_digits(_extract_between(text, "จำนวนพี่น้องที่ศึกษาอยู่", ("คน นักเรียนเป็นบุตรคนที่", "นักเรียนเป็นบุตรคนที่"))), "ocr_form", "review")
+    _put_field(fields, "child_order", _first_digits(_extract_between(text, "นักเรียนเป็นบุตรคนที่", ("ข้อมูลบิดา",))), "ocr_form", "review")
     _put_guardian_fields(fields, text, person="father", start="ข้อมูลบิดา", end="ข้อมูลมารดา")
     _put_guardian_fields(fields, text, person="mother", start="ข้อมูลมารดา", end="ข้อมูลผู้ปกครอง")
     _put_guardian_fields(fields, text, person="guardian", start="ข้อมูลผู้ปกครอง", end="**หมายเหตุ")
@@ -1253,6 +1269,8 @@ def _build_canonical_records(
             _attach_ocr(target, ocr_record)
             ocr_attached += 1
 
+    _promote_registered_address_to_current_when_matching(records)
+    _fill_missing_mother_last_name_from_father(records)
     return records, ocr_attached, ocr_unmatched
 
 
@@ -1574,6 +1592,8 @@ def _selected_basis(field_name: str, source: SourceType | None) -> str:
         return "ยึด OCR แบบฟอร์ม เพราะเป็นข้อมูลที่นักเรียนกรอกในแบบฟอร์ม DMC และไม่มีแหล่งที่น่าเชื่อถือกว่ามาทับ"
     if source == "civil_registration":
         return "ยึด OCR สำเนาทะเบียนบ้าน เพราะตัวเลขทะเบียนบ้าน เลขบัตรผู้ปกครอง และชื่อบิดามารดามาจากเอกสารทะเบียนราษฎร"
+    if source == "derived":
+        return "เติมนามสกุลมารดาจากนามสกุลบิดา เพราะตรวจจากทุกไฟล์แล้วไม่พบนามสกุลมารดาโดยตรง"
     if source == "manual":
         return "ยึดค่าที่ผู้ใช้เลือกในหน้าจอสร้างไฟล์"
     return "ยังระบุแหล่งหลักไม่ได้ ต้องตรวจข้อมูลด้วยผู้ใช้"
@@ -1797,6 +1817,98 @@ def _merge_civil_registration_field(
         "mother.last_name",
     } and existing.source not in {"roster", "thai_id_scan"}:
         record.dmc_fields[field_name] = incoming
+
+
+def _promote_registered_address_to_current_when_matching(records: list[CanonicalStudentRecord]) -> None:
+    for record in records:
+        if not _registered_address_matches_current_address(record):
+            continue
+        for suffix in ADDRESS_FIELD_SUFFIXES:
+            registered_field = record.dmc_fields.get(_address_field_name("registered_address", suffix))
+            if registered_field is None or _is_missing_import_value(registered_field.value):
+                continue
+            record.dmc_fields[_address_field_name("current_address", suffix)] = CurrentStudentField(
+                value=registered_field.value,
+                source=registered_field.source,
+                confidence=registered_field.confidence,
+                raw_value=registered_field.raw_value,
+            )
+
+
+def _registered_address_matches_current_address(record: CanonicalStudentRecord) -> bool:
+    comparable = 0
+    matched = 0
+    matched_house_id = False
+    for suffix in ADDRESS_FIELD_SUFFIXES:
+        registered_value = _address_compare_value(
+            suffix,
+            record.dmc_fields.get(_address_field_name("registered_address", suffix)),
+        )
+        current_value = _address_compare_value(
+            suffix,
+            record.dmc_fields.get(_address_field_name("current_address", suffix)),
+        )
+        if registered_value is None or current_value is None:
+            continue
+        comparable += 1
+        if _address_values_match(suffix, registered_value, current_value):
+            matched += 1
+            if suffix == "house_id":
+                matched_house_id = True
+
+    if matched_house_id:
+        return True
+    if comparable < ADDRESS_COPY_MIN_COMPARABLE_FIELDS:
+        return False
+    return matched / comparable >= ADDRESS_COPY_MIN_MATCH_RATIO
+
+
+def _address_field_name(prefix: Literal["registered_address", "current_address"], suffix: str) -> str:
+    return f"{prefix}.{suffix}"
+
+
+def _address_compare_value(suffix: str, field: CurrentStudentField | None) -> str | None:
+    if field is None:
+        return None
+    value = field.value
+    if _is_missing_import_value(value):
+        return None
+    text = _clean_text(value).lower()
+    text = re.sub(
+        r"^(เลขที่|บ้านเลขที่|หมู่ที่|หมู่|ม\.|ถนน|ถ\.|จังหวัด|จ\.|อำเภอ|อ\.|เขต|ตำบล|ต\.|แขวง)\s*",
+        "",
+        text,
+    )
+    if suffix in {"house_id", "postal_code"}:
+        digits = "".join(re.findall(r"\d", text))
+        return digits or None
+    return re.sub(r"[^\w/]", "", text, flags=re.UNICODE) or None
+
+
+def _address_values_match(suffix: str, registered_value: str, current_value: str) -> bool:
+    if registered_value == current_value:
+        return True
+    if suffix in {"house_id", "postal_code", "house_no", "moo"}:
+        return False
+    return SequenceMatcher(None, registered_value, current_value).ratio() >= 0.86
+
+
+def _fill_missing_mother_last_name_from_father(records: list[CanonicalStudentRecord]) -> None:
+    for record in records:
+        mother_last_name = record.dmc_fields.get("mother.last_name")
+        if mother_last_name is not None and not _is_missing_import_value(mother_last_name.value):
+            continue
+
+        father_last_name = record.dmc_fields.get("father.last_name")
+        if father_last_name is None or _is_missing_import_value(father_last_name.value):
+            continue
+
+        record.dmc_fields["mother.last_name"] = CurrentStudentField(
+            value=father_last_name.value,
+            source="derived",
+            confidence="review",
+            raw_value="derived_from_father.last_name",
+        )
 
 
 def _merge_authoritative_field(

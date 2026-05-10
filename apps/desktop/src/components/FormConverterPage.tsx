@@ -71,22 +71,25 @@ const priorityPreviewColumnGroups: PreviewColumnGroupDefinition[] = [
   {
     label: "ข้อมูลนักเรียน",
     columns: [
-      { fieldName: "student_no", label: "เลขประจำตัวนักเรียน", required: true },
-      { fieldName: "citizen_id", label: "เลขประจำตัวประชาชน", required: true },
+      { fieldName: "school_year", label: "ปีการศึกษา" },
       { fieldName: "grade", label: "ชั้น", required: true },
       { fieldName: "room", label: "ห้อง", required: true },
       { fieldName: "seat_no", label: "เลขที่", required: true },
-      { fieldName: "sex", label: "เพศ", required: true },
+      { fieldName: "citizen_id", label: "เลขประจำตัวประชาชน", required: true },
+      { fieldName: "student_no", label: "เลขประจำตัวนักเรียน", required: true },
       { fieldName: "prefix", label: "คำนำหน้าชื่อ", required: true },
+      { fieldName: "sex", label: "เพศ", required: true },
       { fieldName: "first_name", label: "ชื่อ", required: true },
       { fieldName: "last_name", label: "นามสกุล", required: true },
+      { fieldName: "first_name_en", label: "ชื่ออังกฤษ" },
+      { fieldName: "last_name_en", label: "นามสกุลอังกฤษ" },
       { fieldName: "birth_date", label: "วันเกิด", required: true },
       { fieldName: "birth_province", label: "จังหวัดที่เกิด", required: true },
-      { fieldName: "weight_kg", label: "น้ำหนัก", required: true },
-      { fieldName: "height_cm", label: "ส่วนสูง", required: true },
-      { fieldName: "religion", label: "ศาสนา", required: true },
+      { fieldName: "birth_hospital", label: "สถานพยาบาลเกิด" },
+      { fieldName: "blood_type", label: "กลุ่มเลือด" },
       { fieldName: "race", label: "เชื้อชาติ", required: true },
       { fieldName: "nationality", label: "สัญชาติ", required: true },
+      { fieldName: "religion", label: "ศาสนา", required: true },
     ],
   },
   {
@@ -94,31 +97,81 @@ const priorityPreviewColumnGroups: PreviewColumnGroupDefinition[] = [
     columns: [
       { fieldName: "registered_address.house_id", label: "รหัสประจำบ้าน", required: true },
       { fieldName: "registered_address.house_no", label: "บ้านเลขที่", required: true },
-      { fieldName: "registered_address.subdistrict", label: "ตำบล", required: true },
-      { fieldName: "registered_address.district", label: "อำเภอ", required: true },
+      { fieldName: "registered_address.moo", label: "หมู่ที่ตามทะเบียน" },
+      { fieldName: "registered_address.road", label: "ถนนตามทะเบียน" },
       { fieldName: "registered_address.province", label: "จังหวัด", required: true },
+      { fieldName: "registered_address.district", label: "อำเภอ", required: true },
+      { fieldName: "registered_address.subdistrict", label: "ตำบล", required: true },
       { fieldName: "registered_address.postal_code", label: "รหัสไปรษณีย์", required: true },
+    ],
+  },
+  {
+    label: "ที่อยู่ปัจจุบัน",
+    columns: [
+      { fieldName: "current_address.house_id", label: "รหัสประจำบ้านปัจจุบัน" },
+      { fieldName: "current_address.house_no", label: "บ้านเลขที่ปัจจุบัน" },
+      { fieldName: "current_address.moo", label: "หมู่ที่ปัจจุบัน" },
+      { fieldName: "current_address.road", label: "ถนนปัจจุบัน" },
+      { fieldName: "current_address.province", label: "จังหวัดปัจจุบัน" },
+      { fieldName: "current_address.district", label: "อำเภอปัจจุบัน" },
+      { fieldName: "current_address.subdistrict", label: "ตำบลปัจจุบัน" },
+      { fieldName: "current_address.postal_code", label: "รหัสไปรษณีย์ปัจจุบัน" },
+    ],
+  },
+  {
+    label: "การเดินทางและสุขภาพ",
+    columns: [
+      { fieldName: "commute_method", label: "การเดินทาง" },
+      { fieldName: "distance_paved_road_km", label: "ระยะทางถนนลาดยาง กม." },
+      { fieldName: "commute_minutes", label: "เวลาเดินทาง นาที" },
+      { fieldName: "weight_kg", label: "น้ำหนัก", required: true },
+      { fieldName: "height_cm", label: "ส่วนสูง", required: true },
+    ],
+  },
+  {
+    label: "ข้อมูลครอบครัว",
+    columns: [
+      { fieldName: "parents_marital_status", label: "สถานภาพบิดามารดา" },
+      { fieldName: "older_brothers", label: "จำนวนพี่ชาย" },
+      { fieldName: "younger_brothers", label: "จำนวนน้องชาย" },
+      { fieldName: "older_sisters", label: "จำนวนพี่สาว" },
+      { fieldName: "younger_sisters", label: "จำนวนน้องสาว" },
+      { fieldName: "siblings_studying_count", label: "จำนวนพี่น้องที่ศึกษาอยู่" },
+      { fieldName: "child_order", label: "นักเรียนเป็นบุตรคนที่" },
     ],
   },
   {
     label: "ข้อมูลบิดา",
     columns: [
+      { fieldName: "father.citizen_id", label: "เลขบัตรบิดา" },
       { fieldName: "father.first_name", label: "ชื่อบิดา", required: true },
       { fieldName: "father.last_name", label: "นามสกุลบิดา", required: true },
+      { fieldName: "father.occupation", label: "อาชีพบิดา" },
+      { fieldName: "father.income_text", label: "รายได้บิดา" },
+      { fieldName: "father.phone", label: "โทรศัพท์บิดา" },
     ],
   },
   {
     label: "ข้อมูลมารดา",
     columns: [
+      { fieldName: "mother.citizen_id", label: "เลขบัตรมารดา" },
       { fieldName: "mother.first_name", label: "ชื่อมารดา", required: true },
       { fieldName: "mother.last_name", label: "นามสกุลมารดา", required: true },
+      { fieldName: "mother.occupation", label: "อาชีพมารดา" },
+      { fieldName: "mother.income_text", label: "รายได้มารดา" },
+      { fieldName: "mother.phone", label: "โทรศัพท์มารดา" },
     ],
   },
   {
     label: "ข้อมูลผู้ปกครอง",
     columns: [
+      { fieldName: "guardian.citizen_id", label: "เลขบัตรผู้ปกครอง" },
       { fieldName: "guardian.first_name", label: "ชื่อผู้ปกครอง", required: true },
       { fieldName: "guardian.last_name", label: "นามสกุลผู้ปกครอง", required: true },
+      { fieldName: "guardian.occupation", label: "อาชีพผู้ปกครอง" },
+      { fieldName: "guardian.income_text", label: "รายได้ผู้ปกครอง" },
+      { fieldName: "guardian.phone", label: "โทรศัพท์ผู้ปกครอง" },
+      { fieldName: "guardian_relationship", label: "ความเกี่ยวข้องผู้ปกครอง" },
     ],
   },
 ];
@@ -580,9 +633,6 @@ function DmcFormTablePreview({
       <table className="w-full border-collapse text-sm" style={{ minWidth: tableMinWidth }}>
         <thead className="sticky top-0 z-10 bg-muted/60 text-left">
           <tr>
-            <th rowSpan={2} className="whitespace-nowrap border-b px-3 py-2 font-medium">
-              สถานะ
-            </th>
             {columnGroups.map((group) => (
               <th
                 key={group.label}
@@ -592,6 +642,9 @@ function DmcFormTablePreview({
                 {group.label}
               </th>
             ))}
+            <th rowSpan={2} className="whitespace-nowrap border-b border-l px-3 py-2 font-medium">
+              สถานะ
+            </th>
           </tr>
           <tr>
             {columns.map(({ fieldName, label }) => (
@@ -615,16 +668,16 @@ function DmcFormTablePreview({
                 className="align-top"
                 style={shouldVirtualize ? { height: previewRowHeight } : undefined}
               >
-                <td className="border-b px-3 py-2">
-                  <span className={missingCount ? "font-medium text-amber-800" : "font-medium text-emerald-700"}>
-                    {missingCount ? `ขาด ${missingCount} ช่อง` : "พร้อม"}
-                  </span>
-                </td>
                 {columns.map(({ fieldName }) => (
                   <td key={`${record.record_id}-${fieldName}`} className="whitespace-nowrap border-b px-3 py-2">
                     {formatFieldValue(recordFieldValue(record, fieldName))}
                   </td>
                 ))}
+                <td className="border-b border-l px-3 py-2">
+                  <span className={missingCount ? "font-medium text-amber-800" : "font-medium text-emerald-700"}>
+                    {missingCount ? `ขาด ${missingCount} ช่อง` : "พร้อม"}
+                  </span>
+                </td>
               </tr>
             );
           })}

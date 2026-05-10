@@ -92,7 +92,7 @@ def _write_ocr_markdown(path: Path) -> None:
                 "๔. สุขภาพ",
                 "น้ำหนัก* 40 กิโลกรัม ส่วนสูง* 150 เซนติเมตร",
                 "๕. ครอบครัว",
-                "สถานภาพสมรสของบิดามารดา สถานภาพสมรส [ ] สมรส [x] แยกกันอยู่ ข้อมูลพี่น้อง จำนวนพี่ชาย* - คน จำนวนน้องชาย* - คน จำนวนพี่สาว* 1 คน จำนวนน้องสาว* - คน",
+                "สถานภาพสมรสของบิดามารดา สถานภาพสมรส [ ] สมรส [x] แยกกันอยู่ ข้อมูลพี่น้อง จำนวนพี่ชาย* - คน จำนวนน้องชาย* - คน จำนวนพี่สาว* 1 คน จำนวนน้องสาว* - คน จำนวนพี่น้องที่ศึกษาอยู่ (ไม่รวมตัวนักเรียนเอง) 1 คน นักเรียนเป็นบุตรคนที่* 2",
                 "ข้อมูลบิดา เลขบัตรประจำตัวประชาชนบิดา* 3410100748561 ชนิดบัตร* [x] บัตรประชาชน [ ] อื่นๆ ชื่อบิดา* นาย ชวลิต นามสกุล* ตุ้มดำ กลุ่มเลือดบิดา* - อาชีพ* รับจ้างทั่วไป รายได้ต่อเดือน(บาท)* 5000 - 6000 บาท หมายเลขโทรศัพท์บิดา* 063-839-5699",
                 "ข้อมูลมารดา เลขบัตรประจำตัวประชาชนมารดา* - ชนิดบัตร* [ ] บัตรประชาชน [ ] อื่นๆ ชื่อมารดา* - นามสกุล* - กลุ่มเลือดมารดา* - อาชีพ* - รายได้ต่อเดือน(บาท)* - หมายเลขโทรศัพท์มารดา* -",
                 "ข้อมูลผู้ปกครอง เลขบัตรประจำตัวประชาชนผู้ปกครอง* 3410100748561 ชนิดบัตร* [x] บัตรประชาชน [ ] อื่นๆ ชื่อผู้ปกครอง* นาย ชวลิต นามสกุล* ตุ้มดำ กลุ่มเลือดผู้ปกครอง* - อาชีพ* รับจ้างทั่วไป รายได้ต่อเดือน(บาท)* 5000 - 6000 บาท หมายเลขโทรศัพท์ผู้ปกครอง* 063-839-5699 ความเกี่ยวข้องของผู้ปกครองกับนักเรียน* บิดาและบุตร",
@@ -160,6 +160,8 @@ def test_reconcile_current_students_builds_canonical_records_and_review_queue(tm
     assert matched.dmc_fields["citizen_id"].source == "thai_id_scan"
     assert matched.dmc_fields["weight_kg"].source == "ocr_form"
     assert matched.dmc_fields["guardian.phone"].value == "063-839-5699"
+    assert matched.dmc_fields["siblings_studying_count"].value == "1"
+    assert matched.dmc_fields["child_order"].value == "2"
     assert any(conflict.field_name == "prefix" for conflict in matched.conflicts)
 
     assert by_student_no["19985"].match_status == "needs_review"
@@ -268,7 +270,8 @@ def test_export_current_student_import_excel_writes_workbook(tmp_path: Path) -> 
     assert result.summary.records_total == 1
     conflict_fields = {conflict.field_name for conflict in result.conflicts}
     assert "prefix" not in conflict_fields
-    assert {"mother.first_name", "mother.last_name"}.issubset(conflict_fields)
+    assert "mother.first_name" in conflict_fields
+    assert "mother.last_name" not in conflict_fields
     assert all(conflict.reason == "missing_after_all_sources" for conflict in result.conflicts)
     workbook = load_workbook(output_path, read_only=True, data_only=True)
     sheet = workbook.active
@@ -281,6 +284,7 @@ def test_export_current_student_import_excel_writes_workbook(tmp_path: Path) -> 
         if row[field_columns["citizen_id"] - 1]
     ]
     assert "1819900905157" in citizen_values
+    assert data_rows[0][field_columns["mother.last_name"] - 1] == "ตุ้มดำ"
 
 
 def test_export_dmc_form_json_writes_operation_neutral_json(tmp_path: Path) -> None:
@@ -316,6 +320,8 @@ def test_export_dmc_form_json_writes_operation_neutral_json(tmp_path: Path) -> N
     assert "operation_type" not in payload
     assert "operation_type" not in payload["records"][0]
     assert "operation_type" not in payload["records"][0]["fields"]
+    assert payload["records"][0]["fields"]["siblings_studying_count"] == "1"
+    assert payload["records"][0]["fields"]["child_order"] == "2"
 
 
 def test_preview_dmc_form_json_reports_missing_required_data_read_only(tmp_path: Path) -> None:
@@ -339,9 +345,13 @@ def test_preview_dmc_form_json_reports_missing_required_data_read_only(tmp_path:
 
     assert preview.records_previewed == 1
     assert preview.records[0].fields["citizen_id"] == "1819900905157"
-    assert {"mother.first_name", "mother.last_name"}.issubset(
-        {conflict.field_name for conflict in preview.conflicts}
-    )
+    assert preview.records[0].fields["siblings_studying_count"] == "1"
+    assert preview.records[0].fields["child_order"] == "2"
+    preview_conflict_fields = {conflict.field_name for conflict in preview.conflicts}
+    assert "mother.first_name" in preview_conflict_fields
+    assert "mother.last_name" not in preview_conflict_fields
+    assert preview.records[0].fields["mother.last_name"] == "ตุ้มดำ"
+    assert preview.records[0].field_details["mother.last_name"].source == "derived"
     assert "operation_type" not in preview.records[0].fields
 
     result = export_dmc_form_json(
@@ -355,12 +365,14 @@ def test_preview_dmc_form_json_reports_missing_required_data_read_only(tmp_path:
         )
     )
 
-    assert {"mother.first_name", "mother.last_name"}.issubset(
-        {conflict.field_name for conflict in result.conflicts}
-    )
+    result_conflict_fields = {conflict.field_name for conflict in result.conflicts}
+    assert "mother.first_name" in result_conflict_fields
+    assert "mother.last_name" not in result_conflict_fields
     assert result.records[0].fields["mother.first_name"] is None
+    assert result.records[0].fields["mother.last_name"] == "ตุ้มดำ"
     payload = json.loads(output_path.read_text(encoding="utf-8"))
-    assert payload["records"][0]["fields"]["mother.last_name"] is None
+    assert payload["records"][0]["fields"]["mother.last_name"] == "ตุ้มดำ"
+    assert payload["records"][0]["field_details"]["mother.last_name"]["source"] == "derived"
 
 
 def test_dmc_form_json_uses_civil_registration_ocr_as_supplement(tmp_path: Path) -> None:
@@ -389,12 +401,16 @@ def test_dmc_form_json_uses_civil_registration_ocr_as_supplement(tmp_path: Path)
     conflict_fields = {conflict.field_name for conflict in preview.conflicts}
     assert preview.summary.civil_registration_records == 1
     assert record.fields["registered_address.house_id"] == "8101-008408-9"
+    assert record.fields["current_address.house_id"] == "8101-008408-9"
+    assert record.fields["current_address.house_no"] == record.fields["registered_address.house_no"]
     assert record.fields["father.citizen_id"] == "3410100748561"
     assert record.fields["father.first_name"] == "ชวลิต"
     assert record.fields["mother.citizen_id"] == "1760300002256"
     assert record.fields["mother.first_name"] == "กรานณิภา"
     assert record.fields["mother.last_name"] == "ตุ้มดำ"
     assert record.field_details["registered_address.house_id"].source == "civil_registration"
+    assert record.field_details["current_address.house_id"].source == "civil_registration"
+    assert record.field_details["current_address.subdistrict"].source != "ocr_form"
     assert record.field_details["mother.first_name"].source == "civil_registration"
     assert "mother.first_name" not in conflict_fields
     assert "mother.last_name" not in conflict_fields
@@ -412,7 +428,9 @@ def test_dmc_form_json_uses_civil_registration_ocr_as_supplement(tmp_path: Path)
     )
 
     assert result.records[0].fields["registered_address.house_id"] == "8101-008408-9"
+    assert result.records[0].fields["current_address.house_id"] == "8101-008408-9"
     payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["records"][0]["field_details"]["current_address.house_id"]["source"] == "civil_registration"
     assert payload["records"][0]["field_details"]["mother.first_name"]["source"] == "civil_registration"
 
 

@@ -460,7 +460,7 @@ fn spawn_sidecar_process(app: &AppHandle) -> Result<RunningSidecar, String> {
     let bundled_spec = bundled_sidecar_launch_spec(app)?;
     let python_specs = python_sidecar_launch_specs(app).unwrap_or_default();
 
-    if cfg!(dev) {
+    if cfg!(debug_assertions) {
         launch_specs.extend(python_specs);
         if let Some(spec) = bundled_spec {
             launch_specs.push(spec);
@@ -707,8 +707,38 @@ fn rpc_timeout_secs(method: &str) -> u64 {
         "start_job"
         | "resume_existing_job"
         | "install_browser_runtime"
-        | "export_student_basic_info_form" => RPC_TIMEOUT_LONG_SECS,
+        | "export_student_basic_info_form"
+        | "validate_current_student_sources"
+        | "export_current_student_import_excel"
+        | "preview_dmc_form_json"
+        | "export_dmc_form_json" => RPC_TIMEOUT_LONG_SECS,
         _ => RPC_TIMEOUT_STANDARD_SECS,
+    }
+}
+
+#[cfg(test)]
+mod rpc_timeout_tests {
+    use super::{rpc_timeout_secs, RPC_TIMEOUT_LONG_SECS, RPC_TIMEOUT_STANDARD_SECS};
+
+    #[test]
+    fn form_converter_rpc_methods_use_long_timeout() {
+        for method in [
+            "validate_current_student_sources",
+            "export_current_student_import_excel",
+            "preview_dmc_form_json",
+            "export_dmc_form_json",
+        ] {
+            assert_eq!(rpc_timeout_secs(method), RPC_TIMEOUT_LONG_SECS);
+        }
+    }
+
+    #[test]
+    fn lightweight_rpc_methods_keep_standard_timeout() {
+        assert_eq!(rpc_timeout_secs("ping"), RPC_TIMEOUT_STANDARD_SECS);
+        assert_eq!(
+            rpc_timeout_secs("get_account_status"),
+            RPC_TIMEOUT_STANDARD_SECS
+        );
     }
 }
 
