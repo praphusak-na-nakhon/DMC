@@ -246,10 +246,10 @@ describe("FormConverterPage", () => {
 
     render(<FormConverterPage onBackHome={vi.fn()} onRevealPath={onRevealPath} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /เลือก Excel/ }));
-    fireEvent.click(screen.getByRole("button", { name: /เลือก CSV/ }));
-    fireEvent.click(screen.getByRole("button", { name: /เพิ่มไฟล์ OCR/ }));
-    fireEvent.click(screen.getByRole("button", { name: /เพิ่มไฟล์ทะเบียนบ้าน/ }));
+    fireEvent.click(screen.getByRole("button", { name: /เลือกไฟล์ Excel/ }));
+    fireEvent.click(screen.getByRole("button", { name: /เลือกไฟล์ CSV/ }));
+    fireEvent.click(screen.getByRole("button", { name: /เลือกไฟล์ OCR จากแบบฟอร์ม DMC/ }));
+    fireEvent.click(screen.getByRole("button", { name: /เลือกไฟล์ OCR จากสำเนาทะเบียนบ้านนักเรียน/ }));
     await waitFor(() =>
       expect(screen.getByDisplayValue("C:\\dmc\\uploadTest\\studentListM1-M4 2569.xlsx")).toBeInTheDocument(),
     );
@@ -395,7 +395,7 @@ describe("FormConverterPage", () => {
 
     render(<FormConverterPage onBackHome={vi.fn()} onRevealPath={vi.fn()} onRetryRuntime={onRetryRuntime} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /เลือก Excel/ }));
+    fireEvent.click(screen.getByRole("button", { name: /เลือกไฟล์ Excel/ }));
 
     expect(await screen.findByText("Desktop runtime ยังไม่พร้อม")).toBeInTheDocument();
     expect(screen.getByText(/browser preview\/localhost/)).toBeInTheDocument();

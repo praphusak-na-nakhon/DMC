@@ -1,5 +1,15 @@
-import { AlertTriangle, FileOutput, FileText, Loader2, UploadCloud } from "lucide-react";
-import { useState } from "react";
+import {
+  AlertTriangle,
+  File as FileIcon,
+  FileOutput,
+  FileSpreadsheet,
+  FileText,
+  FolderOpen,
+  Loader2,
+  UploadCloud,
+  X,
+} from "lucide-react";
+import { useState, type DragEvent } from "react";
 import messages from "../i18n/th.json";
 import { describeUserFacingError } from "../lib/errorMessages";
 import {
@@ -352,112 +362,127 @@ export function FormConverterPage({
 
       <Card>
         <CardHeader>
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <CardTitle>เตรียมไฟล์ JSON จากแบบฟอร์ม DMC</CardTitle>
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-50 text-blue-600">
+              <UploadCloud className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <CardTitle>เตรียมไฟล์สำหรับแปลง DMC</CardTitle>
               <CardDescription>
-                เริ่มจากไฟล์บังคับ แล้วค่อยเพิ่มไฟล์อ้างอิงเพื่อช่วยเติมข้อมูลให้ครบก่อนตรวจและส่งออก
+                เลือกไฟล์ที่ต้องใช้ แล้วอัปโหลดไฟล์ให้ครบก่อนตรวจและส่งออก
               </CardDescription>
             </div>
-            <Badge variant="outline">ไฟล์ JSON สำหรับ DMC</Badge>
           </div>
         </CardHeader>
         <CardContent className="grid gap-5">
-          <section className="grid gap-4 rounded-lg border bg-muted/20 p-4">
-            <div>
-              <Badge variant="default">1. ไฟล์บังคับ</Badge>
-              <h2 className="mt-2 text-lg font-semibold">ไฟล์หลักสำหรับสร้างข้อมูลนักเรียน</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                ต้องมีไฟล์รายชื่อนักเรียนและไฟล์ OCR จากแบบฟอร์ม DMC ก่อนจึงจะตรวจตัวอย่างได้
-              </p>
-            </div>
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="grid gap-2">
-                <Label>ไฟล์รายชื่อนักเรียน Excel</Label>
-                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                  <Input
-                    value={rosterPath}
-                    onChange={(event) => {
-                      setRosterPath(event.target.value);
-                      resetResult();
-                    }}
-                    placeholder="C:\\dmc\\uploadTest\\studentListM1-M4 2569.xlsx"
-                  />
-                  <Button variant="outline" onClick={() => void handleBrowseRoster()}>
-                    <FileText className="h-4 w-4" />
-                    เลือก Excel
-                  </Button>
-                </div>
-              </div>
+          <section className="grid gap-4 lg:grid-cols-2">
+            <PrepareFileCard
+              order={1}
+              title="ไฟล์รายชื่อนักเรียน Excel"
+              statusLabel="บังคับ"
+              description="ต้องมีไฟล์รายชื่อนักเรียน Excel เพื่อใช้เป็นบัญชีรายชื่อหลักของแบบฟอร์ม DMC ที่จะตรวจส่งออกได้"
+              value={rosterPath}
+              placeholder="C:\\dmc\\uploadTest\\studentListM1-M4 2569.xlsx"
+              acceptedDescription="รองรับไฟล์ .xlsx เท่านั้น"
+              browseButtonLabel="เลือกไฟล์ Excel"
+              iconKind="excel"
+              onBrowse={() => void handleBrowseRoster()}
+              onClear={() => {
+                setRosterPath("");
+                resetResult();
+              }}
+              onDropPaths={(paths) => {
+                setRosterPath(paths[0]);
+                resetResult();
+              }}
+              onUnsupportedDrop={() => setErrorMessage("ไม่สามารถอ่านพาธไฟล์จากการลากวางได้ กรุณากดเลือกไฟล์แทน")}
+              onValueChange={(value) => {
+                setRosterPath(value);
+                resetResult();
+              }}
+            />
 
-              <div className="grid gap-2">
-                <Label>ไฟล์ OCR จากแบบฟอร์ม DMC</Label>
-                <textarea
-                  className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  value={ocrMarkdownPaths}
-                  onChange={(event) => {
-                    setOcrMarkdownPaths(event.target.value);
-                    resetResult();
-                  }}
-                  placeholder="หนึ่งไฟล์ต่อหนึ่งบรรทัด เช่น C:\\dmc\\uploadTest\\1-3ex.md"
-                />
-                <div>
-                  <Button variant="outline" size="sm" onClick={() => void handleBrowseOcrMarkdown()}>
-                    <FileText className="h-4 w-4" />
-                    เพิ่มไฟล์ OCR
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </section>
+            <PrepareFileCard
+              order={2}
+              title="ไฟล์ OCR จากแบบฟอร์ม DMC"
+              statusLabel="บังคับ"
+              description="ไฟล์ OCR ที่ได้จากการสแกนแบบฟอร์ม DMC เช่น .txt, .md, .csv"
+              value={ocrMarkdownPaths}
+              placeholder="C:\\dmc\\uploadTest\\1-3ex.md"
+              acceptedDescription="รองรับไฟล์ .txt, .md, .csv"
+              browseButtonLabel="เลือกไฟล์ OCR"
+              browseButtonAriaLabel="เลือกไฟล์ OCR จากแบบฟอร์ม DMC"
+              iconKind="file"
+              onBrowse={() => void handleBrowseOcrMarkdown()}
+              onClear={() => {
+                setOcrMarkdownPaths("");
+                resetResult();
+              }}
+              onDropPaths={(paths) => {
+                setOcrMarkdownPaths((current) => appendPathList(current, paths));
+                resetResult();
+              }}
+              onUnsupportedDrop={() => setErrorMessage("ไม่สามารถอ่านพาธไฟล์จากการลากวางได้ กรุณากดเลือกไฟล์แทน")}
+              onValueChange={(value) => {
+                setOcrMarkdownPaths(value);
+                resetResult();
+              }}
+            />
 
-          <section className="grid gap-4 rounded-lg border bg-background p-4">
-            <div>
-              <Badge variant="secondary">2. ไฟล์ช่วยเติมข้อมูล</Badge>
-              <h2 className="mt-2 text-lg font-semibold">ข้อมูลอ้างอิงเพิ่มเติม</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                ใส่ได้เมื่อมีข้อมูล เพื่อช่วยจับคู่นักเรียนและเติมข้อมูลทะเบียนบ้านให้แม่นยำขึ้น
-              </p>
-            </div>
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="grid gap-2">
-                <Label>CSV จากเครื่องสแกนบัตรนักเรียน</Label>
-                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                  <Input
-                    value={thaiIdCsvPath}
-                    onChange={(event) => {
-                      setThaiIdCsvPath(event.target.value);
-                      resetResult();
-                    }}
-                    placeholder="C:\\dmc\\uploadTest\\ThaiID M1-2569.CSV"
-                  />
-                  <Button variant="outline" onClick={() => void handleBrowseThaiIdCsv()}>
-                    <UploadCloud className="h-4 w-4" />
-                    เลือก CSV
-                  </Button>
-                </div>
-              </div>
+            <PrepareFileCard
+              order={3}
+              title="CSV จากเครื่องสแกนบัตรนักเรียน"
+              statusLabel="ตัวเลือก"
+              description="เพิ่มเพื่อจับคู่นักเรียน เติมชื่อบัตรกับผู้ปกครองให้แม่นยำขึ้น"
+              value={thaiIdCsvPath}
+              placeholder="C:\\dmc\\uploadTest\\ThaiID M1-2569.CSV"
+              acceptedDescription="รองรับไฟล์ .csv เท่านั้น"
+              browseButtonLabel="เลือกไฟล์ CSV"
+              iconKind="file"
+              optional
+              onBrowse={() => void handleBrowseThaiIdCsv()}
+              onClear={() => {
+                setThaiIdCsvPath("");
+                resetResult();
+              }}
+              onDropPaths={(paths) => {
+                setThaiIdCsvPath(paths[0]);
+                resetResult();
+              }}
+              onUnsupportedDrop={() => setErrorMessage("ไม่สามารถอ่านพาธไฟล์จากการลากวางได้ กรุณากดเลือกไฟล์แทน")}
+              onValueChange={(value) => {
+                setThaiIdCsvPath(value);
+                resetResult();
+              }}
+            />
 
-              <div className="grid gap-2">
-                <Label>ไฟล์ OCR จากสำเนาทะเบียนบ้านนักเรียน</Label>
-                <textarea
-                  className="min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  value={civilRegistrationMarkdownPaths}
-                  onChange={(event) => {
-                    setCivilRegistrationMarkdownPaths(event.target.value);
-                    resetResult();
-                  }}
-                  placeholder="หนึ่งไฟล์ต่อหนึ่งบรรทัด เช่น D:\\DMC\\2569\\CivilDoc.md"
-                />
-                <div className="flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-                  <span>ใช้เติมเลขรหัสประจำบ้าน ที่อยู่ตามทะเบียนบ้าน และข้อมูลบิดา/มารดาที่ OCR จากเอกสารทะเบียนบ้านแม่นยำกว่าแบบฟอร์ม</span>
-                  <Button variant="outline" size="sm" onClick={() => void handleBrowseCivilRegistrationMarkdown()}>
-                    <FileText className="h-4 w-4" />
-                    เพิ่มไฟล์ทะเบียนบ้าน
-                  </Button>
-                </div>
-              </div>
-            </div>
+            <PrepareFileCard
+              order={4}
+              title="ไฟล์ OCR จากสำเนาทะเบียนบ้านนักเรียน"
+              statusLabel="ตัวเลือก"
+              description="ใช้เติมข้อมูลรหัสประจำบ้าน ที่อยู่ตามทะเบียนบ้าน และข้อมูลบิดา/มารดา"
+              value={civilRegistrationMarkdownPaths}
+              placeholder="D:\\DMC\\2569\\CivilDoc.md"
+              acceptedDescription="รองรับไฟล์ .txt, .md, .csv"
+              browseButtonLabel="เลือกไฟล์ OCR"
+              browseButtonAriaLabel="เลือกไฟล์ OCR จากสำเนาทะเบียนบ้านนักเรียน"
+              iconKind="file"
+              optional
+              onBrowse={() => void handleBrowseCivilRegistrationMarkdown()}
+              onClear={() => {
+                setCivilRegistrationMarkdownPaths("");
+                resetResult();
+              }}
+              onDropPaths={(paths) => {
+                setCivilRegistrationMarkdownPaths((current) => appendPathList(current, paths));
+                resetResult();
+              }}
+              onUnsupportedDrop={() => setErrorMessage("ไม่สามารถอ่านพาธไฟล์จากการลากวางได้ กรุณากดเลือกไฟล์แทน")}
+              onValueChange={(value) => {
+                setCivilRegistrationMarkdownPaths(value);
+                resetResult();
+              }}
+            />
           </section>
 
           <section className="grid gap-4 rounded-lg border bg-muted/20 p-4 lg:grid-cols-[minmax(0,1fr)_260px]">
@@ -540,6 +565,136 @@ export function FormConverterPage({
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+type PrepareFileCardProps = {
+  order: number;
+  title: string;
+  statusLabel: string;
+  description: string;
+  value: string;
+  placeholder: string;
+  acceptedDescription: string;
+  browseButtonLabel: string;
+  browseButtonAriaLabel?: string;
+  iconKind: "excel" | "file";
+  optional?: boolean;
+  onBrowse: () => void;
+  onClear: () => void;
+  onDropPaths: (paths: string[]) => void;
+  onUnsupportedDrop: () => void;
+  onValueChange: (value: string) => void;
+};
+
+function PrepareFileCard({
+  order,
+  title,
+  statusLabel,
+  description,
+  value,
+  placeholder,
+  acceptedDescription,
+  browseButtonLabel,
+  browseButtonAriaLabel,
+  iconKind,
+  optional = false,
+  onBrowse,
+  onClear,
+  onDropPaths,
+  onUnsupportedDrop,
+  onValueChange,
+}: PrepareFileCardProps) {
+  const InputIcon = iconKind === "excel" ? FileSpreadsheet : FileIcon;
+  const selectedValue = pathInputValue(value);
+  const hasValue = selectedValue.length > 0;
+
+  function handleDrop(event: DragEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    const paths = droppedFilePaths(event);
+    if (paths.length) {
+      onDropPaths(paths);
+      return;
+    }
+    onUnsupportedDrop();
+  }
+
+  return (
+    <section className="min-w-0 rounded-lg border bg-background p-4 shadow-sm">
+      <div className="flex items-start gap-3">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+          {order}
+        </div>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-semibold leading-6">{title}</h3>
+            <span
+              className={
+                optional
+                  ? "rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600"
+                  : "rounded-full bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-600"
+              }
+            >
+              {statusLabel}
+            </span>
+          </div>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">{description}</p>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+        <div className="relative min-w-0">
+          <InputIcon
+            className={
+              iconKind === "excel"
+                ? "pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-600"
+                : "pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
+            }
+          />
+          <Input
+            className="h-9 pl-9 pr-9"
+            value={selectedValue}
+            onChange={(event) => onValueChange(event.target.value)}
+            placeholder={placeholder}
+          />
+          {hasValue ? (
+            <button
+              type="button"
+              className="absolute right-2 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+              aria-label={`ล้าง${title}`}
+              onClick={onClear}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+        </div>
+
+        <Button
+          type="button"
+          variant="outline"
+          className="border-blue-300 text-blue-700 hover:bg-blue-50 hover:text-blue-800"
+          aria-label={browseButtonAriaLabel}
+          onClick={onBrowse}
+        >
+          <FolderOpen className="h-4 w-4" />
+          {browseButtonLabel}
+        </Button>
+      </div>
+
+      <button
+        type="button"
+        className="mt-3 flex min-h-16 w-full flex-col items-center justify-center gap-1 rounded-md border border-dashed border-blue-200 bg-blue-50/20 px-3 py-3 text-center text-sm text-muted-foreground transition-colors hover:border-blue-300 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        onClick={onBrowse}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={handleDrop}
+      >
+        <span className="inline-flex items-center gap-1 font-medium text-blue-700">
+          <UploadCloud className="h-4 w-4" />
+          ลากไฟล์มาวางที่นี่ หรือ คลิกเพื่อเลือกไฟล์
+        </span>
+        <span>{acceptedDescription}</span>
+      </button>
+    </section>
   );
 }
 
@@ -765,9 +920,24 @@ function parseGradeLevels(value: string): number[] | null {
   return levels.length ? levels : null;
 }
 
+function pathInputValue(value: string): string {
+  return markdownPaths(value).join("; ");
+}
+
+function appendPathList(current: string, paths: string[]): string {
+  const mergedPaths = [...markdownPaths(current), ...paths.map((path) => path.trim()).filter(Boolean)];
+  return Array.from(new Set(mergedPaths)).join("\n");
+}
+
+function droppedFilePaths(event: DragEvent): string[] {
+  return Array.from(event.dataTransfer.files)
+    .map((file) => (file as File & { path?: string }).path?.trim() ?? "")
+    .filter(Boolean);
+}
+
 function markdownPaths(value: string): string[] {
   return value
-    .split(/\r?\n/)
+    .split(/[\r\n;]+/)
     .map((item) => item.trim())
     .filter(Boolean);
 }
