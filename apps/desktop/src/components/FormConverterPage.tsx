@@ -5,11 +5,14 @@ import {
   FileSpreadsheet,
   FileText,
   FolderOpen,
+  KeyRound,
   Loader2,
+  ScanText,
   UploadCloud,
   X,
+  type LucideIcon,
 } from "lucide-react";
-import { useState, type DragEvent } from "react";
+import { useState, type DragEvent, type ReactNode } from "react";
 import messages from "../i18n/th.json";
 import { describeUserFacingError } from "../lib/errorMessages";
 import {
@@ -17,11 +20,15 @@ import {
   openCsvDialog,
   openExcelDialog,
   openMarkdownDialog,
+  openOcrSourceDialog,
+  ocrDmcFormWithAkson,
   previewDmcFormJson,
 } from "../lib/rpcClient";
 import type {
+  AksonOcrDmcFormResponse,
   DmcFormJsonRecord,
   CurrentStudentsFieldConflict,
+  CurrentStudentsWarning,
   ExportDmcFormJsonResponse,
   PreviewDmcFormJsonResponse,
 } from "../types/contracts";
@@ -39,6 +46,8 @@ type FormConverterPageProps = {
   onRetryRuntime?: () => void;
 };
 
+type OcrInputMode = "ocrFile" | "scanFile";
+
 const errorMessages: Record<string, string> = {
   ...(messages.app.formConverter.errors as Record<string, string>),
   CURRENT_STUDENTS_INPUT_NOT_FOUND: "ไม่พบไฟล์ที่เลือก",
@@ -49,6 +58,19 @@ const errorMessages: Record<string, string> = {
   DMC_FORM_JSON_EXPORT_UNSUPPORTED_TYPE: "ไฟล์ปลายทางต้องเป็น .json",
   CURRENT_STUDENTS_OCR_REQUIRED: "กรุณาเพิ่มไฟล์ OCR จากแบบฟอร์ม DMC อย่างน้อย 1 ไฟล์",
   CURRENT_STUDENTS_OCR_NO_RECORDS: "ไม่พบข้อมูลนักเรียนจากไฟล์ OCR จากแบบฟอร์ม DMC ที่เลือก",
+  AKSONOCR_API_KEY_REQUIRED: "กรุณากรอก AksonOCR API key หรือกำหนด AKSONOCR_API_KEY ใน environment",
+  AKSONOCR_INPUT_NOT_FOUND: "ไม่พบไฟล์ PDF/รูปภาพที่เลือกสำหรับ AksonOCR",
+  AKSONOCR_INPUT_NOT_FILE: "พาธที่เลือกสำหรับ AksonOCR ไม่ใช่ไฟล์",
+  AKSONOCR_INPUT_EMPTY: "ไฟล์ที่เลือกสำหรับ AksonOCR ไม่มีข้อมูล",
+  AKSONOCR_UNSUPPORTED_INPUT_TYPE: "AksonOCR รองรับเฉพาะไฟล์ .pdf, .png, .jpg, .jpeg, .webp",
+  AKSONOCR_FILE_TOO_LARGE: "ไฟล์ใหญ่เกิน 10 MB สำหรับ AksonOCR v2 upload",
+  AKSONOCR_AUTH_FAILED: "AksonOCR API key ไม่ถูกต้องหรือไม่มีสิทธิ์ใช้งาน",
+  AKSONOCR_CREDITS_REQUIRED: "เครดิต AksonOCR ไม่เพียงพอ",
+  AKSONOCR_RATE_LIMITED: "AksonOCR จำกัดจำนวนคำขอชั่วคราว กรุณาลองใหม่อีกครั้ง",
+  AKSONOCR_NETWORK_ERROR: "เชื่อมต่อ AksonOCR ไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ต",
+  AKSONOCR_UPLOAD_REJECTED: "AksonOCR ปฏิเสธไฟล์หรือคำขอที่ส่งไป",
+  AKSONOCR_UPLOAD_FAILED: "อัปโหลดไฟล์ไป AksonOCR ไม่สำเร็จ",
+  AKSONOCR_RESPONSE_INVALID: "AksonOCR ส่งผลลัพธ์กลับมาในรูปแบบที่ระบบอ่านไม่ได้",
 };
 
 type PreviewColumn = {
@@ -195,6 +217,10 @@ export function FormConverterPage({
   const [thaiIdCsvPath, setThaiIdCsvPath] = useState("");
   const [ocrMarkdownPaths, setOcrMarkdownPaths] = useState("");
   const [civilRegistrationMarkdownPaths, setCivilRegistrationMarkdownPaths] = useState("");
+  const [ocrInputMode, setOcrInputMode] = useState<OcrInputMode>("ocrFile");
+  const [aksonSourcePath, setAksonSourcePath] = useState("");
+  const [aksonApiKey, setAksonApiKey] = useState("");
+  const [aksonOcrResult, setAksonOcrResult] = useState<AksonOcrDmcFormResponse | null>(null);
   const [schoolYear, setSchoolYear] = useState("2569");
   const [gradeLevels, setGradeLevels] = useState("1");
   const [jsonPreview, setJsonPreview] = useState<PreviewDmcFormJsonResponse | null>(null);
@@ -203,8 +229,10 @@ export function FormConverterPage({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isRunningAksonOcr, setIsRunningAksonOcr] = useState(false);
   const activeResult = jsonExport ?? jsonPreview;
   const activeConflicts = activeResult?.conflicts ?? [];
+  const activeWarnings = activeResult?.warnings ?? [];
   const selectedOcrCount = markdownPaths(ocrMarkdownPaths).length;
   const canPreview = !isPreviewing && rosterPath.trim().length > 0 && selectedOcrCount > 0;
   const previewHint = !rosterPath.trim()
@@ -246,6 +274,46 @@ export function FormConverterPage({
       }
     } catch (error) {
       setErrorMessage(readableError(error));
+    }
+  }
+
+  async function handleBrowseAksonSource() {
+    try {
+      const selected = await openOcrSourceDialog();
+      if (selected) {
+        setAksonSourcePath(selected);
+        setAksonOcrResult(null);
+        setErrorMessage(null);
+      }
+    } catch (error) {
+      setErrorMessage(readableError(error));
+    }
+  }
+
+  async function handleRunAksonOcr() {
+    const sourcePath = aksonSourcePath.trim();
+    if (!sourcePath) {
+      setErrorMessage("กรุณาเลือกไฟล์ PDF หรือรูปภาพก่อนสร้างไฟล์ OCR");
+      return;
+    }
+
+    setIsRunningAksonOcr(true);
+    setErrorMessage(null);
+    try {
+      const result = await ocrDmcFormWithAkson({
+        sourcePath,
+        apiKey: aksonApiKey.trim() || null,
+        model: "AksonOCR-1.0",
+        forceRefresh: false,
+      });
+      setAksonOcrResult(result);
+      setAksonApiKey("");
+      setOcrMarkdownPaths((current) => appendPathList(current, [result.markdown_path]));
+      resetResult();
+    } catch (error) {
+      setErrorMessage(readableError(error));
+    } finally {
+      setIsRunningAksonOcr(false);
     }
   }
 
@@ -406,7 +474,7 @@ export function FormConverterPage({
               order={2}
               title="ไฟล์ OCR จากแบบฟอร์ม DMC"
               statusLabel="บังคับ"
-              description="ไฟล์ OCR ที่ได้จากการสแกนแบบฟอร์ม DMC เช่น .txt, .md, .csv"
+              description="เลือกใช้ไฟล์ OCR ที่มีอยู่ หรือสร้างไฟล์ OCR จาก PDF/รูปภาพด้วย AksonOCR"
               value={ocrMarkdownPaths}
               placeholder="C:\\dmc\\uploadTest\\1-3ex.md"
               acceptedDescription="รองรับไฟล์ .txt, .md, .csv"
@@ -427,7 +495,34 @@ export function FormConverterPage({
                 setOcrMarkdownPaths(value);
                 resetResult();
               }}
-            />
+              beforePicker={
+                <OcrInputModeSelector
+                  mode={ocrInputMode}
+                  onModeChange={(mode) => {
+                    setOcrInputMode(mode);
+                    setErrorMessage(null);
+                  }}
+                />
+              }
+              showPicker={ocrInputMode === "ocrFile"}
+            >
+              {ocrInputMode === "scanFile" ? (
+                <AksonOcrTool
+                  sourcePath={aksonSourcePath}
+                  apiKey={aksonApiKey}
+                  result={aksonOcrResult}
+                  isRunning={isRunningAksonOcr}
+                  onSourcePathChange={(value) => {
+                    setAksonSourcePath(value);
+                    setAksonOcrResult(null);
+                  }}
+                  onApiKeyChange={setAksonApiKey}
+                  onBrowseSource={() => void handleBrowseAksonSource()}
+                  onRun={() => void handleRunAksonOcr()}
+                  onRevealPath={onRevealPath}
+                />
+              ) : null}
+            </PrepareFileCard>
 
             <PrepareFileCard
               order={3}
@@ -551,6 +646,7 @@ export function FormConverterPage({
                 ) : null}
               </div>
               <div className="lg:col-span-2">
+                <WarningAudit warnings={activeWarnings} />
                 <ConflictAudit conflicts={activeConflicts} />
                 {showTablePreview ? (
                   <DmcFormTablePreview
@@ -580,6 +676,9 @@ type PrepareFileCardProps = {
   browseButtonAriaLabel?: string;
   iconKind: "excel" | "file";
   optional?: boolean;
+  beforePicker?: ReactNode;
+  showPicker?: boolean;
+  children?: ReactNode;
   onBrowse: () => void;
   onClear: () => void;
   onDropPaths: (paths: string[]) => void;
@@ -599,6 +698,9 @@ function PrepareFileCard({
   browseButtonAriaLabel,
   iconKind,
   optional = false,
+  beforePicker,
+  showPicker = true,
+  children,
   onBrowse,
   onClear,
   onDropPaths,
@@ -642,58 +744,239 @@ function PrepareFileCard({
         </div>
       </div>
 
-      <div className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-        <div className="relative min-w-0">
-          <InputIcon
-            className={
-              iconKind === "excel"
-                ? "pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-600"
-                : "pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
-            }
-          />
-          <Input
-            className="h-9 pl-9 pr-9"
-            value={selectedValue}
-            onChange={(event) => onValueChange(event.target.value)}
-            placeholder={placeholder}
-          />
-          {hasValue ? (
-            <button
-              type="button"
-              className="absolute right-2 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-              aria-label={`ล้าง${title}`}
-              onClick={onClear}
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
-        </div>
+      {beforePicker ? <div className="mt-4">{beforePicker}</div> : null}
 
+      {showPicker ? (
+        <>
+          <div className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+            <div className="relative min-w-0">
+              <InputIcon
+                className={
+                  iconKind === "excel"
+                    ? "pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-600"
+                    : "pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
+                }
+              />
+              <Input
+                className="h-9 pl-9 pr-9"
+                value={selectedValue}
+                onChange={(event) => onValueChange(event.target.value)}
+                placeholder={placeholder}
+              />
+              {hasValue ? (
+                <button
+                  type="button"
+                  className="absolute right-2 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                  aria-label={`ล้าง${title}`}
+                  onClick={onClear}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+            </div>
+
+            <Button
+              type="button"
+              variant="outline"
+              className="border-blue-300 text-blue-700 hover:bg-blue-50 hover:text-blue-800"
+              aria-label={browseButtonAriaLabel}
+              onClick={onBrowse}
+            >
+              <FolderOpen className="h-4 w-4" />
+              {browseButtonLabel}
+            </Button>
+          </div>
+
+          <button
+            type="button"
+            className="mt-3 flex min-h-16 w-full flex-col items-center justify-center gap-1 rounded-md border border-dashed border-blue-200 bg-blue-50/20 px-3 py-3 text-center text-sm text-muted-foreground transition-colors hover:border-blue-300 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            onClick={onBrowse}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={handleDrop}
+          >
+            <span className="inline-flex items-center gap-1 font-medium text-blue-700">
+              <UploadCloud className="h-4 w-4" />
+              ลากไฟล์มาวางที่นี่ หรือ คลิกเพื่อเลือกไฟล์
+            </span>
+            <span>{acceptedDescription}</span>
+          </button>
+        </>
+      ) : null}
+      {children ? <div className={showPicker ? "mt-4 border-t pt-4" : "mt-4"}>{children}</div> : null}
+    </section>
+  );
+}
+
+function OcrInputModeSelector({
+  mode,
+  onModeChange,
+}: {
+  mode: OcrInputMode;
+  onModeChange: (mode: OcrInputMode) => void;
+}) {
+  const options: Array<{ value: OcrInputMode; label: string; icon: LucideIcon }> = [
+    { value: "ocrFile", label: "มีไฟล์ OCR แล้ว", icon: FileText },
+    { value: "scanFile", label: "มีไฟล์สแกน PDF/รูปภาพ", icon: ScanText },
+  ];
+
+  return (
+    <div className="grid gap-2 rounded-md bg-slate-100 p-1 sm:grid-cols-2" role="tablist" aria-label="โหมดไฟล์ OCR">
+      {options.map((option) => {
+        const Icon = option.icon;
+        const selected = mode === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            className={
+              selected
+                ? "inline-flex h-9 items-center justify-center gap-2 rounded-md bg-background px-3 text-sm font-semibold text-slate-950 shadow-sm"
+                : "inline-flex h-9 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium text-slate-600 hover:bg-background/70 hover:text-slate-950"
+            }
+            onClick={() => onModeChange(option.value)}
+          >
+            <Icon className="h-4 w-4" />
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function AksonOcrTool({
+  sourcePath,
+  apiKey,
+  result,
+  isRunning,
+  onSourcePathChange,
+  onApiKeyChange,
+  onBrowseSource,
+  onRun,
+  onRevealPath,
+}: {
+  sourcePath: string;
+  apiKey: string;
+  result: AksonOcrDmcFormResponse | null;
+  isRunning: boolean;
+  onSourcePathChange: (value: string) => void;
+  onApiKeyChange: (value: string) => void;
+  onBrowseSource: () => void;
+  onRun: () => void;
+  onRevealPath: (path: string) => void;
+}) {
+  const canRun = sourcePath.trim().length > 0 && !isRunning;
+
+  return (
+    <div className="grid gap-3 rounded-md border bg-slate-50/50 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold">สร้างไฟล์ OCR จาก PDF/รูปภาพ</div>
+          <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
+            ระบบจะบันทึกผลเป็น .md และเพิ่มเข้าไฟล์ OCR ด้านบน
+          </div>
+        </div>
+        <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700">
+          AksonOCR-1.0
+        </span>
+      </div>
+
+      <div className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_auto]">
+        <div className="relative min-w-0">
+          <FileIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+          <Input
+            aria-label="ไฟล์ PDF หรือรูปภาพสำหรับ AksonOCR"
+            className="h-9 pl-9"
+            value={sourcePath}
+            onChange={(event) => onSourcePathChange(event.target.value)}
+            placeholder="C:\\dmc\\uploadTest\\dmc-form.pdf"
+          />
+        </div>
         <Button
           type="button"
           variant="outline"
           className="border-blue-300 text-blue-700 hover:bg-blue-50 hover:text-blue-800"
-          aria-label={browseButtonAriaLabel}
-          onClick={onBrowse}
+          aria-label="เลือกไฟล์ PDF หรือรูปภาพสำหรับ AksonOCR"
+          onClick={onBrowseSource}
         >
           <FolderOpen className="h-4 w-4" />
-          {browseButtonLabel}
+          เลือก PDF/รูปภาพ
         </Button>
       </div>
 
-      <button
-        type="button"
-        className="mt-3 flex min-h-16 w-full flex-col items-center justify-center gap-1 rounded-md border border-dashed border-blue-200 bg-blue-50/20 px-3 py-3 text-center text-sm text-muted-foreground transition-colors hover:border-blue-300 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        onClick={onBrowse}
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={handleDrop}
-      >
-        <span className="inline-flex items-center gap-1 font-medium text-blue-700">
-          <UploadCloud className="h-4 w-4" />
-          ลากไฟล์มาวางที่นี่ หรือ คลิกเพื่อเลือกไฟล์
-        </span>
-        <span>{acceptedDescription}</span>
-      </button>
+      <div className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_auto]">
+        <div className="relative min-w-0">
+          <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+          <Input
+            aria-label="AksonOCR API key"
+            className="h-9 pl-9"
+            type="password"
+            value={apiKey}
+            onChange={(event) => onApiKeyChange(event.target.value)}
+            placeholder="AksonOCR API key หรือใช้ AKSONOCR_API_KEY"
+          />
+        </div>
+        <Button type="button" disabled={!canRun} onClick={onRun}>
+          {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanText className="h-4 w-4" />}
+          สร้างไฟล์ OCR
+        </Button>
+      </div>
+
+      {result ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-background px-3 py-2 text-xs">
+          <div className="min-w-0">
+            <span className="font-medium text-emerald-700">{result.cached ? "ใช้ไฟล์ OCR ที่เคยสร้างแล้ว" : "สร้างไฟล์ OCR แล้ว"}</span>
+            <span className="mx-1 text-muted-foreground">·</span>
+            <span className="break-all text-muted-foreground">{fileNameFromPath(result.markdown_path)}</span>
+            <span className="mx-1 text-muted-foreground">·</span>
+            <span className="text-muted-foreground">
+              {result.pages_processed} หน้า
+              {result.average_confidence === null ? "" : ` · confidence ${formatConfidence(result.average_confidence)}`}
+            </span>
+          </div>
+          <Button type="button" variant="ghost" size="sm" onClick={() => onRevealPath(result.markdown_path)}>
+            เปิดไฟล์
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function WarningAudit({ warnings }: { warnings: CurrentStudentsWarning[] }) {
+  if (!warnings.length) {
+    return null;
+  }
+
+  return (
+    <section className="mb-3 grid gap-3 rounded-md border border-amber-200 bg-amber-50/70 p-4">
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-700" />
+        <div>
+          <div className="font-medium text-amber-950">คำเตือนจากไฟล์ที่เลือก</div>
+          <div className="text-sm text-amber-900">
+            รายการนี้ไม่ใช่ข้อมูลจำเป็นที่ขาดเสมอไป แต่อาจเป็นข้อมูลที่ระบบอ่านได้ไม่สมบูรณ์หรือควรตรวจทาน
+          </div>
+        </div>
+      </div>
+      <div className="grid gap-2">
+        {warnings.map((warning, index) => (
+          <div
+            key={`${warning.code}-${warning.source_path ?? "unknown"}-${warning.row_index ?? index}`}
+            className="grid gap-1 rounded-md border bg-background px-3 py-2 text-sm lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center"
+          >
+            <div className="min-w-0">
+              <div className="font-medium text-amber-950">{warningMessage(warning)}</div>
+              <div className="mt-1 break-words text-xs text-muted-foreground">{warningContext(warning)}</div>
+            </div>
+            <span className="w-fit rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+              {warning.code}
+            </span>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }
@@ -734,6 +1017,53 @@ function ConflictAudit({ conflicts }: { conflicts: CurrentStudentsFieldConflict[
       </div>
     </section>
   );
+}
+
+function warningMessage(warning: CurrentStudentsWarning): string {
+  const messagesByCode: Record<string, string> = {
+    THAI_ID_CSV_SHORT_ROW: "แถวใน CSV เครื่องสแกนบัตรมีคอลัมน์น้อยกว่าที่คาดไว้",
+    THAI_ID_INVALID_OR_MASKED: "เลขประจำตัวประชาชนจาก CSV เครื่องสแกนบัตรหาย ถูกปิดบัง หรือ checksum ไม่ผ่าน",
+    ROSTER_NO_MATCHING_SHEETS: "ไม่พบชีตบัญชีรายชื่อที่ตรงกับปีการศึกษาและระดับชั้นที่เลือก",
+    OCR_CITIZEN_ID_INVALID_OR_MISSING: "ไฟล์ OCR แบบฟอร์ม DMC ไม่มีเลขประจำตัวประชาชน หรือเลขไม่ผ่านการตรวจสอบ",
+    CIVIL_REGISTRATION_CITIZEN_ID_INVALID_OR_MISSING:
+      "ไฟล์ OCR ทะเบียนบ้านไม่มีเลขประจำตัวประชาชนนักเรียน หรือเลขไม่ผ่านการตรวจสอบ",
+    CIVIL_REGISTRATION_NO_MATCH_KEY: "ไฟล์ OCR ทะเบียนบ้านไม่มีเลขประจำตัวประชาชนหรือชื่อนักเรียนที่ใช้จับคู่ได้",
+  };
+  return messagesByCode[warning.code] ?? warning.message;
+}
+
+function warningContext(warning: CurrentStudentsWarning): string {
+  const parts = [sourceLabel(warning.source)];
+  if (warning.source_path) {
+    parts.push(fileNameFromPath(warning.source_path));
+  }
+  if (warning.sheet_name) {
+    parts.push(`ชีต ${warning.sheet_name}`);
+  }
+  if (warning.row_index) {
+    parts.push(`แถว ${warning.row_index}`);
+  }
+  return parts.filter(Boolean).join(" · ");
+}
+
+function sourceLabel(source: CurrentStudentsWarning["source"]): string {
+  const labels: Record<NonNullable<CurrentStudentsWarning["source"]>, string> = {
+    roster: "บัญชีรายชื่อนักเรียน",
+    thai_id_scan: "CSV เครื่องสแกนบัตร",
+    ocr_form: "OCR แบบฟอร์ม DMC",
+    civil_registration: "OCR ทะเบียนบ้าน",
+    derived: "ข้อมูลที่ระบบอนุมาน",
+    manual: "ข้อมูลที่กรอกเอง",
+  };
+  return source ? labels[source] : "ไม่ระบุแหล่งข้อมูล";
+}
+
+function fileNameFromPath(path: string): string {
+  return path.split(/[\\/]/).pop() ?? path;
+}
+
+function formatConfidence(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 function FieldConflictRow({ conflict }: { conflict: CurrentStudentsFieldConflict }) {

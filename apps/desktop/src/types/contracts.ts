@@ -386,6 +386,19 @@ export type ExportDmcFormJsonResponse = {
   records: DmcFormJsonRecord[];
 };
 
+export type AksonOcrDmcFormResponse = {
+  module: "formConverter";
+  engine: "aksonocr";
+  model: "AksonOCR-1.0";
+  source_path: string;
+  markdown_path: string;
+  cached: boolean;
+  pages_processed: number;
+  average_confidence: number | null;
+  file_sha256: string;
+  created_at: string;
+};
+
 export type CurrentStudentsImportRowStatus = "ready" | "needs_review" | "invalid";
 
 export type CurrentStudentsImportRowPreview = {
@@ -1241,6 +1254,34 @@ export function parseExportDmcFormJsonResponse(value: unknown): ExportDmcFormJso
     warnings: readArray(record, "warnings", "export_dmc_form_json_response").map(parseCurrentStudentsWarning),
     conflicts: readArray(record, "conflicts", "export_dmc_form_json_response").map(parseCurrentStudentsFieldConflict),
     records: readArray(record, "records", "export_dmc_form_json_response").map(parseDmcFormJsonRecord),
+  };
+}
+
+export function parseAksonOcrDmcFormResponse(value: unknown): AksonOcrDmcFormResponse {
+  const record = asRecord(value, "akson_ocr_dmc_form_response");
+  const module = readString(record, "module", "akson_ocr_dmc_form_response");
+  if (module !== "formConverter") {
+    throw new Error("akson_ocr_dmc_form_response.module must be formConverter");
+  }
+  const engine = readString(record, "engine", "akson_ocr_dmc_form_response");
+  if (engine !== "aksonocr") {
+    throw new Error("akson_ocr_dmc_form_response.engine must be aksonocr");
+  }
+  const model = readString(record, "model", "akson_ocr_dmc_form_response");
+  if (model !== "AksonOCR-1.0") {
+    throw new Error("akson_ocr_dmc_form_response.model must be AksonOCR-1.0");
+  }
+  return {
+    module,
+    engine,
+    model,
+    source_path: readString(record, "source_path", "akson_ocr_dmc_form_response"),
+    markdown_path: readString(record, "markdown_path", "akson_ocr_dmc_form_response"),
+    cached: readBoolean(record, "cached", "akson_ocr_dmc_form_response"),
+    pages_processed: readNumber(record, "pages_processed", "akson_ocr_dmc_form_response"),
+    average_confidence: readOptionalNumber(record, "average_confidence", "akson_ocr_dmc_form_response"),
+    file_sha256: readString(record, "file_sha256", "akson_ocr_dmc_form_response"),
+    created_at: readString(record, "created_at", "akson_ocr_dmc_form_response"),
   };
 }
 

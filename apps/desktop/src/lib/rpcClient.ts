@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AvailableUpdate,
   AccountStatus,
+  AksonOcrDmcFormResponse,
   ArchiveJobsResponse,
   BackupCreateResponse,
   BrowserRuntimeStatus,
@@ -31,6 +32,7 @@ import type {
 } from "../types/contracts";
 import {
   parseAddPsarEvidenceResponse,
+  parseAksonOcrDmcFormResponse,
   parseAvailableUpdate,
   parseAccountStatus,
   parseArchiveJobsResponse,
@@ -148,6 +150,10 @@ export async function openCsvDialog(): Promise<string | null> {
 
 export async function openMarkdownDialog(): Promise<string | null> {
   return desktopInvoke<string | null>("open_markdown_dialog");
+}
+
+export async function openOcrSourceDialog(): Promise<string | null> {
+  return desktopInvoke<string | null>("open_ocr_source_dialog");
 }
 
 export async function openEvidenceDialog(): Promise<string | null> {
@@ -295,6 +301,21 @@ export async function exportDmcFormJson(input: {
     output_path: input.outputPath,
   });
   return parseExportDmcFormJsonResponse(result);
+}
+
+export async function ocrDmcFormWithAkson(input: {
+  sourcePath: string;
+  apiKey: string | null;
+  model?: "AksonOCR-1.0";
+  forceRefresh?: boolean;
+}): Promise<AksonOcrDmcFormResponse> {
+  const result = await sidecarRequest<unknown>("ocr_dmc_form_with_akson", {
+    source_path: input.sourcePath,
+    api_key: input.apiKey,
+    model: input.model ?? "AksonOCR-1.0",
+    force_refresh: input.forceRefresh ?? false,
+  });
+  return parseAksonOcrDmcFormResponse(result);
 }
 
 export async function exportCurrentStudentBlankForm(

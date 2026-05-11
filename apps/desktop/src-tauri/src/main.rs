@@ -711,7 +711,8 @@ fn rpc_timeout_secs(method: &str) -> u64 {
         | "validate_current_student_sources"
         | "export_current_student_import_excel"
         | "preview_dmc_form_json"
-        | "export_dmc_form_json" => RPC_TIMEOUT_LONG_SECS,
+        | "export_dmc_form_json"
+        | "ocr_dmc_form_with_akson" => RPC_TIMEOUT_LONG_SECS,
         _ => RPC_TIMEOUT_STANDARD_SECS,
     }
 }
@@ -727,6 +728,7 @@ mod rpc_timeout_tests {
             "export_current_student_import_excel",
             "preview_dmc_form_json",
             "export_dmc_form_json",
+            "ocr_dmc_form_with_akson",
         ] {
             assert_eq!(rpc_timeout_secs(method), RPC_TIMEOUT_LONG_SECS);
         }
@@ -921,7 +923,15 @@ fn open_csv_dialog() -> Option<String> {
 #[tauri::command]
 fn open_markdown_dialog() -> Option<String> {
     rfd::FileDialog::new()
-        .add_filter("Markdown/Text", &["md", "txt"])
+        .add_filter("Markdown/Text/CSV", &["md", "txt", "csv"])
+        .pick_file()
+        .map(|path| path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn open_ocr_source_dialog() -> Option<String> {
+    rfd::FileDialog::new()
+        .add_filter("OCR Source", &["pdf", "png", "jpg", "jpeg", "webp"])
         .pick_file()
         .map(|path| path.to_string_lossy().to_string())
 }
@@ -1155,6 +1165,7 @@ fn main() {
             open_excel_dialog,
             open_csv_dialog,
             open_markdown_dialog,
+            open_ocr_source_dialog,
             open_evidence_dialog,
             open_backup_archive_dialog,
             save_backup_dialog,

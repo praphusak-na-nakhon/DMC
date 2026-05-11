@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseJobStatusSnapshot } from "./contracts";
+import { parseAksonOcrDmcFormResponse, parseJobStatusSnapshot } from "./contracts";
 
 const baseJob = {
   job_id: "job-empty-summary",
@@ -52,6 +52,30 @@ describe("job status contracts", () => {
       review_rows: 0,
       applied_rows: 0,
       dry_run_rows: 0,
+    });
+  });
+});
+
+describe("AksonOCR contracts", () => {
+  it("parses the generated OCR markdown response", () => {
+    const parsed = parseAksonOcrDmcFormResponse({
+      module: "formConverter",
+      engine: "aksonocr",
+      model: "AksonOCR-1.0",
+      source_path: "C:\\dmc\\uploadTest\\dmc-form.pdf",
+      markdown_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\aksonocr\\dmc-form.md",
+      cached: false,
+      pages_processed: 2,
+      average_confidence: 92.5,
+      file_sha256: "abc123",
+      created_at: "2026-05-11T00:00:00+00:00",
+    });
+
+    expect(parsed).toMatchObject({
+      engine: "aksonocr",
+      model: "AksonOCR-1.0",
+      pages_processed: 2,
+      average_confidence: 92.5,
     });
   });
 });

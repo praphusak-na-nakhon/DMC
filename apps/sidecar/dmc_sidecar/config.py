@@ -53,6 +53,12 @@ def reports_dir() -> Path:
     return path
 
 
+def ocr_cache_dir() -> Path:
+    path = ensure_data_dir() / "ocr"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def backups_dir() -> Path:
     path = ensure_data_dir() / "backups"
     path.mkdir(parents=True, exist_ok=True)

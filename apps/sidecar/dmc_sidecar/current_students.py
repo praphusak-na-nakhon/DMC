@@ -562,14 +562,14 @@ def reconcile_current_students(request: ReconcileCurrentStudentsRequest) -> Curr
 
     ocr_records: list[OcrFormRecord] = []
     for index, markdown_path in enumerate(request.ocr_markdown_paths, start=1):
-        path = _validated_file(Path(markdown_path), suffixes={".md", ".txt"})
+        path = _validated_file(Path(markdown_path), suffixes={".md", ".txt", ".csv"})
         ocr_record, ocr_warnings = read_ocr_markdown(path, record_index=index)
         ocr_records.append(ocr_record)
         warnings.extend(ocr_warnings)
 
     civil_records: list[CivilRegistrationRecord] = []
     for index, markdown_path in enumerate(request.civil_registration_markdown_paths, start=1):
-        path = _validated_file(Path(markdown_path), suffixes={".md", ".txt"})
+        path = _validated_file(Path(markdown_path), suffixes={".md", ".txt", ".csv"})
         civil_record, civil_warnings = read_civil_registration_markdown(path, record_index=index)
         civil_records.append(civil_record)
         warnings.extend(civil_warnings)

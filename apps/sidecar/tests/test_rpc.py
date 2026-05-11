@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from dmc_sidecar import config
+from dmc_sidecar.akson_ocr import AksonOcrDmcFormResponse
 from dmc_sidecar.checkpoint import JobCheckpoint
 from dmc_sidecar.errors import DomainError
 from dmc_sidecar.job_store import JobStore
@@ -79,6 +80,41 @@ def test_ping_rpc() -> None:
 
     assert response["result"]["value"] == "pong"
     assert response["result"]["sidecar_version"] == "0.1.0"
+
+
+def test_ocr_dmc_form_with_akson_rpc(monkeypatch) -> None:  # noqa: ANN001
+    captured: dict[str, object] = {}
+
+    def fake_ocr(request) -> AksonOcrDmcFormResponse:  # noqa: ANN001
+        captured["request"] = request
+        return AksonOcrDmcFormResponse(
+            model="AksonOCR-1.0",
+            source_path=request.source_path,
+            markdown_path="C:\\dmc\\.dmc-assistant-data\\ocr\\aksonocr\\form.md",
+            cached=False,
+            pages_processed=1,
+            average_confidence=94.0,
+            file_sha256="abc123",
+            created_at="2026-05-11T00:00:00+00:00",
+        )
+
+    monkeypatch.setattr("dmc_sidecar.rpc.ocr_dmc_form_with_akson", fake_ocr)
+    server = RpcServer(emit_notification=lambda payload: None)
+
+    response = _rpc_call(
+        server,
+        "ocr_dmc_form_with_akson",
+        {
+            "source_path": "C:\\dmc\\uploadTest\\form.pdf",
+            "api_key": "secret",
+            "model": "AksonOCR-1.0",
+            "force_refresh": False,
+        },
+    )
+
+    assert response["result"]["engine"] == "aksonocr"
+    assert response["result"]["markdown_path"].endswith("form.md")
+    assert captured["request"].source_path == "C:\\dmc\\uploadTest\\form.pdf"
 
 
 def test_list_jobs_rpc(monkeypatch, tmp_path: Path) -> None:

@@ -8,6 +8,8 @@ const mockRpc = vi.hoisted(() => ({
   openExcelDialog: vi.fn(),
   openCsvDialog: vi.fn(),
   openMarkdownDialog: vi.fn(),
+  openOcrSourceDialog: vi.fn(),
+  ocrDmcFormWithAkson: vi.fn(),
 }));
 
 vi.mock("../lib/rpcClient", () => mockRpc);
@@ -121,6 +123,15 @@ const missingMotherConflict = {
   source_values: [],
 };
 
+const thaiIdWarning = {
+  code: "THAI_ID_INVALID_OR_MASKED",
+  message: "Citizen ID from Thai ID scan is missing, masked, or failed checksum validation.",
+  source: "thai_id_scan",
+  source_path: "C:\\dmc\\uploadTest\\ThaiID M1-2569.CSV",
+  row_index: 34,
+  sheet_name: null,
+};
+
 const previewRecord = {
   record_id: "roster:1.1:4:19984",
   match_status: "auto_matched",
@@ -225,7 +236,7 @@ describe("FormConverterPage", () => {
       records_previewed: 1,
       field_labels: fieldLabels,
       summary,
-      warnings: [],
+      warnings: [thaiIdWarning],
       conflicts: [missingMotherConflict],
       records: [previewRecord],
     });
@@ -239,7 +250,7 @@ describe("FormConverterPage", () => {
       records_exported: 1,
       field_labels: fieldLabels,
       summary,
-      warnings: [],
+      warnings: [thaiIdWarning],
       conflicts: [missingMotherConflict],
       records: [previewRecord],
     });
@@ -259,6 +270,9 @@ describe("FormConverterPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /ตรวจและแสดงตัวอย่าง/ }));
 
     await waitFor(() => expect(mockRpc.previewDmcFormJson).toHaveBeenCalled());
+    expect(await screen.findByText("คำเตือนจากไฟล์ที่เลือก")).toBeInTheDocument();
+    expect(screen.getByText("เลขประจำตัวประชาชนจาก CSV เครื่องสแกนบัตรหาย ถูกปิดบัง หรือ checksum ไม่ผ่าน")).toBeInTheDocument();
+    expect(screen.getByText("CSV เครื่องสแกนบัตร · ThaiID M1-2569.CSV · แถว 34")).toBeInTheDocument();
     expect(await screen.findByText("ข้อมูลจำเป็นที่ยังไม่พบ")).toBeInTheDocument();
     expect(screen.getByText("ชื่อมารดา")).toBeInTheDocument();
     expect(screen.getByText("ผลลัพธ์หลังตรวจครบ")).toBeInTheDocument();
@@ -401,5 +415,51 @@ describe("FormConverterPage", () => {
     expect(screen.getByText(/browser preview\/localhost/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /ลองเชื่อมต่อใหม่/ }));
     expect(onRetryRuntime).toHaveBeenCalled();
+  });
+
+  it("creates AksonOCR markdown and adds it to the DMC OCR file list", async () => {
+    const onRevealPath = vi.fn();
+    mockRpc.openOcrSourceDialog.mockResolvedValue("C:\\dmc\\uploadTest\\dmc-form.pdf");
+    mockRpc.ocrDmcFormWithAkson.mockResolvedValue({
+      module: "formConverter",
+      engine: "aksonocr",
+      model: "AksonOCR-1.0",
+      source_path: "C:\\dmc\\uploadTest\\dmc-form.pdf",
+      markdown_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\aksonocr\\dmc-form-aksonocr-1-0.md",
+      cached: false,
+      pages_processed: 2,
+      average_confidence: 91.5,
+      file_sha256: "abc123",
+      created_at: "2026-05-11T00:00:00+00:00",
+    });
+
+    render(<FormConverterPage onBackHome={vi.fn()} onRevealPath={onRevealPath} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "มีไฟล์สแกน PDF/รูปภาพ" }));
+    expect(screen.queryByRole("button", { name: /เลือกไฟล์ OCR จากแบบฟอร์ม DMC/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /เลือกไฟล์ PDF หรือรูปภาพสำหรับ AksonOCR/ }));
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("C:\\dmc\\uploadTest\\dmc-form.pdf")).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByLabelText("AksonOCR API key"), { target: { value: "secret-key" } });
+    fireEvent.click(screen.getByRole("button", { name: /สร้างไฟล์ OCR/ }));
+
+    await waitFor(() => expect(mockRpc.ocrDmcFormWithAkson).toHaveBeenCalled());
+    expect(mockRpc.ocrDmcFormWithAkson).toHaveBeenCalledWith({
+      sourcePath: "C:\\dmc\\uploadTest\\dmc-form.pdf",
+      apiKey: "secret-key",
+      model: "AksonOCR-1.0",
+      forceRefresh: false,
+    });
+    expect(screen.getByText("สร้างไฟล์ OCR แล้ว")).toBeInTheDocument();
+    expect(screen.getByText("2 หน้า · confidence 91.5")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "เปิดไฟล์" }));
+    expect(onRevealPath).toHaveBeenCalledWith("C:\\dmc\\.dmc-assistant-data\\ocr\\aksonocr\\dmc-form-aksonocr-1-0.md");
+
+    fireEvent.click(screen.getByRole("tab", { name: "มีไฟล์ OCR แล้ว" }));
+    expect(
+      screen.getByDisplayValue("C:\\dmc\\.dmc-assistant-data\\ocr\\aksonocr\\dmc-form-aksonocr-1-0.md"),
+    ).toBeInTheDocument();
   });
 });

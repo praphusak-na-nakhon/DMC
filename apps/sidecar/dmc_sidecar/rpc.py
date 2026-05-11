@@ -23,6 +23,7 @@ from .account_client import (
 from .account_store import AccountSessionStore
 
 from . import __version__
+from .akson_ocr import AksonOcrDmcFormRequest, ocr_dmc_form_with_akson
 from .backup import create_backup_archive, restore_backup_archive
 from .browser_runtime import bootstrap_browser_runtime, get_browser_runtime_status
 from .checkpoint import JobCheckpoint
@@ -147,6 +148,11 @@ class RpcServer:
             if request.method == "export_dmc_form_json":
                 form_json_export_params = ExportDmcFormJsonRequest.model_validate(request.params)
                 result = export_dmc_form_json(form_json_export_params).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "ocr_dmc_form_with_akson":
+                akson_ocr_params = AksonOcrDmcFormRequest.model_validate(request.params)
+                result = ocr_dmc_form_with_akson(akson_ocr_params).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "export_current_student_blank_form":
