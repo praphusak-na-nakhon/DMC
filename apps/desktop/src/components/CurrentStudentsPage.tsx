@@ -1,9 +1,29 @@
-import { AlertTriangle, CheckCircle2, Download, FileSpreadsheet, Loader2, Search, UploadCloud, UserPlus } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Download,
+  FileJson,
+  FileSpreadsheet,
+  Loader2,
+  PauseCircle,
+  PlayCircle,
+  RefreshCw,
+  Search,
+  Square,
+  UploadCloud,
+  UserPlus,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { describeUserFacingError } from "../lib/errorMessages";
-import { exportCurrentStudentBlankForm, openExcelDialog, saveTemplateDialog, validateCurrentStudentImportForm } from "../lib/rpcClient";
+import {
+  exportCurrentStudentBlankForm,
+  openCurrentStudentImportDialog,
+  saveTemplateDialog,
+  validateCurrentStudentImportForm,
+} from "../lib/rpcClient";
 import type { CurrentStudentsImportRowPreview, ValidateCurrentStudentsImportFormResponse } from "../types/contracts";
+import type { JobStatusSnapshot } from "../types/contracts";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -11,28 +31,47 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Progress } from "./ui/progress";
 import { PageHeader } from "./PageHeader";
+import { JobProgressPanel } from "./JobProgressPanel";
 import { SystemErrorAlert } from "./SystemErrorAlert";
 
 type CurrentStudentsPageProps = {
   onBackHome: () => void;
   onRevealPath: (path: string) => void;
   onRetryRuntime?: () => void;
+  currentJob?: JobStatusSnapshot | null;
+  activeJobId?: string | null;
+  progressPercent?: number;
+  isStartingJob?: boolean;
+  externalErrorMessage?: string | null;
+  onStartDmcImport?: (jsonPath: string, readyRows: number, dryRun: boolean) => Promise<void> | void;
+  onRefreshStatus?: () => void;
+  onPause?: () => void;
+  onResume?: () => void;
+  onCancel?: () => void;
 };
 
 const errorMessages: Record<string, string> = {
   CURRENT_STUDENTS_INPUT_NOT_FOUND: "ไม่พบไฟล์ที่เลือก",
   CURRENT_STUDENTS_INPUT_NOT_FILE: "พาธที่เลือกไม่ใช่ไฟล์",
-  CURRENT_STUDENTS_UNSUPPORTED_INPUT_TYPE: "รองรับเฉพาะไฟล์ .xlsx หรือ .xlsm",
+  CURRENT_STUDENTS_UNSUPPORTED_INPUT_TYPE: "รองรับเฉพาะไฟล์ .xlsx, .xlsm หรือ .json",
   CURRENT_STUDENTS_IMPORT_HEADERS_NOT_FOUND: "ไม่พบหัวตารางของฟอร์มนักเรียนปัจจุบัน",
   CURRENT_STUDENTS_TEMPLATE_UNSUPPORTED_TYPE: "ฟอร์มเปล่าต้องเป็นไฟล์ .xlsx",
+  CURRENT_STUDENTS_JSON_INVALID: "ไฟล์ JSON ไม่ถูกต้อง",
+  CURRENT_STUDENTS_JSON_UNSUPPORTED_SCHEMA: "ไฟล์ JSON ต้องเป็น schema dmc_form_json.v1 จากเมนูแปลงฟอร์ม",
 };
 
 const issueLabels: Record<string, string> = {
   INVALID_OPERATION_TYPE: "ประเภทงานไม่ถูกต้อง",
   INVALID_CITIZEN_ID: "เลขประจำตัวประชาชนไม่ผ่าน checksum",
+  INVALID_STUDENT_NO: "เลขประจำตัวนักเรียนต้องเป็นตัวเลขไม่เกิน 10 หลัก",
+  INVALID_ROOM: "ห้องที่ย้ายเข้าต้องเป็นตัวเลขไม่เกิน 2 หลัก",
   DUPLICATE_CITIZEN_ID: "เลขประจำตัวประชาชนซ้ำ",
+  DMC_TRANSFER_LEVEL_UNSUPPORTED: "ยังแปลงชั้นเป็นรหัส DMC สำหรับย้ายเข้าไม่ได้",
   MISSING_OPERATION_TYPE: "ยังไม่กรอกประเภทงาน",
   MISSING_SCHOOL_YEAR: "ยังไม่กรอกปีการศึกษา",
+  MISSING_STUDENT_NO: "ยังไม่มีเลขประจำตัวนักเรียน",
+  MISSING_GRADE: "ยังไม่มีชั้นที่ย้ายเข้า",
+  MISSING_ROOM: "ยังไม่มีห้องที่ย้ายเข้า",
   MISSING_CITIZEN_ID: "ยังไม่กรอกเลขประจำตัวประชาชน",
   MISSING_PREFIX: "ยังไม่กรอกคำนำหน้า",
   MISSING_FIRST_NAME: "ยังไม่กรอกชื่อ",
@@ -43,6 +82,16 @@ export function CurrentStudentsPage({
   onBackHome,
   onRevealPath,
   onRetryRuntime,
+  currentJob = null,
+  activeJobId = null,
+  progressPercent = 0,
+  isStartingJob = false,
+  externalErrorMessage = null,
+  onStartDmcImport,
+  onRefreshStatus,
+  onPause,
+  onResume,
+  onCancel,
 }: CurrentStudentsPageProps) {
   const [excelPath, setExcelPath] = useState("");
   const [blankFormPath, setBlankFormPath] = useState<string | null>(null);
@@ -53,6 +102,16 @@ export function CurrentStudentsPage({
   const [progress, setProgress] = useState(0);
 
   const visiblePreview = useMemo(() => validation?.preview.slice(0, 50) ?? [], [validation]);
+  const selectedImportPath = excelPath.trim();
+  const isJsonImport = /\.json$/i.test(selectedImportPath);
+  const canStartDmcImport = Boolean(
+    validation &&
+      isJsonImport &&
+      validation.summary.ready_rows > 0 &&
+      validation.summary.invalid_rows === 0 &&
+      validation.summary.needs_review_rows === 0,
+  );
+  const currentStudentsJob = currentJob?.module === "currentStudents" ? currentJob : null;
 
   async function handleDownloadBlankForm() {
     setIsDownloadingTemplate(true);
@@ -73,7 +132,7 @@ export function CurrentStudentsPage({
   }
 
   async function handleBrowseExcel() {
-    const selected = await openExcelDialog();
+    const selected = await openCurrentStudentImportDialog();
     if (selected) {
       setExcelPath(selected);
       setValidation(null);
@@ -85,7 +144,7 @@ export function CurrentStudentsPage({
   async function handleValidate() {
     const selectedPath = excelPath.trim();
     if (!selectedPath) {
-      setErrorMessage("กรุณาเลือกไฟล์ Excel ที่กรอกข้อมูลครบแล้วก่อน");
+      setErrorMessage("กรุณาเลือกไฟล์ Excel หรือ JSON ที่มีข้อมูลครบแล้วก่อน");
       return;
     }
     setIsValidating(true);
@@ -104,6 +163,23 @@ export function CurrentStudentsPage({
     }
   }
 
+  async function handleStartDmcImport(dryRun: boolean) {
+    if (!validation) {
+      setErrorMessage("กรุณาตรวจไฟล์ JSON ก่อนเริ่มงาน DMC");
+      return;
+    }
+    if (!isJsonImport) {
+      setErrorMessage("งานกรอกหน้า DMC ย้ายเข้านักเรียนรองรับเฉพาะไฟล์ JSON");
+      return;
+    }
+    if (!canStartDmcImport) {
+      setErrorMessage("ไฟล์ JSON ยังมีรายการที่ต้องแก้ไขก่อนส่งเข้า DMC");
+      return;
+    }
+    setErrorMessage(null);
+    await onStartDmcImport?.(selectedImportPath, validation.summary.ready_rows, dryRun);
+  }
+
   function readableError(error: unknown): string {
     const raw = error instanceof Error ? error.message : String(error);
     const code = raw.match(/[A-Z][A-Z0-9_]+/)?.[0] ?? raw;
@@ -116,19 +192,19 @@ export function CurrentStudentsPage({
         onBackHome={onBackHome}
         badge="รับไฟล์พร้อมนำเข้า"
         title="นักเรียนปัจจุบัน (ย้ายเข้า/เพิ่มนักเรียน)"
-        description="ดาวน์โหลดฟอร์มเปล่า หรืออัปโหลด Excel ที่กรอกครบแล้วจากเมนูแปลงฟอร์ม/จากผู้ใช้ เพื่อเตรียมตรวจข้อมูลก่อนนำเข้า DMC"
+        description="ดาวน์โหลดฟอร์มเปล่า หรืออัปโหลด Excel/JSON จากเมนูแปลงฟอร์ม/จากผู้ใช้ เพื่อเตรียมตรวจข้อมูลก่อนนำเข้า DMC"
         icon={<UserPlus className="h-5 w-5 text-primary" />}
       />
 
-      {errorMessage ? (
-        <SystemErrorAlert message={errorMessage} onRetry={onRetryRuntime} retryWhen="runtime" />
+      {errorMessage || externalErrorMessage ? (
+        <SystemErrorAlert message={errorMessage ?? externalErrorMessage ?? ""} onRetry={onRetryRuntime} retryWhen="runtime" />
       ) : null}
 
       <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_390px]">
         <Card>
           <CardHeader>
             <CardTitle>ฟอร์มนักเรียนปัจจุบัน</CardTitle>
-            <CardDescription>ไฟล์ที่อัปโหลดควรเป็นฟอร์ม Excel เดียวกับที่ดาวน์โหลดจากหน้านี้</CardDescription>
+            <CardDescription>รองรับฟอร์ม Excel จากหน้านี้ หรือ JSON dmc_form_json.v1 จากเมนูแปลงฟอร์ม</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4">
             <div className="flex flex-wrap gap-2">
@@ -145,7 +221,7 @@ export function CurrentStudentsPage({
             </div>
 
             <div className="grid gap-2">
-              <Label>Excel ที่กรอกข้อมูลครบแล้ว</Label>
+              <Label>Excel หรือ JSON ที่กรอกข้อมูลครบแล้ว</Label>
               <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                 <Input
                   value={excelPath}
@@ -154,11 +230,11 @@ export function CurrentStudentsPage({
                     setValidation(null);
                     setProgress(0);
                   }}
-                  placeholder="C:\\dmc\\current-students-import.xlsx"
+                  placeholder="C:\\dmc\\current-students-import.xlsx หรือ C:\\dmc\\dmc-form-data-2569.json"
                 />
                 <Button variant="outline" onClick={() => void handleBrowseExcel()}>
                   <UploadCloud className="h-4 w-4" />
-                  เลือก Excel
+                  เลือกไฟล์
                 </Button>
               </div>
             </div>
@@ -170,7 +246,7 @@ export function CurrentStudentsPage({
               </Button>
             </div>
             {!excelPath.trim() ? (
-              <div className="text-sm text-muted-foreground">เลือก Excel ที่กรอกข้อมูลครบแล้วก่อนตรวจไฟล์นำเข้า</div>
+              <div className="text-sm text-muted-foreground">เลือก Excel หรือ JSON ที่กรอกข้อมูลครบแล้วก่อนตรวจไฟล์นำเข้า</div>
             ) : null}
           </CardContent>
         </Card>
@@ -212,6 +288,53 @@ export function CurrentStudentsPage({
 
           <Card>
             <CardHeader>
+              <CardTitle>ส่งเข้า DMC ย้ายเข้านักเรียน</CardTitle>
+              <CardDescription>
+                ใช้เฉพาะ JSON schema dmc_form_json.v1 เพื่อกรอกหน้า https://portal.bopp-obec.info/obec69/studentin/add_cif
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  disabled={!onStartDmcImport || isStartingJob || !canStartDmcImport}
+                  onClick={() => void handleStartDmcImport(true)}
+                >
+                  {isStartingJob ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileJson className="h-4 w-4" />}
+                  Dry run หน้า DMC
+                </Button>
+                <Button
+                  variant="destructive"
+                  disabled={!onStartDmcImport || isStartingJob || !canStartDmcImport}
+                  onClick={() => void handleStartDmcImport(false)}
+                >
+                  {isStartingJob ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
+                  นำเข้า DMC จริง
+                </Button>
+              </div>
+              {!isJsonImport ? (
+                <div className="text-sm text-muted-foreground">การกรอกหน้า DMC อัตโนมัติรองรับ JSON เท่านั้น ส่วน Excel ใช้สำหรับตรวจและเตรียมข้อมูล</div>
+              ) : !canStartDmcImport ? (
+                <div className="text-sm text-muted-foreground">ต้องไม่มีรายการผิดรูปแบบหรือรายการต้องตรวจ ก่อนเริ่มส่งเข้า DMC</div>
+              ) : (
+                <div className="text-sm text-muted-foreground">พร้อมส่ง {validation.summary.ready_rows} รายการ ระบบจะเปิด Chromium และหยุดให้ login DMC เมื่อจำเป็น</div>
+              )}
+            </CardContent>
+          </Card>
+
+          <DmcJobControls
+            currentJob={currentStudentsJob}
+            activeJobId={activeJobId}
+            progressPercent={progressPercent}
+            onRevealPath={onRevealPath}
+            onRefreshStatus={onRefreshStatus}
+            onPause={onPause}
+            onResume={onResume}
+            onCancel={onCancel}
+          />
+
+          <Card>
+            <CardHeader>
               <CardTitle>ตัวอย่างผลตรวจ</CardTitle>
               <CardDescription>แสดงไม่เกิน 50 แถวแรกจากไฟล์ที่อัปโหลด</CardDescription>
             </CardHeader>
@@ -229,7 +352,69 @@ export function CurrentStudentsPage({
           </Card>
         </>
       ) : null}
+      {!validation ? (
+        <DmcJobControls
+          currentJob={currentStudentsJob}
+          activeJobId={activeJobId}
+          progressPercent={progressPercent}
+          onRevealPath={onRevealPath}
+          onRefreshStatus={onRefreshStatus}
+          onPause={onPause}
+          onResume={onResume}
+          onCancel={onCancel}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function DmcJobControls({
+  currentJob,
+  activeJobId,
+  progressPercent,
+  onRevealPath,
+  onRefreshStatus,
+  onPause,
+  onResume,
+  onCancel,
+}: {
+  currentJob: JobStatusSnapshot | null;
+  activeJobId: string | null;
+  progressPercent: number;
+  onRevealPath: (path: string) => void;
+  onRefreshStatus?: () => void;
+  onPause?: () => void;
+  onResume?: () => void;
+  onCancel?: () => void;
+}) {
+  if (!currentJob) {
+    return null;
+  }
+  const canResume = Boolean(activeJobId && (currentJob.needs_auth || currentJob.status === "paused"));
+  const canPause = Boolean(activeJobId && currentJob.status === "running");
+  const canCancel = Boolean(activeJobId && (currentJob.status === "running" || currentJob.status === "paused"));
+  return (
+    <section className="grid gap-3">
+      <JobProgressPanel currentJob={currentJob} progressPercent={progressPercent} onRevealPath={onRevealPath} />
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" disabled={!activeJobId || !onRefreshStatus} onClick={() => onRefreshStatus?.()}>
+          <RefreshCw className="h-4 w-4" />
+          Refresh
+        </Button>
+        <Button variant="outline" disabled={!canResume || !onResume} onClick={() => onResume?.()}>
+          <PlayCircle className="h-4 w-4" />
+          Resume
+        </Button>
+        <Button variant="outline" disabled={!canPause || !onPause} onClick={() => onPause?.()}>
+          <PauseCircle className="h-4 w-4" />
+          Pause
+        </Button>
+        <Button variant="destructive" disabled={!canCancel || !onCancel} onClick={() => onCancel?.()}>
+          <Square className="h-4 w-4" />
+          Cancel
+        </Button>
+      </div>
+    </section>
   );
 }
 

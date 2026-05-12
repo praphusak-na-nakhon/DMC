@@ -16,6 +16,7 @@ from dmc_sidecar.current_students import (
     export_dmc_form_json,
     export_current_students_blank_form,
     export_current_students_import_excel,
+    load_dmc_transfer_in_import_records,
     preview_dmc_form_json,
     reconcile_current_students,
     validate_current_students_import_form,
@@ -322,6 +323,44 @@ def test_export_dmc_form_json_writes_operation_neutral_json(tmp_path: Path) -> N
     assert "operation_type" not in payload["records"][0]["fields"]
     assert payload["records"][0]["fields"]["siblings_studying_count"] == "1"
     assert payload["records"][0]["fields"]["child_order"] == "2"
+
+
+def test_validate_current_students_accepts_dmc_form_json_for_transfer_in(tmp_path: Path) -> None:
+    roster_path = tmp_path / "studentListM1-M4 2569.xlsx"
+    thai_id_path = tmp_path / "ThaiID M1-2569.CSV"
+    ocr_path = tmp_path / "1-3ex.md"
+    output_path = tmp_path / "dmc-form-data-2569.json"
+    _write_roster(roster_path)
+    _write_thai_id_csv(thai_id_path)
+    _write_ocr_markdown(ocr_path)
+
+    export_dmc_form_json(
+        ExportDmcFormJsonRequest(
+            roster_excel_path=str(roster_path),
+            thai_id_csv_path=str(thai_id_path),
+            ocr_markdown_paths=[str(ocr_path)],
+            school_year=2569,
+            grade_levels=[1],
+            output_path=str(output_path),
+        )
+    )
+
+    validation = validate_current_students_import_form(
+        ValidateCurrentStudentsImportFormRequest(excel_path=str(output_path))
+    )
+
+    assert validation.module == "currentStudents"
+    assert validation.excel_path == str(output_path)
+    assert validation.summary.rows_total == 1
+    assert validation.summary.ready_rows == 1
+    assert validation.summary.invalid_rows == 0
+    assert validation.preview[0].operation_type == "transfer_in"
+    assert validation.preview[0].student_no == "19984"
+    assert validation.preview[0].citizen_id == "1819900905157"
+    import_records = load_dmc_transfer_in_import_records(output_path)
+    assert import_records[0].student_no == "19984"
+    assert import_records[0].level_dtl_code == "10"
+    assert import_records[0].classroom == "1"
 
 
 def test_preview_dmc_form_json_reports_missing_required_data_read_only(tmp_path: Path) -> None:

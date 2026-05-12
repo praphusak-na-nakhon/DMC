@@ -144,6 +144,10 @@ export async function openExcelDialog(): Promise<string | null> {
   return desktopInvoke<string | null>("open_excel_dialog");
 }
 
+export async function openCurrentStudentImportDialog(): Promise<string | null> {
+  return desktopInvoke<string | null>("open_current_student_import_dialog");
+}
+
 export async function openCsvDialog(): Promise<string | null> {
   return desktopInvoke<string | null>("open_csv_dialog");
 }
@@ -451,6 +455,24 @@ export async function startGraduationJob(input: {
       dry_run: input.dryRun,
       stop_on_review: input.stopOnReview,
       min_score: input.minScore,
+      estimated_credits: input.estimatedCredits,
+    },
+  });
+  return parseStartJobResponse(result);
+}
+
+export async function startCurrentStudentsImportJob(input: {
+  jobId: string;
+  jsonPath: string;
+  dryRun: boolean;
+  estimatedCredits: number;
+}): Promise<StartJobResponse> {
+  const result = await sidecarRequest<unknown>("start_job", {
+    job_id: input.jobId,
+    module: "currentStudents",
+    excel_path: input.jsonPath,
+    options: {
+      dry_run: input.dryRun,
       estimated_credits: input.estimatedCredits,
     },
   });

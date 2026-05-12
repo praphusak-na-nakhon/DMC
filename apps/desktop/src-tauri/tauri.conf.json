@@ -5,6 +5,7 @@
   "identifier": "info.bopp.dmcassistant",
   "build": {
     "beforeDevCommand": "corepack pnpm dev",
+    "devUrl": "http://localhost:5173",
     "beforeBuildCommand": "corepack pnpm build",
     "frontendDist": "../dist"
   },

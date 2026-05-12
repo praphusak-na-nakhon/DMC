@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from .account_client import (
     build_account_snapshot,
     cached_module_catalog,
+    capture_credits,
     get_module_catalog,
     refresh_wallet,
     release_credits,
@@ -23,7 +24,13 @@ from .account_client import (
 from .account_store import AccountSessionStore
 
 from . import __version__
-from .akson_ocr import AksonOcrDmcFormRequest, ocr_dmc_form_with_akson
+from .akson_ocr import (
+    AKSON_OCR_CREDITS_PER_PAGE,
+    AksonOcrDmcFormRequest,
+    AksonOcrDmcFormResponse,
+    ocr_dmc_form_with_akson,
+    prepare_akson_ocr_request,
+)
 from .backup import create_backup_archive, restore_backup_archive
 from .browser_runtime import bootstrap_browser_runtime, get_browser_runtime_status
 from .checkpoint import JobCheckpoint
@@ -40,6 +47,7 @@ from .current_students import (
     export_dmc_form_json,
     export_current_students_blank_form,
     export_current_students_import_excel,
+    load_dmc_transfer_in_import_records,
     preview_dmc_form_json,
     reconcile_current_students,
     validate_current_students_import_form,
@@ -152,7 +160,7 @@ class RpcServer:
 
             if request.method == "ocr_dmc_form_with_akson":
                 akson_ocr_params = AksonOcrDmcFormRequest.model_validate(request.params)
-                result = ocr_dmc_form_with_akson(akson_ocr_params).model_dump()
+                result = self._ocr_dmc_form_with_akson(akson_ocr_params).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "export_current_student_blank_form":
@@ -384,6 +392,7 @@ class RpcServer:
                 request.id,
                 code=exc.code,
                 message=exc.user_message,
+                details=exc.details,
             )
         except RuntimeError as exc:
             error_code = self._safe_runtime_error_code(exc)
@@ -426,10 +435,61 @@ class RpcServer:
 
         return RpcSuccessResponse(id=request_id, result={"job_id": job_id, "status": status})
 
+    def _ocr_dmc_form_with_akson(self, request: AksonOcrDmcFormRequest) -> AksonOcrDmcFormResponse:
+        prepared = prepare_akson_ocr_request(request)
+        if prepared.cached_response is not None:
+            return prepared.cached_response
+
+        credits_required = prepared.pages_estimated * AKSON_OCR_CREDITS_PER_PAGE
+        job_id = f"form-ocr-akson-{prepared.file_sha256[:16]}-{uuid.uuid4().hex[:8]}"
+        reservation = reserve_credits(
+            self.account_store,
+            job_id=job_id,
+            module="formConverter",
+            units=credits_required,
+            idempotency_key=f"{job_id}:reserve:{request.model}",
+        )
+        captured = False
+        try:
+            response = ocr_dmc_form_with_akson(request)
+            capture_credits(
+                self.account_store,
+                reservation_id=reservation.reservation_id,
+                units=credits_required,
+                idempotency_key=f"{job_id}:capture:{request.model}",
+            )
+            captured = True
+            return response.model_copy(
+                update={
+                    "pages_estimated": prepared.pages_estimated,
+                    "credits_per_page": AKSON_OCR_CREDITS_PER_PAGE,
+                    "credits_charged": credits_required,
+                    "charged": True,
+                    "credit_reservation_id": reservation.reservation_id,
+                }
+            )
+        finally:
+            if not captured:
+                try:
+                    release_credits(
+                        self.account_store,
+                        reservation_id=reservation.reservation_id,
+                        units=credits_required,
+                        idempotency_key=f"{job_id}:release:{request.model}",
+                    )
+                except DomainError:
+                    pass
+
     def _estimate_credit_units(self, start_params: StartJobRequest) -> int:
         raw_units = start_params.options.get("estimated_credits")
         if isinstance(raw_units, int) and raw_units > 0:
             return raw_units
+        if start_params.module == "currentStudents":
+            try:
+                records = load_dmc_transfer_in_import_records(Path(start_params.excel_path))
+            except Exception as exc:
+                raise DomainError("CREDIT_PREFLIGHT_FAILED", "Unable to estimate credits for this job.") from exc
+            return max(len(records), 1)
         module = get_module(start_params.module)
         try:
             preview = module.validate_excel(Path(start_params.excel_path))

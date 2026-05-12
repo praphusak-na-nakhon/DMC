@@ -4,7 +4,7 @@ import { CurrentStudentsPage } from "./CurrentStudentsPage";
 
 const mockRpc = vi.hoisted(() => ({
   exportCurrentStudentBlankForm: vi.fn(),
-  openExcelDialog: vi.fn(),
+  openCurrentStudentImportDialog: vi.fn(),
   saveTemplateDialog: vi.fn(),
   validateCurrentStudentImportForm: vi.fn(),
 }));
@@ -33,7 +33,7 @@ describe("CurrentStudentsPage", () => {
   });
 
   it("validates a completed import Excel and renders the preview", async () => {
-    mockRpc.openExcelDialog.mockResolvedValue("C:\\dmc\\reports\\current-students-import.xlsx");
+    mockRpc.openCurrentStudentImportDialog.mockResolvedValue("C:\\dmc\\reports\\current-students-import.xlsx");
     mockRpc.validateCurrentStudentImportForm.mockResolvedValue({
       module: "currentStudents",
       excel_path: "C:\\dmc\\reports\\current-students-import.xlsx",
@@ -79,7 +79,7 @@ describe("CurrentStudentsPage", () => {
 
     render(<CurrentStudentsPage onBackHome={vi.fn()} onRevealPath={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /เลือก Excel/ }));
+    fireEvent.click(screen.getByRole("button", { name: /เลือกไฟล์/ }));
     await waitFor(() =>
       expect(screen.getByDisplayValue("C:\\dmc\\reports\\current-students-import.xlsx")).toBeInTheDocument(),
     );

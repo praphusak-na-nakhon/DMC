@@ -28,6 +28,7 @@ import {
   saveTemplateDialog,
   signIn,
   signOut,
+  startCurrentStudentsImportJob,
   startGraduationJob,
   syncModuleConfig,
   validateExcel,
@@ -64,7 +65,7 @@ function toUserError(error: unknown): string {
 }
 
 type ConfirmDialogState = {
-  type: "archive_old_jobs" | "start_live" | "cancel_job" | "close_active_job";
+  type: "archive_old_jobs" | "start_live" | "start_current_students_live" | "cancel_job" | "close_active_job";
   title: string;
   description: string;
   confirmLabel: string;
@@ -168,6 +169,7 @@ export function App() {
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const mountedRef = useRef(false);
   const activeJobRef = useRef(false);
+  const pendingCurrentStudentsStartRef = useRef<{ jsonPath: string; rowsToWrite: number } | null>(null);
   const notifiedDoneJobRef = useRef<string | null>(null);
   const notifiedFailedJobRef = useRef<string | null>(null);
   const notifiedNeedsAuthJobRef = useRef<string | null>(null);
@@ -831,6 +833,105 @@ export function App() {
     }
   }
 
+  async function handleStartCurrentStudentsImport(
+    jsonPath: string,
+    rowsToWrite: number,
+    dryRun: boolean,
+    confirmed = false,
+  ) {
+    const selectedJsonPath = jsonPath.trim();
+    if (!selectedJsonPath) {
+      setErrorMessage("กรุณาเลือกไฟล์ JSON ก่อนเริ่มงาน");
+      return;
+    }
+    if (!/\.json$/i.test(selectedJsonPath)) {
+      setErrorMessage("งานย้ายเข้านักเรียนผ่านหน้า DMC รองรับเฉพาะไฟล์ JSON");
+      return;
+    }
+    if (rowsToWrite <= 0) {
+      setErrorMessage("ไม่มีรายการพร้อมส่งเข้า DMC");
+      return;
+    }
+    if (currentJob && isActiveJobStatus(currentJob.status)) {
+      setErrorMessage("กรุณาหยุดหรืองานเดิมให้จบก่อนเริ่มงานใหม่");
+      return;
+    }
+    if (!dryRun) {
+      if (!accountStatus?.signed_in) {
+        setErrorMessage(messages.app.account.signInBeforeLive);
+        return;
+      }
+      if ((accountStatus.wallet?.available ?? 0) < rowsToWrite) {
+        setErrorMessage(messages.app.account.insufficientCredits);
+        return;
+      }
+      if (!confirmed) {
+        pendingCurrentStudentsStartRef.current = { jsonPath: selectedJsonPath, rowsToWrite };
+        setConfirmDialog({
+          type: "start_current_students_live",
+          title: "ยืนยันส่งย้ายเข้านักเรียนเข้า DMC",
+          description: [
+            `ไฟล์: ${selectedJsonPath}`,
+            `ระบบจะกรอกและบันทึกหน้า DMC จำนวน ${rowsToWrite} รายการ`,
+            `เครดิตที่จะกันไว้: ${rowsToWrite}`,
+            "",
+            messages.app.account.reserveNotice,
+          ].join("\n"),
+          confirmLabel: "เริ่มงานจริง",
+          cancelLabel: "ตรวจอีกครั้ง",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
+    setErrorMessage(null);
+    setIsStartingJob(true);
+    try {
+      const browserStatus = await handleLoadBrowserRuntime();
+      if (!browserStatus.installed) {
+        setErrorMessage(browserStatus.message ?? "ยังไม่ได้ติดตั้ง Chromium runtime");
+        return;
+      }
+      if (!dryRun) {
+        await handleRefreshAccount(true);
+        const latestAccount = await getAccountStatus();
+        setAccountStatus(latestAccount);
+        if (!latestAccount.signed_in || !latestAccount.can_start_credit_jobs) {
+          setErrorMessage(latestAccount.message ?? messages.app.account.signInBeforeLive);
+          return;
+        }
+        if ((latestAccount.wallet?.available ?? 0) < rowsToWrite) {
+          setErrorMessage(messages.app.account.insufficientCredits);
+          return;
+        }
+      }
+      const result = await startCurrentStudentsImportJob({
+        jobId: buildJobId(),
+        jsonPath: selectedJsonPath,
+        dryRun,
+        estimatedCredits: rowsToWrite,
+      });
+      const draft = buildDraftJob(selectedJsonPath, rowsToWrite, result.job_id);
+      draft.module = "currentStudents";
+      draft.credit_reservation_id = result.credit_reservation_id;
+      draft.credits_reserved = result.credits_reserved;
+      draft.credit_status = result.credit_reservation_id ? "reserved" : dryRun ? null : "reserving";
+      setActiveJobId(result.job_id);
+      setCurrentJob(draft);
+      upsertExistingJob(draft);
+      pushSidecarMessage(`${dryRun ? "เริ่ม dry run ย้ายเข้า" : "เริ่มงานย้ายเข้า DMC จริง"}: ${result.job_id}`);
+      if (!dryRun) {
+        await handleRefreshAccount(true);
+      }
+      await handleLoadJobs();
+    } catch (error) {
+      setErrorMessage(toUserError(error));
+    } finally {
+      setIsStartingJob(false);
+    }
+  }
+
   async function handleBootstrapBrowserRuntime() {
     setErrorMessage(null);
     setIsBootstrappingBrowser(true);
@@ -1003,6 +1104,14 @@ export function App() {
       void handleStart(false, true);
       return;
     }
+    if (dialog.type === "start_current_students_live") {
+      const pending = pendingCurrentStudentsStartRef.current;
+      pendingCurrentStudentsStartRef.current = null;
+      if (pending) {
+        void handleStartCurrentStudentsImport(pending.jsonPath, pending.rowsToWrite, false, true);
+      }
+      return;
+    }
     if (dialog.type === "cancel_job") {
       void handleCancel(true);
       return;
@@ -1083,6 +1192,18 @@ export function App() {
             onBackHome={() => setActiveModule("home")}
             onRevealPath={(path) => void handleRevealPath(path)}
             onRetryRuntime={() => void handleConnect()}
+            currentJob={currentJob?.module === "currentStudents" ? currentJob : null}
+            activeJobId={currentJob?.module === "currentStudents" ? activeJobId : null}
+            progressPercent={currentJob?.module === "currentStudents" ? progressPercent : 0}
+            isStartingJob={isStartingJob}
+            externalErrorMessage={errorMessage}
+            onStartDmcImport={(jsonPath, readyRows, dryRun) =>
+              handleStartCurrentStudentsImport(jsonPath, readyRows, dryRun)
+            }
+            onRefreshStatus={() => void handleRefreshStatus()}
+            onPause={() => void handlePause()}
+            onResume={() => void handleResume()}
+            onCancel={() => void handleCancel()}
           />
         ) : (
           <GraduationWizard

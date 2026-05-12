@@ -913,6 +913,14 @@ fn open_excel_dialog() -> Option<String> {
 }
 
 #[tauri::command]
+fn open_current_student_import_dialog() -> Option<String> {
+    rfd::FileDialog::new()
+        .add_filter("Current Student Import", &["xlsx", "xlsm", "json"])
+        .pick_file()
+        .map(|path| path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 fn open_csv_dialog() -> Option<String> {
     rfd::FileDialog::new()
         .add_filter("CSV", &["csv"])
@@ -1163,6 +1171,7 @@ fn main() {
             rpc_request,
             shutdown_sidecar,
             open_excel_dialog,
+            open_current_student_import_dialog,
             open_csv_dialog,
             open_markdown_dialog,
             open_ocr_source_dialog,

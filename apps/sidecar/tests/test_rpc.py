@@ -82,8 +82,10 @@ def test_ping_rpc() -> None:
     assert response["result"]["sidecar_version"] == "0.1.0"
 
 
-def test_ocr_dmc_form_with_akson_rpc(monkeypatch) -> None:  # noqa: ANN001
+def test_ocr_dmc_form_with_akson_rpc(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
     captured: dict[str, object] = {}
+    source_path = tmp_path / "form.pdf"
+    source_path.write_bytes(b"%PDF-1.7\n1 0 obj << /Type /Page >> endobj\n%%EOF")
 
     def fake_ocr(request) -> AksonOcrDmcFormResponse:  # noqa: ANN001
         captured["request"] = request
@@ -93,20 +95,34 @@ def test_ocr_dmc_form_with_akson_rpc(monkeypatch) -> None:  # noqa: ANN001
             markdown_path="C:\\dmc\\.dmc-assistant-data\\ocr\\aksonocr\\form.md",
             cached=False,
             pages_processed=1,
+            pages_estimated=1,
             average_confidence=94.0,
             file_sha256="abc123",
             created_at="2026-05-11T00:00:00+00:00",
         )
 
+    reservations: list[dict[str, object]] = []
+    captures: list[dict[str, object]] = []
+
+    def fake_reserve(*args: object, **kwargs: object) -> SimpleNamespace:
+        reservations.append(dict(kwargs))
+        return SimpleNamespace(reservation_id="reservation-ocr-1")
+
+    def fake_capture(*args: object, **kwargs: object) -> SimpleNamespace:
+        captures.append(dict(kwargs))
+        return SimpleNamespace(reservation_id=kwargs["reservation_id"])
+
     monkeypatch.setattr("dmc_sidecar.rpc.ocr_dmc_form_with_akson", fake_ocr)
+    monkeypatch.setattr("dmc_sidecar.rpc.reserve_credits", fake_reserve)
+    monkeypatch.setattr("dmc_sidecar.rpc.capture_credits", fake_capture)
     server = RpcServer(emit_notification=lambda payload: None)
 
     response = _rpc_call(
         server,
         "ocr_dmc_form_with_akson",
         {
-            "source_path": "C:\\dmc\\uploadTest\\form.pdf",
-            "api_key": "secret",
+            "source_path": str(source_path),
+            "api_key": None,
             "model": "AksonOCR-1.0",
             "force_refresh": False,
         },
@@ -114,7 +130,12 @@ def test_ocr_dmc_form_with_akson_rpc(monkeypatch) -> None:  # noqa: ANN001
 
     assert response["result"]["engine"] == "aksonocr"
     assert response["result"]["markdown_path"].endswith("form.md")
-    assert captured["request"].source_path == "C:\\dmc\\uploadTest\\form.pdf"
+    assert response["result"]["credits_charged"] == 3
+    assert response["result"]["charged"] is True
+    assert captured["request"].source_path == str(source_path)
+    assert reservations[0]["module"] == "formConverter"
+    assert reservations[0]["units"] == 3
+    assert captures[0]["units"] == 3
 
 
 def test_list_jobs_rpc(monkeypatch, tmp_path: Path) -> None:

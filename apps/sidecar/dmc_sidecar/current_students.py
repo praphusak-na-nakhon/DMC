@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 from openpyxl import Workbook, load_workbook  # type: ignore[import-untyped]
 from openpyxl.styles import Font, PatternFill  # type: ignore[import-untyped]
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .config import reports_dir
 from .errors import DomainError
@@ -26,6 +26,7 @@ ROSTER_STUDENT_START_ROW = 4
 IMPORT_HEADER_ROW = 1
 IMPORT_FIELD_KEY_ROW = 2
 IMPORT_DATA_START_ROW = 3
+DMC_TRANSFER_IN_URL = "https://portal.bopp-obec.info/obec69/studentin/add_cif"
 TITLE_PREFIXES = (
     "เด็กชาย",
     "เด็กหญิง",
@@ -156,6 +157,21 @@ DMC_BLOCKING_MISSING_FIELDS: tuple[str, ...] = (
     "guardian.first_name",
     "guardian.last_name",
 )
+DMC_TRANSFER_IN_LEVEL_CODES: dict[int, str] = {
+    1: "10",
+    2: "11",
+    3: "12",
+    4: "13",
+    5: "14",
+    6: "15",
+    10: "10",
+    11: "11",
+    12: "12",
+    13: "13",
+    14: "14",
+    15: "15",
+}
+DMC_TRANSFER_IN_VALID_LEVEL_CODES = {f"{index:02d}" for index in range(1, 19)}
 MISSING_BLOCKER_BASIS = (
     "ตรวจจากบัญชีรายชื่อ, CSV เครื่องสแกนบัตร และ OCR แบบฟอร์มแล้วไม่พบข้อมูล "
     "ต้องเติมข้อมูลนี้ก่อนนำเข้า DMC"
@@ -527,6 +543,18 @@ class CurrentStudentsImportSummary(BaseModel):
     warnings_total: int
 
 
+class DmcTransferInImportRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    row_index: int
+    record_id: str
+    student_no: str
+    level_dtl_code: str
+    classroom: str
+    citizen_id: str
+    full_name: str
+
+
 class ValidateCurrentStudentsImportFormRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -541,6 +569,13 @@ class ValidateCurrentStudentsImportFormResponse(BaseModel):
     summary: CurrentStudentsImportSummary
     preview: list[CurrentStudentsImportRowPreview]
     warnings: list[CurrentStudentsWarning]
+
+
+class _DmcFormJsonImportPayload(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    schema_version: Literal["dmc_form_json.v1"]
+    records: list[DmcFormJsonRecord]
 
 
 def reconcile_current_students(request: ReconcileCurrentStudentsRequest) -> CurrentStudentsReconciliationResponse:
@@ -779,7 +814,13 @@ def _build_dmc_form_json_payload(
 def validate_current_students_import_form(
     request: ValidateCurrentStudentsImportFormRequest,
 ) -> ValidateCurrentStudentsImportFormResponse:
-    excel_path = _validated_file(Path(request.excel_path), suffixes={".xlsx", ".xlsm"})
+    input_path = _validated_file(Path(request.excel_path), suffixes={".xlsx", ".xlsm", ".json"})
+    if input_path.suffix.lower() == ".json":
+        return _validate_current_students_json_import_form(input_path)
+    return _validate_current_students_excel_import_form(input_path)
+
+
+def _validate_current_students_excel_import_form(excel_path: Path) -> ValidateCurrentStudentsImportFormResponse:
     workbook = load_workbook(excel_path, read_only=True, data_only=True)
     sheet = workbook.active
     field_columns = _read_import_field_columns(sheet)
@@ -849,6 +890,94 @@ def validate_current_students_import_form(
         preview=preview[:100],
         warnings=warnings,
     )
+
+
+def _validate_current_students_json_import_form(json_path: Path) -> ValidateCurrentStudentsImportFormResponse:
+    records = _read_dmc_form_json_import_records(json_path)
+    duplicate_citizen_ids = _json_duplicate_citizen_ids(records)
+
+    warnings: list[CurrentStudentsWarning] = []
+    preview: list[CurrentStudentsImportRowPreview] = []
+    status_counts: Counter[str] = Counter()
+    for row_index, record in enumerate(records, start=1):
+        issues = _validate_dmc_transfer_in_json_record(record, duplicate_citizen_ids)
+        for issue in issues:
+            warnings.append(
+                CurrentStudentsWarning(
+                    code=issue,
+                    message=_import_issue_message(issue),
+                    source="manual",
+                    source_path=str(json_path),
+                    row_index=row_index,
+                )
+            )
+        status = _import_row_status(issues)
+        status_counts[status] += 1
+        preview.append(
+            CurrentStudentsImportRowPreview(
+                row_index=row_index,
+                status=status,
+                operation_type="transfer_in",
+                student_no=_json_record_student_no(record),
+                citizen_id=_json_record_citizen_id(record),
+                full_name=_json_record_full_name(record),
+                issues=issues,
+            )
+        )
+
+    return ValidateCurrentStudentsImportFormResponse(
+        module=CURRENT_STUDENTS_MODULE,
+        excel_path=str(json_path),
+        summary=CurrentStudentsImportSummary(
+            rows_total=len(records),
+            ready_rows=status_counts["ready"],
+            needs_review_rows=status_counts["needs_review"],
+            invalid_rows=status_counts["invalid"],
+            duplicate_citizen_ids=len(duplicate_citizen_ids),
+            warnings_total=len(warnings),
+        ),
+        preview=preview[:100],
+        warnings=warnings,
+    )
+
+
+def load_dmc_transfer_in_import_records(json_path: Path) -> list[DmcTransferInImportRecord]:
+    input_path = _validated_file(json_path, suffixes={".json"})
+    records = _read_dmc_form_json_import_records(input_path)
+    duplicate_citizen_ids = _json_duplicate_citizen_ids(records)
+    import_records: list[DmcTransferInImportRecord] = []
+    invalid_rows: list[str] = []
+    for row_index, record in enumerate(records, start=1):
+        issues = _validate_dmc_transfer_in_json_record(record, duplicate_citizen_ids)
+        if issues:
+            invalid_rows.append(f"{row_index}:{','.join(issues)}")
+            continue
+        student_no = _json_record_student_no(record)
+        level_dtl_code = _json_record_level_code(record)
+        classroom = _json_record_room(record)
+        citizen_id = _clean_citizen_id(_json_record_citizen_id(record))
+        if student_no is None or level_dtl_code is None or classroom is None or citizen_id is None:
+            invalid_rows.append(f"{row_index}:CURRENT_STUDENTS_JSON_ROW_INCOMPLETE")
+            continue
+        import_records.append(
+            DmcTransferInImportRecord(
+                row_index=row_index,
+                record_id=record.record_id,
+                student_no=student_no,
+                level_dtl_code=level_dtl_code,
+                classroom=classroom,
+                citizen_id=citizen_id,
+                full_name=_json_record_full_name(record),
+            )
+        )
+
+    if invalid_rows:
+        raise DomainError(
+            "CURRENT_STUDENTS_IMPORT_NOT_READY",
+            "Current student JSON contains rows that are not ready for DMC transfer-in import.",
+            details={"invalid_rows": invalid_rows[:20]},
+        )
+    return import_records
 
 
 def read_thai_id_scan_csv(path: Path) -> tuple[list[ThaiIdScanRecord], list[CurrentStudentsWarning]]:
@@ -1641,6 +1770,133 @@ def _read_import_field_columns(sheet: Any) -> dict[str, int]:
     return {}
 
 
+def _read_dmc_form_json_import_records(json_path: Path) -> list[DmcFormJsonRecord]:
+    text, _encoding = _decode_text(json_path)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise DomainError("CURRENT_STUDENTS_JSON_INVALID", "Current student JSON file is not valid JSON.") from exc
+
+    if not isinstance(payload, dict):
+        raise DomainError(
+            "CURRENT_STUDENTS_JSON_UNSUPPORTED_SCHEMA",
+            "Current student JSON file must be a dmc_form_json.v1 object.",
+        )
+
+    try:
+        import_payload = _DmcFormJsonImportPayload.model_validate(payload)
+    except ValidationError as exc:
+        raise DomainError(
+            "CURRENT_STUDENTS_JSON_UNSUPPORTED_SCHEMA",
+            "Current student JSON file must use schema_version dmc_form_json.v1 and include records.",
+        ) from exc
+    return import_payload.records
+
+
+def _json_duplicate_citizen_ids(records: Sequence[DmcFormJsonRecord]) -> set[str]:
+    citizen_ids = [
+        cleaned
+        for record in records
+        if (cleaned := _clean_citizen_id(_json_record_citizen_id(record))) is not None
+    ]
+    citizen_counts = Counter(citizen_ids)
+    return {citizen_id for citizen_id, count in citizen_counts.items() if count > 1}
+
+
+def _json_record_text(record: DmcFormJsonRecord, field_name: str) -> str | None:
+    value = record.fields.get(field_name)
+    return _none_if_empty(value)
+
+
+def _json_record_int(record: DmcFormJsonRecord, field_name: str, top_level_value: int | None) -> int | None:
+    value: Any = top_level_value
+    if value is None:
+        value = record.fields.get(field_name)
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(str(value))
+    except ValueError:
+        return None
+    if not number.is_integer():
+        return None
+    return int(number)
+
+
+def _json_record_student_no(record: DmcFormJsonRecord) -> str | None:
+    return _none_if_empty(record.student_no) or _json_record_text(record, "student_no")
+
+
+def _json_record_citizen_id(record: DmcFormJsonRecord) -> str | None:
+    return _none_if_empty(record.citizen_id) or _json_record_text(record, "citizen_id")
+
+
+def _json_record_grade(record: DmcFormJsonRecord) -> int | None:
+    return _json_record_int(record, "grade", record.grade)
+
+
+def _json_record_room(record: DmcFormJsonRecord) -> str | None:
+    if record.room is not None:
+        return str(record.room)
+    return _json_record_text(record, "room") or _json_record_text(record, "classroom")
+
+
+def _json_record_level_code(record: DmcFormJsonRecord) -> str | None:
+    raw_level_code = _json_record_text(record, "levelDtlCode") or _json_record_text(record, "level_dtl_code")
+    if raw_level_code:
+        digits = "".join(re.findall(r"\d", raw_level_code))
+        if not digits:
+            return None
+        level_code = digits.zfill(2)
+        return level_code if level_code in DMC_TRANSFER_IN_VALID_LEVEL_CODES else None
+    grade = _json_record_grade(record)
+    return DMC_TRANSFER_IN_LEVEL_CODES.get(grade) if grade is not None else None
+
+
+def _json_record_full_name(record: DmcFormJsonRecord) -> str:
+    full_name = _none_if_empty(record.full_name)
+    if full_name:
+        return full_name
+    prefix = _none_if_empty(record.prefix) or _json_record_text(record, "prefix") or ""
+    first_name = _none_if_empty(record.first_name) or _json_record_text(record, "first_name") or ""
+    last_name = _none_if_empty(record.last_name) or _json_record_text(record, "last_name") or ""
+    return _full_name(prefix, first_name, last_name)
+
+
+def _validate_dmc_transfer_in_json_record(
+    record: DmcFormJsonRecord,
+    duplicate_citizen_ids: set[str],
+) -> list[str]:
+    issues: list[str] = []
+    student_no = _json_record_student_no(record)
+    if not student_no:
+        issues.append("MISSING_STUDENT_NO")
+    elif not re.fullmatch(r"\d{1,10}", student_no):
+        issues.append("INVALID_STUDENT_NO")
+
+    has_raw_level_code = bool(_json_record_text(record, "levelDtlCode") or _json_record_text(record, "level_dtl_code"))
+    if _json_record_grade(record) is None and not has_raw_level_code:
+        issues.append("MISSING_GRADE")
+    elif _json_record_level_code(record) is None:
+        issues.append("DMC_TRANSFER_LEVEL_UNSUPPORTED")
+
+    room = _json_record_room(record)
+    if not room:
+        issues.append("MISSING_ROOM")
+    elif not re.fullmatch(r"\d{1,2}", room):
+        issues.append("INVALID_ROOM")
+
+    citizen_id = _json_record_citizen_id(record)
+    cleaned_citizen_id = _clean_citizen_id(citizen_id)
+    if not citizen_id:
+        issues.append("MISSING_CITIZEN_ID")
+    elif cleaned_citizen_id is None or not is_valid_thai_citizen_id(cleaned_citizen_id):
+        issues.append("INVALID_CITIZEN_ID")
+    elif cleaned_citizen_id in duplicate_citizen_ids:
+        issues.append("DUPLICATE_CITIZEN_ID")
+    return issues
+
+
 def _validate_import_row(values: dict[str, str], duplicate_citizen_ids: set[str]) -> list[str]:
     issues: list[str] = []
     for field_name in REQUIRED_IMPORT_FIELDS:
@@ -1662,7 +1918,12 @@ def _validate_import_row(values: dict[str, str], duplicate_citizen_ids: set[str]
 def _import_row_status(issues: list[str]) -> Literal["ready", "needs_review", "invalid"]:
     if not issues:
         return "ready"
-    if any(issue.startswith("MISSING_") or issue in {"INVALID_CITIZEN_ID", "INVALID_OPERATION_TYPE"} for issue in issues):
+    if any(
+        issue.startswith("MISSING_")
+        or issue.startswith("INVALID_")
+        or issue in {"DMC_TRANSFER_LEVEL_UNSUPPORTED"}
+        for issue in issues
+    ):
         return "invalid"
     return "needs_review"
 
@@ -1671,7 +1932,10 @@ def _import_issue_message(issue: str) -> str:
     messages = {
         "INVALID_OPERATION_TYPE": "Operation type must be current, transfer_in, or add_new.",
         "INVALID_CITIZEN_ID": "Citizen ID is invalid or failed checksum validation.",
+        "INVALID_STUDENT_NO": "Student number must contain 1-10 digits for the DMC transfer-in form.",
+        "INVALID_ROOM": "Classroom must contain 1-2 digits for the DMC transfer-in form.",
         "DUPLICATE_CITIZEN_ID": "Citizen ID is duplicated in this import form.",
+        "DMC_TRANSFER_LEVEL_UNSUPPORTED": "Grade could not be mapped to the DMC transfer-in levelDtlCode field.",
     }
     if issue.startswith("MISSING_"):
         return "Required field is missing."

@@ -327,7 +327,7 @@ class PreviewRow(BaseModel):
 class ValidateExcelResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    module: Literal["graduation"]
+    module: Literal["graduation", "currentStudents"]
     detected_level: str
     rows_total: int
     rows_accepted: int
@@ -339,7 +339,7 @@ class StartJobRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     job_id: str
-    module: Literal["graduation"]
+    module: Literal["graduation", "currentStudents"]
     excel_path: str
     options: dict[str, Any] = Field(default_factory=dict)
 

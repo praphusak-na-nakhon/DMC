@@ -20,6 +20,19 @@ function statusBadgeClass(status: string) {
   return "border-border bg-secondary text-secondary-foreground";
 }
 
+function describeAuthReason(reason: string | null) {
+  if (reason === "dmc_login_rejected") {
+    return "DMC ปฏิเสธการเข้าใช้จาก ThaiD นี้ หรือบัญชียังไม่ได้ลงทะเบียน/อนุมัติใน DMC";
+  }
+  if (reason === "dmc_transfer_form_unavailable") {
+    return "login DMC แล้ว แต่ระบบยังเปิดหน้าฟอร์มย้ายเข้าไม่ได้ ให้ตรวจสิทธิ์เมนู 2.7.1 ใน Chromium";
+  }
+  if (reason === "session_expired" || reason === "session_expired_during_submit") {
+    return "session DMC หมดอายุ ต้อง login ใหม่ใน Chromium แล้วกด Resume";
+  }
+  return "ต้อง login DMC ให้สำเร็จใน Chromium แล้วกด Resume";
+}
+
 export function JobProgressPanel({ currentJob, progressPercent, onRevealPath }: JobProgressPanelProps) {
   const reportPath = currentJob?.report_path ?? null;
   const reviewReportPath = currentJob?.review_report_path ?? null;
@@ -144,7 +157,7 @@ export function JobProgressPanel({ currentJob, progressPercent, onRevealPath }: 
               <div className="rounded-lg border bg-muted/40 p-3 text-sm">
                 <div className="flex items-center gap-2 font-semibold">
                   <AlertCircle className="h-4 w-4" />
-                  ต้อง login DMC แล้วกด Resume
+                  {describeAuthReason(currentJob.auth_reason)}
                 </div>
                 <div className="mt-1 text-muted-foreground">reason: {currentJob.auth_reason ?? "auth_required"}</div>
               </div>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import traceback
 import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -32,7 +33,10 @@ def _safe_runtime_error_code(exc: Exception) -> str:
 def _safe_runtime_error_message(exc: Exception) -> str:
     if isinstance(exc, DomainError):
         return exc.user_message
-    return "Job failed. Check diagnostics."
+    detail = str(exc).strip()
+    if detail:
+        return f"{exc.__class__.__name__}: {detail}"[:500]
+    return exc.__class__.__name__ or "Job runtime error."
 
 
 class JobControl:
@@ -334,6 +338,12 @@ class JobManager:
         except Exception as exc:  # pragma: no cover - background defensive path
             code = _safe_runtime_error_code(exc)
             message = _safe_runtime_error_message(exc)
+            context.emit_event(
+                {
+                    "type": "sidecar_stderr",
+                    "message": traceback.format_exc(),
+                }
+            )
             checkpoint = context.job_store.load_checkpoint(context.job_id)
             if code == "JOB_CANCELLED":
                 context.snapshot.status = "cancelled"
