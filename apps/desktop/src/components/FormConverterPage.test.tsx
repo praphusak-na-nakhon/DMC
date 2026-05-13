@@ -9,7 +9,7 @@ const mockRpc = vi.hoisted(() => ({
   openCsvDialog: vi.fn(),
   openMarkdownDialog: vi.fn(),
   openOcrSourceDialog: vi.fn(),
-  ocrDmcFormWithAkson: vi.fn(),
+  ocrDmcFormWithTyphoon: vi.fn(),
 }));
 
 vi.mock("../lib/rpcClient", () => mockRpc);
@@ -417,17 +417,22 @@ describe("FormConverterPage", () => {
     expect(onRetryRuntime).toHaveBeenCalled();
   });
 
-  it("creates AksonOCR markdown and adds it to the DMC OCR file list", async () => {
+  it("creates Typhoon OCR markdown and adds it to the DMC OCR file list", async () => {
     const onRevealPath = vi.fn();
     mockRpc.openOcrSourceDialog.mockResolvedValue("C:\\dmc\\uploadTest\\dmc-form.pdf");
-    mockRpc.ocrDmcFormWithAkson.mockResolvedValue({
+    mockRpc.ocrDmcFormWithTyphoon.mockResolvedValue({
       module: "formConverter",
-      engine: "aksonocr",
-      model: "AksonOCR-1.0",
+      engine: "typhoonocr",
+      model: "typhoon-ocr",
       source_path: "C:\\dmc\\uploadTest\\dmc-form.pdf",
-      markdown_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\aksonocr\\dmc-form-aksonocr-1-0.md",
+      markdown_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\typhoonocr\\dmc-form-typhoon-ocr.md",
       cached: false,
       pages_processed: 2,
+      pages_estimated: 2,
+      credits_per_page: 3,
+      credits_charged: 6,
+      charged: true,
+      credit_reservation_id: "reservation-dmc",
       average_confidence: 91.5,
       file_sha256: "abc123",
       created_at: "2026-05-11T00:00:00+00:00",
@@ -435,31 +440,82 @@ describe("FormConverterPage", () => {
 
     render(<FormConverterPage onBackHome={vi.fn()} onRevealPath={onRevealPath} />);
 
-    fireEvent.click(screen.getByRole("tab", { name: "มีไฟล์สแกน PDF/รูปภาพ" }));
-    expect(screen.queryByRole("button", { name: /เลือกไฟล์ OCR จากแบบฟอร์ม DMC/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /เลือกไฟล์ PDF หรือรูปภาพสำหรับ AksonOCR/ }));
+    const dmcOcrCard = screen.getByText("ไฟล์ OCR จากแบบฟอร์ม DMC").closest("section") as HTMLElement;
+    fireEvent.click(within(dmcOcrCard).getByRole("tab", { name: "มีไฟล์สแกน PDF/รูปภาพ" }));
+    expect(within(dmcOcrCard).queryByRole("button", { name: /เลือกไฟล์ OCR จากแบบฟอร์ม DMC/ })).not.toBeInTheDocument();
+    fireEvent.click(within(dmcOcrCard).getByRole("button", { name: /เลือกไฟล์ PDF หรือรูปภาพสำหรับ Typhoon OCR/ }));
     await waitFor(() => {
       expect(screen.getByDisplayValue("C:\\dmc\\uploadTest\\dmc-form.pdf")).toBeInTheDocument();
     });
-    fireEvent.change(screen.getByLabelText("AksonOCR API key"), { target: { value: "secret-key" } });
-    fireEvent.click(screen.getByRole("button", { name: /สร้างไฟล์ OCR/ }));
+    fireEvent.click(within(dmcOcrCard).getByRole("button", { name: /สร้างไฟล์ OCR/ }));
 
-    await waitFor(() => expect(mockRpc.ocrDmcFormWithAkson).toHaveBeenCalled());
-    expect(mockRpc.ocrDmcFormWithAkson).toHaveBeenCalledWith({
+    await waitFor(() => expect(mockRpc.ocrDmcFormWithTyphoon).toHaveBeenCalled());
+    expect(mockRpc.ocrDmcFormWithTyphoon).toHaveBeenCalledWith({
       sourcePath: "C:\\dmc\\uploadTest\\dmc-form.pdf",
-      apiKey: "secret-key",
-      model: "AksonOCR-1.0",
+      apiKey: null,
+      model: "typhoon-ocr",
       forceRefresh: false,
     });
-    expect(screen.getByText("สร้างไฟล์ OCR แล้ว")).toBeInTheDocument();
-    expect(screen.getByText("2 หน้า · confidence 91.5")).toBeInTheDocument();
+    expect(within(dmcOcrCard).getByText("สร้างไฟล์ OCR แล้ว")).toBeInTheDocument();
+    expect(within(dmcOcrCard).getByText("2 หน้า · confidence 91.5 · ใช้ 6 เครดิต (3 เครดิต/หน้า)")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "เปิดไฟล์" }));
-    expect(onRevealPath).toHaveBeenCalledWith("C:\\dmc\\.dmc-assistant-data\\ocr\\aksonocr\\dmc-form-aksonocr-1-0.md");
+    fireEvent.click(within(dmcOcrCard).getByRole("button", { name: "เปิดไฟล์" }));
+    expect(onRevealPath).toHaveBeenCalledWith("C:\\dmc\\.dmc-assistant-data\\ocr\\typhoonocr\\dmc-form-typhoon-ocr.md");
 
-    fireEvent.click(screen.getByRole("tab", { name: "มีไฟล์ OCR แล้ว" }));
+    fireEvent.click(within(dmcOcrCard).getByRole("tab", { name: "มีไฟล์ OCR แล้ว" }));
     expect(
-      screen.getByDisplayValue("C:\\dmc\\.dmc-assistant-data\\ocr\\aksonocr\\dmc-form-aksonocr-1-0.md"),
+      within(dmcOcrCard).getByDisplayValue("C:\\dmc\\.dmc-assistant-data\\ocr\\typhoonocr\\dmc-form-typhoon-ocr.md"),
+    ).toBeInTheDocument();
+  });
+
+  it("creates Typhoon OCR markdown and adds it to the civil registration OCR file list", async () => {
+    mockRpc.openOcrSourceDialog.mockResolvedValue("C:\\dmc\\uploadTest\\civil-registration.pdf");
+    mockRpc.ocrDmcFormWithTyphoon.mockResolvedValue({
+      module: "formConverter",
+      engine: "typhoonocr",
+      model: "typhoon-ocr",
+      source_path: "C:\\dmc\\uploadTest\\civil-registration.pdf",
+      markdown_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\typhoonocr\\civil-registration-typhoon-ocr.md",
+      cached: false,
+      pages_processed: 1,
+      pages_estimated: 1,
+      credits_per_page: 3,
+      credits_charged: 3,
+      charged: true,
+      credit_reservation_id: "reservation-civil",
+      average_confidence: 94,
+      file_sha256: "civil123",
+      created_at: "2026-05-12T00:00:00+00:00",
+    });
+
+    render(<FormConverterPage onBackHome={vi.fn()} onRevealPath={vi.fn()} />);
+
+    const civilCard = screen.getByText("ไฟล์ OCR จากสำเนาทะเบียนบ้านนักเรียน").closest("section") as HTMLElement;
+    fireEvent.click(within(civilCard).getByRole("tab", { name: "มีไฟล์สแกน PDF/รูปภาพ" }));
+    expect(
+      within(civilCard).queryByRole("button", { name: /เลือกไฟล์ OCR จากสำเนาทะเบียนบ้านนักเรียน/ }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(within(civilCard).getByRole("button", { name: /เลือกไฟล์ PDF หรือรูปภาพสำหรับ Typhoon OCR/ }));
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("C:\\dmc\\uploadTest\\civil-registration.pdf")).toBeInTheDocument();
+    });
+    fireEvent.click(within(civilCard).getByRole("button", { name: /สร้างไฟล์ OCR/ }));
+
+    await waitFor(() => expect(mockRpc.ocrDmcFormWithTyphoon).toHaveBeenCalled());
+    expect(mockRpc.ocrDmcFormWithTyphoon).toHaveBeenCalledWith({
+      sourcePath: "C:\\dmc\\uploadTest\\civil-registration.pdf",
+      apiKey: null,
+      model: "typhoon-ocr",
+      forceRefresh: false,
+    });
+    expect(within(civilCard).getByText("สร้างไฟล์ OCR แล้ว")).toBeInTheDocument();
+    expect(within(civilCard).getByText("1 หน้า · confidence 94 · ใช้ 3 เครดิต (3 เครดิต/หน้า)")).toBeInTheDocument();
+
+    fireEvent.click(within(civilCard).getByRole("tab", { name: "มีไฟล์ OCR แล้ว" }));
+    expect(
+      within(civilCard).getByDisplayValue(
+        "C:\\dmc\\.dmc-assistant-data\\ocr\\typhoonocr\\civil-registration-typhoon-ocr.md",
+      ),
     ).toBeInTheDocument();
   });
 });

@@ -52,11 +52,18 @@ export function getRuntimeConnectionErrorKind(error: unknown): RuntimeConnection
   if (
     isOwnSidecarRecoveryMessage ||
     includesAny(normalized, [
-      "sidecar",
+      "sidecar process",
+      "sidecar runtime",
+      "sidecar owner",
+      "sidecar stdout",
+      "sidecar stdin",
+      "sidecar response channel",
+      "sidecar output line",
       "timed out waiting for sidecar response",
       "stdout closed before a response",
       "stdin closed while writing",
       "failed writing to sidecar stdin",
+      "failed reading sidecar",
       "no sidecar runtime candidate",
       "could not start sidecar",
     ])

@@ -3,7 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AvailableUpdate,
   AccountStatus,
-  AksonOcrDmcFormResponse,
+  TyphoonOcrDmcFormResponse,
   ArchiveJobsResponse,
   BackupCreateResponse,
   BrowserRuntimeStatus,
@@ -32,7 +32,7 @@ import type {
 } from "../types/contracts";
 import {
   parseAddPsarEvidenceResponse,
-  parseAksonOcrDmcFormResponse,
+  parseTyphoonOcrDmcFormResponse,
   parseAvailableUpdate,
   parseAccountStatus,
   parseArchiveJobsResponse,
@@ -307,19 +307,19 @@ export async function exportDmcFormJson(input: {
   return parseExportDmcFormJsonResponse(result);
 }
 
-export async function ocrDmcFormWithAkson(input: {
+export async function ocrDmcFormWithTyphoon(input: {
   sourcePath: string;
   apiKey: string | null;
-  model?: "AksonOCR-1.0";
+  model?: "typhoon-ocr";
   forceRefresh?: boolean;
-}): Promise<AksonOcrDmcFormResponse> {
-  const result = await sidecarRequest<unknown>("ocr_dmc_form_with_akson", {
+}): Promise<TyphoonOcrDmcFormResponse> {
+  const result = await sidecarRequest<unknown>("ocr_dmc_form_with_typhoon", {
     source_path: input.sourcePath,
     api_key: input.apiKey,
-    model: input.model ?? "AksonOCR-1.0",
+    model: input.model ?? "typhoon-ocr",
     force_refresh: input.forceRefresh ?? false,
   });
-  return parseAksonOcrDmcFormResponse(result);
+  return parseTyphoonOcrDmcFormResponse(result);
 }
 
 export async function exportCurrentStudentBlankForm(

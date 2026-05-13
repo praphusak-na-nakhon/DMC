@@ -51,6 +51,7 @@ if (Test-Path $pyInstallerExe) {
         --workpath $sidecarBuild `
         --specpath $sidecarBuild `
         --hidden-import playwright.sync_api `
+        --hidden-import typhoon_ocr `
         --collect-data playwright `
         --paths $sidecarRoot `
         $sidecarEntry
@@ -64,6 +65,7 @@ if (Test-Path $pyInstallerExe) {
         --workpath $sidecarBuild `
         --specpath $sidecarBuild `
         --hidden-import playwright.sync_api `
+        --hidden-import typhoon_ocr `
         --collect-data playwright `
         --paths $sidecarRoot `
         $sidecarEntry

@@ -386,14 +386,19 @@ export type ExportDmcFormJsonResponse = {
   records: DmcFormJsonRecord[];
 };
 
-export type AksonOcrDmcFormResponse = {
+export type TyphoonOcrDmcFormResponse = {
   module: "formConverter";
-  engine: "aksonocr";
-  model: "AksonOCR-1.0";
+  engine: "typhoonocr";
+  model: "typhoon-ocr";
   source_path: string;
   markdown_path: string;
   cached: boolean;
   pages_processed: number;
+  pages_estimated: number;
+  credits_per_page: number;
+  credits_charged: number;
+  charged: boolean;
+  credit_reservation_id: string | null;
   average_confidence: number | null;
   file_sha256: string;
   created_at: string;
@@ -1257,31 +1262,36 @@ export function parseExportDmcFormJsonResponse(value: unknown): ExportDmcFormJso
   };
 }
 
-export function parseAksonOcrDmcFormResponse(value: unknown): AksonOcrDmcFormResponse {
-  const record = asRecord(value, "akson_ocr_dmc_form_response");
-  const module = readString(record, "module", "akson_ocr_dmc_form_response");
+export function parseTyphoonOcrDmcFormResponse(value: unknown): TyphoonOcrDmcFormResponse {
+  const record = asRecord(value, "typhoon_ocr_dmc_form_response");
+  const module = readString(record, "module", "typhoon_ocr_dmc_form_response");
   if (module !== "formConverter") {
-    throw new Error("akson_ocr_dmc_form_response.module must be formConverter");
+    throw new Error("typhoon_ocr_dmc_form_response.module must be formConverter");
   }
-  const engine = readString(record, "engine", "akson_ocr_dmc_form_response");
-  if (engine !== "aksonocr") {
-    throw new Error("akson_ocr_dmc_form_response.engine must be aksonocr");
+  const engine = readString(record, "engine", "typhoon_ocr_dmc_form_response");
+  if (engine !== "typhoonocr") {
+    throw new Error("typhoon_ocr_dmc_form_response.engine must be typhoonocr");
   }
-  const model = readString(record, "model", "akson_ocr_dmc_form_response");
-  if (model !== "AksonOCR-1.0") {
-    throw new Error("akson_ocr_dmc_form_response.model must be AksonOCR-1.0");
+  const model = readString(record, "model", "typhoon_ocr_dmc_form_response");
+  if (model !== "typhoon-ocr") {
+    throw new Error("typhoon_ocr_dmc_form_response.model must be typhoon-ocr");
   }
   return {
     module,
     engine,
     model,
-    source_path: readString(record, "source_path", "akson_ocr_dmc_form_response"),
-    markdown_path: readString(record, "markdown_path", "akson_ocr_dmc_form_response"),
-    cached: readBoolean(record, "cached", "akson_ocr_dmc_form_response"),
-    pages_processed: readNumber(record, "pages_processed", "akson_ocr_dmc_form_response"),
-    average_confidence: readOptionalNumber(record, "average_confidence", "akson_ocr_dmc_form_response"),
-    file_sha256: readString(record, "file_sha256", "akson_ocr_dmc_form_response"),
-    created_at: readString(record, "created_at", "akson_ocr_dmc_form_response"),
+    source_path: readString(record, "source_path", "typhoon_ocr_dmc_form_response"),
+    markdown_path: readString(record, "markdown_path", "typhoon_ocr_dmc_form_response"),
+    cached: readBoolean(record, "cached", "typhoon_ocr_dmc_form_response"),
+    pages_processed: readNumber(record, "pages_processed", "typhoon_ocr_dmc_form_response"),
+    pages_estimated: readNumber(record, "pages_estimated", "typhoon_ocr_dmc_form_response"),
+    credits_per_page: readNumber(record, "credits_per_page", "typhoon_ocr_dmc_form_response"),
+    credits_charged: readNumber(record, "credits_charged", "typhoon_ocr_dmc_form_response"),
+    charged: readBoolean(record, "charged", "typhoon_ocr_dmc_form_response"),
+    credit_reservation_id: readOptionalString(record, "credit_reservation_id", "typhoon_ocr_dmc_form_response"),
+    average_confidence: readOptionalNumber(record, "average_confidence", "typhoon_ocr_dmc_form_response"),
+    file_sha256: readString(record, "file_sha256", "typhoon_ocr_dmc_form_response"),
+    created_at: readString(record, "created_at", "typhoon_ocr_dmc_form_response"),
   };
 }
 

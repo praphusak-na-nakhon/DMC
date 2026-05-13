@@ -603,10 +603,13 @@ def reconcile_current_students(request: ReconcileCurrentStudentsRequest) -> Curr
         warnings.extend(ocr_warnings)
 
     civil_records: list[CivilRegistrationRecord] = []
-    for index, markdown_path in enumerate(request.civil_registration_markdown_paths, start=1):
+    for markdown_path in request.civil_registration_markdown_paths:
         path = _validated_file(Path(markdown_path), suffixes={".md", ".txt", ".csv"})
-        civil_record, civil_warnings = read_civil_registration_markdown(path, record_index=index)
-        civil_records.append(civil_record)
+        parsed_civil_records, civil_warnings = read_civil_registration_markdown_records(
+            path,
+            record_index_start=len(civil_records) + 1,
+        )
+        civil_records.extend(parsed_civil_records)
         warnings.extend(civil_warnings)
 
     records, ocr_attached, ocr_unmatched = _build_canonical_records(
@@ -1188,17 +1191,52 @@ def read_ocr_markdown(path: Path, *, record_index: int = 1) -> tuple[OcrFormReco
     )
 
 
+def read_civil_registration_markdown_records(
+    path: Path,
+    *,
+    record_index_start: int = 1,
+) -> tuple[list[CivilRegistrationRecord], list[CurrentStudentsWarning]]:
+    text, _encoding = _decode_text(path)
+    page_texts = _split_ocr_markdown_pages(text)
+    records: list[CivilRegistrationRecord] = []
+    warnings: list[CurrentStudentsWarning] = []
+    for page_text in page_texts:
+        if not _looks_like_civil_registration_text(page_text):
+            continue
+        record, page_warnings = _parse_civil_registration_text(
+            path,
+            page_text,
+            record_index=record_index_start + len(records),
+        )
+        records.append(record)
+        warnings.extend(page_warnings)
+    if records:
+        return records, warnings
+
+    record, fallback_warnings = _parse_civil_registration_text(path, text, record_index=record_index_start)
+    return [record], fallback_warnings
+
+
 def read_civil_registration_markdown(
     path: Path,
     *,
     record_index: int = 1,
 ) -> tuple[CivilRegistrationRecord, list[CurrentStudentsWarning]]:
-    text, _encoding = _decode_text(path)
+    records, warnings = read_civil_registration_markdown_records(path, record_index_start=record_index)
+    return records[0], warnings
+
+
+def _parse_civil_registration_text(
+    path: Path,
+    text: str,
+    *,
+    record_index: int,
+) -> tuple[CivilRegistrationRecord, list[CurrentStudentsWarning]]:
     compact_text = _clean_text(text)
     warnings: list[CurrentStudentsWarning] = []
     fields: dict[str, CurrentStudentField] = {}
 
-    house_id = _clean_house_id(_regex_first(compact_text, r"เลขรหัสประจำบ้าน\s+([0-9][0-9\-\s]{8,})"))
+    house_id = _clean_house_id(_regex_first(compact_text, r"เลขรหัสประจำบ้าน[:\s]+([0-9][0-9\-\s]{8,})"))
     address_match = re.search(
         r"รายการที่อยู่\s+(?P<house_no>\S+)\s+หมู่ที่\s+(?P<moo>\S+)\s+ตำบล(?P<subdistrict>.+?)\s+อำเภอ(?P<district>.+?)\s+จังหวัด(?P<province>.+?)(?:\s+ชื่อหมู่บ้าน|\s+ลงชื่อ|\s+ประเภทบ้าน|\s+วันเดือนปี|$)",
         compact_text,
@@ -1212,7 +1250,7 @@ def read_civil_registration_markdown(
     _put_field(fields, "registered_address.house_id", house_id, "civil_registration", "high")
 
     name_match = re.search(
-        r"รายการบุคคลในบ้าน.*?ชื่อ\s+(?P<full_name>.+?)\s+สัญชาติ\s+(?P<nationality>\S+)\s+เพศ\s+(?P<sex>\S+)",
+        r"รายการบุคคลในบ้าน.*?(?:เพศ[:\s]*(?P<sex_before>ชาย|หญิง)\s+)?ชื่อ[:\s]+(?P<full_name>.+?)\s+สัญชาติ[:\s]+(?P<nationality>\S+)(?:\s+เพศ[:\s]*(?P<sex_after>\S+))?",
         compact_text,
     )
     prefix: str | None = None
@@ -1229,10 +1267,10 @@ def read_civil_registration_markdown(
         _put_field(fields, "last_name", last_name, "civil_registration", "high")
         _put_field(fields, "nationality", name_match.group("nationality"), "civil_registration", "high")
         _put_field(fields, "race", name_match.group("nationality"), "civil_registration", "high")
-        _put_field(fields, "sex", name_match.group("sex"), "civil_registration", "high")
+        _put_field(fields, "sex", name_match.group("sex_after") or name_match.group("sex_before"), "civil_registration", "high")
 
     citizen_id = _clean_citizen_id(
-        _regex_first(compact_text, r"เลขประจำตัวประชาชน\s+([0-9][0-9\-\s]{10,})\s+สถานภาพ")
+        _regex_first(compact_text, r"เลขประจำตัวประชาชน[:\s]+([0-9][0-9\-\s]{10,})(?=\s+สถานภาพ)")
     )
     citizen_id_valid = citizen_id is not None and is_valid_thai_citizen_id(citizen_id)
     if not citizen_id_valid:
@@ -1346,6 +1384,19 @@ def _build_canonical_records(
             continue
         suggestions = _best_suggestions(scan.name_key, roster, limit=3)
         best_score = suggestions[0].score if suggestions else None
+        if scan.citizen_id_valid and best_score is not None and best_score >= fuzzy_match_threshold:
+            suggested_student = roster_by_student_no.get(suggestions[0].student_no)
+            if suggested_student is not None:
+                suggested_record = records_by_roster_key[_roster_key(suggested_student)]
+                if not _has_source(suggested_record, "thai_id_scan"):
+                    consumed_scan_rows.add(scan.row_index)
+                    _attach_scan(suggested_record, scan)
+                    suggested_record.match_status = "needs_review"
+                    suggested_record.match_score = best_score
+                    suggested_record.suggestions = suggestions
+                    _add_reason(suggested_record, "fuzzy_roster_match_candidate")
+                    _remove_reason(suggested_record, "missing_thai_id_scan")
+                    continue
         status: MatchStatus
         reason: str
         if not scan.citizen_id_valid:
@@ -2002,6 +2053,8 @@ def _attach_scan(record: CanonicalStudentRecord, scan: ThaiIdScanRecord) -> None
 
 def _attach_ocr(record: CanonicalStudentRecord, ocr_record: OcrFormRecord) -> None:
     record.sources.append(SourceReference(source="ocr_form", source_path=ocr_record.source_path))
+    if record.citizen_id is None and ocr_record.citizen_id and ocr_record.citizen_id_valid:
+        record.citizen_id = ocr_record.citizen_id
     if ocr_record.citizen_id and record.citizen_id and ocr_record.citizen_id != record.citizen_id:
         _add_reason(record, "ocr_conflicts_with_citizen_id")
         if record.match_status == "auto_matched":
@@ -2471,7 +2524,7 @@ def _put_civil_parent_fields(
     person: Literal["father", "mother"],
     marker: str,
 ) -> None:
-    pattern = rf"{re.escape(marker)}\s+ชื่อ\s+(.+?)\s+เลขประจำตัวประชาชน\s+([0-9][0-9\-\s]{{10,}})(?:\s+สัญชาติ|\s+สถานภาพ|$)"
+    pattern = rf"{re.escape(marker)}[:\s]+ชื่อ[:\s]+(.+?)\s+(?:เลขประจำตัวประชาชน[:\s]+)?([0-9][0-9\-\s]{{10,}})(?=\s+(?:สัญชาติ|สถานภาพ|มาจาก|เกิดเมื่อ|บิดาผู้ให้กำเนิด|มารดาผู้ให้กำเนิด)|$)"
     match = re.search(pattern, text)
     if match is None:
         return
@@ -2518,6 +2571,24 @@ def _clean_house_id(value: str | None) -> str | None:
 
 def _person_label(person: Literal["father", "mother", "guardian"]) -> str:
     return {"father": "บิดา", "mother": "มารดา", "guardian": "ผู้ปกครอง"}[person]
+
+
+def _split_ocr_markdown_pages(text: str) -> list[str]:
+    parts = re.split(r"<!--\s*Page\s+\d+\s+confidence:\s*[^>]*-->", text, flags=re.IGNORECASE)
+    pages = [part.strip() for part in parts[1:] if _clean_text(part)]
+    return pages or [text]
+
+
+def _looks_like_civil_registration_text(text: str) -> bool:
+    compact_text = _clean_text(text)
+    return any(
+        marker in compact_text
+        for marker in (
+            "รายการเกี่ยวกับบ้าน",
+            "รายการบุคคลในบ้าน",
+            "เลขรหัสประจำบ้าน",
+        )
+    )
 
 
 def _decode_text(path: Path) -> tuple[str, str]:

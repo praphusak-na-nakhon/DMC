@@ -36,6 +36,9 @@ function creditBadgeLabel(module: (typeof moduleDefinitions)[number]) {
   if (!module.requiresCredits) {
     return messages.app.home.freeModule;
   }
+  if (module.id === "formConverter") {
+    return `${messages.app.home.creditModule} ${module.creditPerUnit} เครดิต/หน้า OCR`;
+  }
   return `${messages.app.home.creditModule} ${module.creditPerUnit} เครดิต/รายการ`;
 }
 

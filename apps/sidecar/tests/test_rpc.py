@@ -6,12 +6,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from dmc_sidecar import config
-from dmc_sidecar.akson_ocr import AksonOcrDmcFormResponse
 from dmc_sidecar.checkpoint import JobCheckpoint
 from dmc_sidecar.errors import DomainError
 from dmc_sidecar.job_store import JobStore
 from dmc_sidecar.rpc import RpcServer
 from dmc_sidecar.runtime import build_event_notification
+from dmc_sidecar.typhoon_ocr import TyphoonOcrDmcFormResponse
 
 
 def _rpc_call(server: RpcServer, method: str, params: dict[str, object]) -> dict[str, object]:
@@ -82,21 +82,21 @@ def test_ping_rpc() -> None:
     assert response["result"]["sidecar_version"] == "0.1.0"
 
 
-def test_ocr_dmc_form_with_akson_rpc(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+def test_ocr_dmc_form_with_typhoon_rpc(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
     captured: dict[str, object] = {}
     source_path = tmp_path / "form.pdf"
     source_path.write_bytes(b"%PDF-1.7\n1 0 obj << /Type /Page >> endobj\n%%EOF")
 
-    def fake_ocr(request) -> AksonOcrDmcFormResponse:  # noqa: ANN001
+    def fake_ocr(request) -> TyphoonOcrDmcFormResponse:  # noqa: ANN001
         captured["request"] = request
-        return AksonOcrDmcFormResponse(
-            model="AksonOCR-1.0",
+        return TyphoonOcrDmcFormResponse(
+            model="typhoon-ocr",
             source_path=request.source_path,
-            markdown_path="C:\\dmc\\.dmc-assistant-data\\ocr\\aksonocr\\form.md",
+            markdown_path="C:\\dmc\\.dmc-assistant-data\\ocr\\typhoonocr\\form.md",
             cached=False,
             pages_processed=1,
             pages_estimated=1,
-            average_confidence=94.0,
+            average_confidence=None,
             file_sha256="abc123",
             created_at="2026-05-11T00:00:00+00:00",
         )
@@ -112,23 +112,23 @@ def test_ocr_dmc_form_with_akson_rpc(monkeypatch, tmp_path: Path) -> None:  # no
         captures.append(dict(kwargs))
         return SimpleNamespace(reservation_id=kwargs["reservation_id"])
 
-    monkeypatch.setattr("dmc_sidecar.rpc.ocr_dmc_form_with_akson", fake_ocr)
+    monkeypatch.setattr("dmc_sidecar.rpc.ocr_dmc_form_with_typhoon", fake_ocr)
     monkeypatch.setattr("dmc_sidecar.rpc.reserve_credits", fake_reserve)
     monkeypatch.setattr("dmc_sidecar.rpc.capture_credits", fake_capture)
     server = RpcServer(emit_notification=lambda payload: None)
 
     response = _rpc_call(
         server,
-        "ocr_dmc_form_with_akson",
+        "ocr_dmc_form_with_typhoon",
         {
             "source_path": str(source_path),
             "api_key": None,
-            "model": "AksonOCR-1.0",
+            "model": "typhoon-ocr",
             "force_refresh": False,
         },
     )
 
-    assert response["result"]["engine"] == "aksonocr"
+    assert response["result"]["engine"] == "typhoonocr"
     assert response["result"]["markdown_path"].endswith("form.md")
     assert response["result"]["credits_charged"] == 3
     assert response["result"]["charged"] is True

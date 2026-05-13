@@ -13,7 +13,8 @@ dependencies = [
   "openpyxl>=3.1,<4",
   "rapidfuzz>=3.9,<4",
   "playwright>=1.52,<2",
-  "cryptography>=46,<47"
+  "cryptography>=46,<47",
+  "typhoon-ocr>=0.4.1,<0.5"
 ]
 
 [project.optional-dependencies]

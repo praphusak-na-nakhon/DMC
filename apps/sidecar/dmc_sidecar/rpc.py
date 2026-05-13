@@ -24,12 +24,12 @@ from .account_client import (
 from .account_store import AccountSessionStore
 
 from . import __version__
-from .akson_ocr import (
-    AKSON_OCR_CREDITS_PER_PAGE,
-    AksonOcrDmcFormRequest,
-    AksonOcrDmcFormResponse,
-    ocr_dmc_form_with_akson,
-    prepare_akson_ocr_request,
+from .typhoon_ocr import (
+    TYPHOON_OCR_CREDITS_PER_PAGE,
+    TyphoonOcrDmcFormRequest,
+    TyphoonOcrDmcFormResponse,
+    ocr_dmc_form_with_typhoon,
+    prepare_typhoon_ocr_request,
 )
 from .backup import create_backup_archive, restore_backup_archive
 from .browser_runtime import bootstrap_browser_runtime, get_browser_runtime_status
@@ -158,9 +158,9 @@ class RpcServer:
                 result = export_dmc_form_json(form_json_export_params).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
-            if request.method == "ocr_dmc_form_with_akson":
-                akson_ocr_params = AksonOcrDmcFormRequest.model_validate(request.params)
-                result = self._ocr_dmc_form_with_akson(akson_ocr_params).model_dump()
+            if request.method == "ocr_dmc_form_with_typhoon":
+                typhoon_ocr_params = TyphoonOcrDmcFormRequest.model_validate(request.params)
+                result = self._ocr_dmc_form_with_typhoon(typhoon_ocr_params).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "export_current_student_blank_form":
@@ -435,13 +435,13 @@ class RpcServer:
 
         return RpcSuccessResponse(id=request_id, result={"job_id": job_id, "status": status})
 
-    def _ocr_dmc_form_with_akson(self, request: AksonOcrDmcFormRequest) -> AksonOcrDmcFormResponse:
-        prepared = prepare_akson_ocr_request(request)
+    def _ocr_dmc_form_with_typhoon(self, request: TyphoonOcrDmcFormRequest) -> TyphoonOcrDmcFormResponse:
+        prepared = prepare_typhoon_ocr_request(request)
         if prepared.cached_response is not None:
             return prepared.cached_response
 
-        credits_required = prepared.pages_estimated * AKSON_OCR_CREDITS_PER_PAGE
-        job_id = f"form-ocr-akson-{prepared.file_sha256[:16]}-{uuid.uuid4().hex[:8]}"
+        credits_required = prepared.pages_estimated * TYPHOON_OCR_CREDITS_PER_PAGE
+        job_id = f"form-ocr-typhoon-{prepared.file_sha256[:16]}-{uuid.uuid4().hex[:8]}"
         reservation = reserve_credits(
             self.account_store,
             job_id=job_id,
@@ -451,7 +451,7 @@ class RpcServer:
         )
         captured = False
         try:
-            response = ocr_dmc_form_with_akson(request)
+            response = ocr_dmc_form_with_typhoon(request)
             capture_credits(
                 self.account_store,
                 reservation_id=reservation.reservation_id,
@@ -462,7 +462,7 @@ class RpcServer:
             return response.model_copy(
                 update={
                     "pages_estimated": prepared.pages_estimated,
-                    "credits_per_page": AKSON_OCR_CREDITS_PER_PAGE,
+                    "credits_per_page": TYPHOON_OCR_CREDITS_PER_PAGE,
                     "credits_charged": credits_required,
                     "charged": True,
                     "credit_reservation_id": reservation.reservation_id,

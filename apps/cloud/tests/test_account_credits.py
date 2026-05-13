@@ -29,6 +29,10 @@ _SCRIPT_SPEC.loader.exec_module(manage_accounts)
 client = TestClient(app)
 
 
+def _form_ocr_credits(page_count: int) -> int:
+    return page_count * settings.form_converter_ocr_credits_per_page
+
+
 def _configure(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(settings, "sqlite_path", str(tmp_path / "cloud-account.sqlite3"))
     monkeypatch.setattr(settings, "api_bearer_token", "dmc-test-token")
@@ -526,11 +530,9 @@ def test_reserve_insufficient_credit_and_module_catalog(monkeypatch, tmp_path: P
         for module_id, item in modules.items()
         if module_id != "psar"
     )
-    assert all(
-        item["credit_per_unit"] == 1
-        for module_id, item in modules.items()
-        if module_id != "psar"
-    )
+    assert modules["currentStudents"]["credit_per_unit"] == 1
+    assert modules["graduation"]["credit_per_unit"] == 1
+    assert modules["formConverter"]["credit_per_unit"] == settings.form_converter_ocr_credits_per_page
 
     reserve = client.post(
         "/v1/credits/reservations",
@@ -583,7 +585,7 @@ def test_form_converter_ocr_requires_login_and_returns_mock_records(monkeypatch,
         json={
             "job_id": "form-job-cloud-1",
             "module": "formConverter",
-            "units": 1,
+            "units": _form_ocr_credits(1),
             "idempotency_key": "reserve-ocr",
         },
     )
@@ -616,7 +618,7 @@ def test_form_converter_ocr_requires_login_and_returns_mock_records(monkeypatch,
     }
     wallet = client.get("/v1/wallet", headers={"Authorization": f"Bearer {token}"})
     assert wallet.status_code == 200
-    assert wallet.json()["balance"] == 4
+    assert wallet.json()["balance"] == 2
     assert wallet.json()["reserved"] == 0
     assert telemetry.count() == 0
 
@@ -638,7 +640,7 @@ def test_form_converter_ocr_openai_provider_uses_pdf_file_input(monkeypatch, tmp
         json={
             "job_id": "form-job-openai-1",
             "module": "formConverter",
-            "units": 1,
+            "units": _form_ocr_credits(1),
             "idempotency_key": "reserve-openai-ocr",
         },
     ).json()
@@ -727,7 +729,7 @@ def test_form_converter_ocr_gemini_provider_uploads_pdf_and_deletes_file(monkeyp
         json={
             "job_id": "form-job-gemini-1",
             "module": "formConverter",
-            "units": 1,
+            "units": _form_ocr_credits(1),
             "idempotency_key": "reserve-gemini-ocr",
         },
     ).json()
@@ -860,7 +862,7 @@ def test_form_converter_ocr_gemini_provider_requires_api_key(monkeypatch, tmp_pa
         json={
             "job_id": "form-job-gemini-missing-key",
             "module": "formConverter",
-            "units": 1,
+            "units": _form_ocr_credits(1),
             "idempotency_key": "reserve-gemini-key",
         },
     ).json()
@@ -892,7 +894,7 @@ def test_form_converter_ocr_enforces_pdf_limits(monkeypatch, tmp_path: Path) -> 
         client.post(
             f"/v1/admin/users/{user_id}/credits/topup",
             headers=_admin_headers(),
-            json={"amount": 5, "idempotency_key": "topup-ocr-limits"},
+            json={"amount": _form_ocr_credits(2), "idempotency_key": "topup-ocr-limits"},
         ).status_code
         == 200
     )
@@ -903,7 +905,7 @@ def test_form_converter_ocr_enforces_pdf_limits(monkeypatch, tmp_path: Path) -> 
         json={
             "job_id": "form-job-limits-1",
             "module": "formConverter",
-            "units": 2,
+            "units": _form_ocr_credits(2),
             "idempotency_key": "reserve-ocr-limits",
         },
     ).json()
@@ -937,7 +939,7 @@ def test_form_converter_ocr_credit_ledger_end_to_end(monkeypatch, tmp_path: Path
         client.post(
             f"/v1/admin/users/{user_id}/credits/topup",
             headers=_admin_headers(),
-            json={"amount": 3, "idempotency_key": "topup-form-e2e"},
+            json={"amount": _form_ocr_credits(2) + 1, "idempotency_key": "topup-form-e2e"},
         ).status_code
         == 200
     )
@@ -949,7 +951,7 @@ def test_form_converter_ocr_credit_ledger_end_to_end(monkeypatch, tmp_path: Path
         json={
             "job_id": "form-job-ledger-1",
             "module": "formConverter",
-            "units": 2,
+            "units": _form_ocr_credits(2),
             "idempotency_key": "reserve-form-ledger-1",
         },
     ).json()
@@ -1007,7 +1009,7 @@ def test_form_converter_ocr_retry_uses_cached_response_without_double_capture(mo
         client.post(
             f"/v1/admin/users/{user_id}/credits/topup",
             headers=_admin_headers(),
-            json={"amount": 3, "idempotency_key": "topup-form-retry"},
+            json={"amount": _form_ocr_credits(2) + 1, "idempotency_key": "topup-form-retry"},
         ).status_code
         == 200
     )
@@ -1019,7 +1021,7 @@ def test_form_converter_ocr_retry_uses_cached_response_without_double_capture(mo
         json={
             "job_id": "form-job-retry-1",
             "module": "formConverter",
-            "units": 2,
+            "units": _form_ocr_credits(2),
             "idempotency_key": "reserve-form-retry-1",
         },
     ).json()
@@ -1078,7 +1080,7 @@ def test_form_converter_ocr_retry_uses_cached_response_without_double_capture(mo
     ledger = client.get(f"/v1/admin/users/{user_id}/ledger", headers=_admin_headers()).json()
     capture_entries = [entry for entry in ledger if entry["type"] == "capture"]
     assert len(capture_entries) == 1
-    assert capture_entries[0]["amount"] == 2
+    assert capture_entries[0]["amount"] == _form_ocr_credits(2)
 
 
 def test_form_converter_ocr_stale_captured_request_does_not_call_provider(monkeypatch, tmp_path: Path) -> None:
@@ -1087,7 +1089,7 @@ def test_form_converter_ocr_stale_captured_request_does_not_call_provider(monkey
         client.post(
             f"/v1/admin/users/{user_id}/credits/topup",
             headers=_admin_headers(),
-            json={"amount": 3, "idempotency_key": "topup-form-stale"},
+            json={"amount": _form_ocr_credits(2) + 1, "idempotency_key": "topup-form-stale"},
         ).status_code
         == 200
     )
@@ -1099,7 +1101,7 @@ def test_form_converter_ocr_stale_captured_request_does_not_call_provider(monkey
         json={
             "job_id": "form-job-stale-1",
             "module": "formConverter",
-            "units": 2,
+            "units": _form_ocr_credits(2),
             "idempotency_key": "reserve-form-stale-1",
         },
     ).json()
@@ -1112,7 +1114,7 @@ def test_form_converter_ocr_stale_captured_request_does_not_call_provider(monkey
     capture = client.post(
         f"/v1/credits/reservations/{reservation['reservation_id']}/capture",
         headers=headers,
-        json={"units": 2, "idempotency_key": capture_key},
+        json={"units": _form_ocr_credits(2), "idempotency_key": capture_key},
     )
     assert capture.status_code == 200
 
@@ -1144,7 +1146,7 @@ def test_form_converter_ocr_finalizes_provider_done_capture_without_provider_ret
         client.post(
             f"/v1/admin/users/{user_id}/credits/topup",
             headers=_admin_headers(),
-            json={"amount": 3, "idempotency_key": "topup-form-provider-done"},
+            json={"amount": _form_ocr_credits(2) + 1, "idempotency_key": "topup-form-provider-done"},
         ).status_code
         == 200
     )
@@ -1156,7 +1158,7 @@ def test_form_converter_ocr_finalizes_provider_done_capture_without_provider_ret
         json={
             "job_id": "form-job-provider-done-1",
             "module": "formConverter",
-            "units": 2,
+            "units": _form_ocr_credits(2),
             "idempotency_key": "reserve-form-provider-done-1",
         },
     ).json()
@@ -1204,7 +1206,7 @@ def test_form_converter_ocr_finalizes_provider_done_capture_without_provider_ret
     capture = client.post(
         f"/v1/credits/reservations/{reservation['reservation_id']}/capture",
         headers=headers,
-        json={"units": 2, "idempotency_key": capture_key},
+        json={"units": _form_ocr_credits(2), "idempotency_key": capture_key},
     )
     assert capture.status_code == 200
 

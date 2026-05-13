@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseAksonOcrDmcFormResponse, parseJobStatusSnapshot } from "./contracts";
+import { parseJobStatusSnapshot, parseTyphoonOcrDmcFormResponse } from "./contracts";
 
 const baseJob = {
   job_id: "job-empty-summary",
@@ -56,26 +56,33 @@ describe("job status contracts", () => {
   });
 });
 
-describe("AksonOCR contracts", () => {
+describe("Typhoon OCR contracts", () => {
   it("parses the generated OCR markdown response", () => {
-    const parsed = parseAksonOcrDmcFormResponse({
+    const parsed = parseTyphoonOcrDmcFormResponse({
       module: "formConverter",
-      engine: "aksonocr",
-      model: "AksonOCR-1.0",
+      engine: "typhoonocr",
+      model: "typhoon-ocr",
       source_path: "C:\\dmc\\uploadTest\\dmc-form.pdf",
-      markdown_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\aksonocr\\dmc-form.md",
+      markdown_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\typhoonocr\\dmc-form.md",
       cached: false,
       pages_processed: 2,
-      average_confidence: 92.5,
+      pages_estimated: 2,
+      credits_per_page: 3,
+      credits_charged: 6,
+      charged: true,
+      credit_reservation_id: "reservation-1",
+      average_confidence: null,
       file_sha256: "abc123",
       created_at: "2026-05-11T00:00:00+00:00",
     });
 
     expect(parsed).toMatchObject({
-      engine: "aksonocr",
-      model: "AksonOCR-1.0",
+      engine: "typhoonocr",
+      model: "typhoon-ocr",
       pages_processed: 2,
-      average_confidence: 92.5,
+      credits_charged: 6,
+      charged: true,
+      average_confidence: null,
     });
   });
 });

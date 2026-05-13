@@ -45,7 +45,7 @@ MODULE_CATALOG = (
         enabled=True,
         requires_credits=True,
         pricing_mode="per_billable_record",
-        credit_per_unit=1,
+        credit_per_unit=settings.form_converter_ocr_credits_per_page,
         production_dry_run_enabled=False,
     ),
     ModuleCatalogItem(

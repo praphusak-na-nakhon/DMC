@@ -40,7 +40,13 @@ describe("CreditTopupPage", () => {
     expect(screen.getByText(messages.app.account.topup.title)).toBeInTheDocument();
     for (const packageOption of messages.app.account.topup.packages) {
       expect(screen.getByText(packageOption.name)).toBeInTheDocument();
-      expect(screen.getByText(packageOption.unitRate)).toBeInTheDocument();
+    }
+    const unitRateCounts = new Map<string, number>();
+    for (const packageOption of messages.app.account.topup.packages) {
+      unitRateCounts.set(packageOption.unitRate, (unitRateCounts.get(packageOption.unitRate) ?? 0) + 1);
+    }
+    for (const [unitRate, count] of unitRateCounts) {
+      expect(screen.getAllByText(unitRate)).toHaveLength(count);
     }
   });
 

@@ -18,6 +18,7 @@ from dmc_sidecar.current_students import (
     export_current_students_import_excel,
     load_dmc_transfer_in_import_records,
     preview_dmc_form_json,
+    read_civil_registration_markdown_records,
     reconcile_current_students,
     validate_current_students_import_form,
 )
@@ -144,15 +145,15 @@ def test_reconcile_current_students_builds_canonical_records_and_review_queue(tm
     assert result.summary.roster_records == 4
     assert result.summary.thai_id_scan_records == 6
     assert result.summary.ocr_form_records == 1
-    assert result.summary.records_total == 6
+    assert result.summary.records_total == 5
     assert result.summary.auto_matched == 1
-    assert result.summary.needs_review == 2
+    assert result.summary.needs_review == 1
     assert result.summary.invalid_id_records == 1
     assert result.summary.duplicate_records == 1
     assert result.summary.duplicate_scan_records == 2
     assert result.summary.new_or_transfer_candidates == 1
     assert result.summary.ocr_attached_records == 1
-    assert result.summary.review_queue_records == 5
+    assert result.summary.review_queue_records == 4
 
     by_student_no = {record.student_no: record for record in result.records if record.student_no}
     matched = by_student_no["19984"]
@@ -166,12 +167,16 @@ def test_reconcile_current_students_builds_canonical_records_and_review_queue(tm
     assert any(conflict.field_name == "prefix" for conflict in matched.conflicts)
 
     assert by_student_no["19985"].match_status == "needs_review"
-    assert "missing_thai_id_scan" in by_student_no["19985"].review_reasons
+    assert by_student_no["19985"].citizen_id == "1819900915055"
+    assert by_student_no["19985"].dmc_fields["citizen_id"].source == "thai_id_scan"
+    assert "fuzzy_roster_match_candidate" in by_student_no["19985"].review_reasons
+    assert "missing_thai_id_scan" not in by_student_no["19985"].review_reasons
     assert by_student_no["19986"].match_status == "invalid_id"
     assert by_student_no["19987"].match_status == "duplicate"
 
     fuzzy_record = next(record for record in result.records if record.citizen_id == "1819900915055")
     assert fuzzy_record.match_status == "needs_review"
+    assert fuzzy_record.student_no == "19985"
     assert fuzzy_record.suggestions[0].student_no == "19985"
     assert fuzzy_record.suggestions[0].score >= 0.9
 
@@ -208,7 +213,7 @@ def test_validate_current_student_sources_rpc(tmp_path: Path) -> None:
     assert response["result"]["module"] == "currentStudents"
     assert response["result"]["summary"]["roster_records"] == 4
     assert response["result"]["summary"]["thai_id_scan_records"] == 6
-    assert response["result"]["summary"]["review_queue_records"] == 5
+    assert response["result"]["summary"]["review_queue_records"] == 4
 
 
 def test_export_blank_form_and_validate_completed_import_form(tmp_path: Path) -> None:
@@ -323,6 +328,26 @@ def test_export_dmc_form_json_writes_operation_neutral_json(tmp_path: Path) -> N
     assert "operation_type" not in payload["records"][0]["fields"]
     assert payload["records"][0]["fields"]["siblings_studying_count"] == "1"
     assert payload["records"][0]["fields"]["child_order"] == "2"
+
+
+def test_dmc_form_json_uses_ocr_citizen_id_as_fallback_when_scan_is_absent(tmp_path: Path) -> None:
+    roster_path = tmp_path / "studentListM1-M4 2569.xlsx"
+    ocr_path = tmp_path / "1-3ex.md"
+    _write_roster(roster_path)
+    _write_ocr_markdown(ocr_path)
+
+    result = export_dmc_form_json(
+        ExportDmcFormJsonRequest(
+            roster_excel_path=str(roster_path),
+            thai_id_csv_path=None,
+            ocr_markdown_paths=[str(ocr_path)],
+            school_year=2569,
+            grade_levels=[1],
+        )
+    )
+
+    assert result.records[0].fields["citizen_id"] == "1819900905157"
+    assert result.records[0].field_details["citizen_id"].source == "ocr_form"
 
 
 def test_validate_current_students_accepts_dmc_form_json_for_transfer_in(tmp_path: Path) -> None:
@@ -471,6 +496,72 @@ def test_dmc_form_json_uses_civil_registration_ocr_as_supplement(tmp_path: Path)
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["records"][0]["field_details"]["current_address.house_id"]["source"] == "civil_registration"
     assert payload["records"][0]["field_details"]["mother.first_name"]["source"] == "civil_registration"
+
+
+def test_civil_registration_markdown_splits_typhoon_pages_and_bounds_parent_fields(tmp_path: Path) -> None:
+    civil_path = tmp_path / "multi-page-civil.md"
+    civil_path.write_text(
+        "\n".join(
+            [
+                "<!-- Page 1 confidence: n/a -->",
+                "รายการเกี่ยวกับบ้าน",
+                "เลขรหัสประจำบ้าน 8101-008408-9",
+                "รายการที่อยู่ 23 หมู่ที่ 4 ตำบลคลองขนาน อำเภอเหนือคลอง จังหวัดกระบี่",
+                "รายการบุคคลในบ้านของเลขรหัสประจำบ้าน 8101-008408-9",
+                "ลำดับที่ 12",
+                "เพศชาย",
+                "ชื่อ ด.ช.อนุวัฒน์ ตุ้มคำ",
+                "สัญชาติ ไทย",
+                "เลขประจำตัวประชาชน 1-8108-00164-49-1",
+                "สถานภาพ ผู้อาศัย",
+                "เกิดเมื่อ 13 ก.พ. 2557",
+                "มารดาผู้ให้กำเนิด ชื่อ กรานนิกา 1-7603-00002-25-6 สัญชาติ ไทย",
+                "บิดาผู้ให้กำเนิด ชื่อ ชวลิต 3-8101-00748-86-1 สัญชาติ ไทย",
+                "<!-- Page 2 confidence: n/a -->",
+                "รายการเกี่ยวกับบ้าน",
+                "เลขรหัสประจำบ้าน 8104-001533-6",
+                "รายการที่อยู่ 23/1 หมู่ที่ 1 ตำบลกรายขาว อำเภอคลองก่อม จังหวัดกระบี่",
+                "รายการบุคคลในบ้านของเลขรหัสประจำบ้าน 8104-001533-6 ลำดับที่ 14",
+                "ชื่อ ค.ญ.ธัญชน่า หมาดตา",
+                "สัญชาติ ไทย",
+                "เพศ หญิง",
+                "เลขประจำตัวประชาชน 1-9288-00047-06-8",
+                "สถานภาพ ผู้อาศัย",
+                "เกิดเมื่อ 20 มี.ค. 2556",
+                "มารดาผู้ให้กำเนิด ชื่อ รัตนา 1-8104-00052-13-4 สัญชาติ ไทย",
+                "บิดาผู้ให้กำเนิด ชื่อ อาฟิก 1-9098-00344-12-8 สัญชาติ ไทย",
+                "<!-- Page 3 confidence: n/a -->",
+                "รายการเกี่ยวกับบ้าน",
+                "เลขรหัสประจำบ้าน: 8108-002888-9",
+                "รายการที่อยู่: 138 หมู่ที่ 5 ตำบลห้วยยูง อำเภอเหนือคลอง จังหวัดกระบี่",
+                "รายการบุคคลในบ้านของเลขรหัสประจำบ้าน 8108-002888-9",
+                "ลำดับที่ 7",
+                "ชื่อ: ด.ญ.พิรุฬกานต์ เพชรสูก",
+                "สัญชาติ: ไทย",
+                "เพศ: หญิง",
+                "เลขประจำตัวประชาชน: 1-8199-00924-40-2",
+                "สถานภาพผู้อาศัย: เกิดเมื่อ 19 มิ.ย. 2556",
+                "มารดาผู้ให้กำเนิด: ชื่อ วันเพ็ญ 1-6199-00222-35-3 สัญชาติ ไทย",
+                "บิดาผู้ให้กำเนิด: ชื่อ นพเดช 1-8102-00065-94-8 สัญชาติ ไทย",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    records, warnings = read_civil_registration_markdown_records(civil_path)
+
+    assert [warning.code for warning in warnings] == []
+    assert len(records) == 3
+    assert records[0].fields["father.first_name"].value == "ชวลิต"
+    assert "father.last_name" not in records[0].fields
+    assert records[0].fields["mother.first_name"].value == "กรานนิกา"
+    assert "Page 2" not in str(records[0].fields.get("mother.first_name"))
+    assert records[1].fields["father.first_name"].value == "อาฟิก"
+    assert records[1].fields["mother.first_name"].value == "รัตนา"
+    assert records[2].citizen_id == "1819900924402"
+    assert records[2].first_name == "พิรุฬกานต์"
+    assert records[2].fields["father.first_name"].value == "นพเดช"
+    assert records[2].fields["mother.first_name"].value == "วันเพ็ญ"
 
 
 UPLOAD_TEST_DIR = Path(__file__).parents[3] / "uploadTest"

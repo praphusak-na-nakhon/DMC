@@ -290,37 +290,33 @@ fn python_sidecar_launch_specs(app: &AppHandle) -> Result<Vec<SidecarLaunchSpec>
     if let Some(cloud_base_url) = configured_cloud_base_url(app) {
         shared_envs.push(("DMC_CLOUD_BASE_URL".to_string(), cloud_base_url));
     }
-    let program_candidates: Vec<(String, Vec<String>)> = match env::var("DMC_PYTHON") {
-        Ok(custom) => vec![
-            (custom, vec!["-m".to_string(), "dmc_sidecar".to_string()]),
-            (
-                "python".to_string(),
-                vec!["-m".to_string(), "dmc_sidecar".to_string()],
-            ),
-            (
-                "py".to_string(),
-                vec![
-                    "-3".to_string(),
-                    "-m".to_string(),
-                    "dmc_sidecar".to_string(),
-                ],
-            ),
-        ],
-        Err(_) => vec![
-            (
-                "python".to_string(),
-                vec!["-m".to_string(), "dmc_sidecar".to_string()],
-            ),
-            (
-                "py".to_string(),
-                vec![
-                    "-3".to_string(),
-                    "-m".to_string(),
-                    "dmc_sidecar".to_string(),
-                ],
-            ),
-        ],
-    };
+    let mut program_candidates: Vec<(String, Vec<String>)> = Vec::new();
+    if let Ok(custom) = env::var("DMC_PYTHON") {
+        program_candidates.push((custom, vec!["-m".to_string(), "dmc_sidecar".to_string()]));
+    }
+
+    let local_venv_python = repo_root.join(".venv").join("Scripts").join("python.exe");
+    if local_venv_python.exists() {
+        program_candidates.push((
+            local_venv_python.to_string_lossy().to_string(),
+            vec!["-m".to_string(), "dmc_sidecar".to_string()],
+        ));
+    }
+
+    program_candidates.extend([
+        (
+            "python".to_string(),
+            vec!["-m".to_string(), "dmc_sidecar".to_string()],
+        ),
+        (
+            "py".to_string(),
+            vec![
+                "-3".to_string(),
+                "-m".to_string(),
+                "dmc_sidecar".to_string(),
+            ],
+        ),
+    ]);
 
     Ok(program_candidates
         .into_iter()
@@ -712,7 +708,7 @@ fn rpc_timeout_secs(method: &str) -> u64 {
         | "export_current_student_import_excel"
         | "preview_dmc_form_json"
         | "export_dmc_form_json"
-        | "ocr_dmc_form_with_akson" => RPC_TIMEOUT_LONG_SECS,
+        | "ocr_dmc_form_with_typhoon" => RPC_TIMEOUT_LONG_SECS,
         _ => RPC_TIMEOUT_STANDARD_SECS,
     }
 }
@@ -728,7 +724,7 @@ mod rpc_timeout_tests {
             "export_current_student_import_excel",
             "preview_dmc_form_json",
             "export_dmc_form_json",
-            "ocr_dmc_form_with_akson",
+            "ocr_dmc_form_with_typhoon",
         ] {
             assert_eq!(rpc_timeout_secs(method), RPC_TIMEOUT_LONG_SECS);
         }

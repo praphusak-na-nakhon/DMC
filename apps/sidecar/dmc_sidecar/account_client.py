@@ -291,9 +291,9 @@ def cached_module_catalog(store: AccountSessionStore) -> ModuleCatalogResponse:
                 ModuleCatalogItem(
                     id="formConverter",
                     enabled=True,
-                    requires_credits=False,
+                    requires_credits=True,
                     pricing_mode="per_billable_record",
-                    credit_per_unit=0,
+                    credit_per_unit=3,
                     production_dry_run_enabled=False,
                 ),
                 ModuleCatalogItem(

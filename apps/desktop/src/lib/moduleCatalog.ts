@@ -27,9 +27,9 @@ export const moduleDefinitions: ModuleDefinition[] = [
     id: "formConverter",
     status: "ready",
     icon: FileSpreadsheet,
-    requiresCredits: false,
+    requiresCredits: true,
     pricingMode: "per_billable_record",
-    creditPerUnit: 0,
+    creditPerUnit: 3,
     productionDryRunEnabled: false,
     contract: {
       version: "0.2",
@@ -88,11 +88,14 @@ export const moduleDefinitions: ModuleDefinition[] = [
     productionDryRunEnabled: false,
     contract: {
       version: "0.1-draft",
-      inputs: ["blank_current_students_template", "completed_current_students_excel_path"],
+      inputs: ["blank_current_students_template", "completed_current_students_excel_or_json_path"],
       validations: [
         "import_workbook_headers",
+        "dmc_form_json_v1_schema",
         "required_columns_present",
         "required_fields_present",
+        "dmc_transfer_in_required_fields",
+        "dmc_transfer_in_level_mapping",
         "thai_id_format",
         "thai_id_checksum",
         "duplicate_student_check",

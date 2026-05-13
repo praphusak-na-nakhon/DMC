@@ -39,4 +39,11 @@ describe("error message mapping", () => {
     expect(describeUserFacingError(raw)).toContain("ตัวเชื่อมระบบ");
     expect(describeUserFacingError(raw)).not.toContain("browser preview");
   });
+
+  it("does not classify domain messages that mention sidecar as runtime failures", () => {
+    const raw = "ระบบยังไม่มี dependency typhoon-ocr ใน sidecar";
+
+    expect(getRuntimeConnectionErrorKind(raw)).toBeNull();
+    expect(describeUserFacingError(raw)).toBe(raw);
+  });
 });

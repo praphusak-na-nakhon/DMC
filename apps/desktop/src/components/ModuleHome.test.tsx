@@ -57,6 +57,7 @@ describe("ModuleHome", () => {
     expect(screen.getByText(messages.app.home.modules.psar.title)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.currentStudents.title)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.graduation.title)).toBeInTheDocument();
+    expect(screen.getByText(`${messages.app.home.creditModule} 3 เครดิต/หน้า OCR`)).toBeInTheDocument();
     expect(screen.getAllByText("ใช้เครดิต 1 เครดิต/รายการ")).toHaveLength(2);
     expect(screen.queryByText(messages.app.account.topup.title)).not.toBeInTheDocument();
     expect(screen.queryByText(messages.app.account.topup.packages[0].unitRate)).not.toBeInTheDocument();

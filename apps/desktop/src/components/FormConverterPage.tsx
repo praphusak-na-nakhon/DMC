@@ -5,7 +5,6 @@ import {
   FileSpreadsheet,
   FileText,
   FolderOpen,
-  KeyRound,
   Loader2,
   ScanText,
   UploadCloud,
@@ -21,11 +20,11 @@ import {
   openExcelDialog,
   openMarkdownDialog,
   openOcrSourceDialog,
-  ocrDmcFormWithAkson,
+  ocrDmcFormWithTyphoon,
   previewDmcFormJson,
 } from "../lib/rpcClient";
 import type {
-  AksonOcrDmcFormResponse,
+  TyphoonOcrDmcFormResponse,
   DmcFormJsonRecord,
   CurrentStudentsFieldConflict,
   CurrentStudentsWarning,
@@ -58,19 +57,26 @@ const errorMessages: Record<string, string> = {
   DMC_FORM_JSON_EXPORT_UNSUPPORTED_TYPE: "ไฟล์ปลายทางต้องเป็น .json",
   CURRENT_STUDENTS_OCR_REQUIRED: "กรุณาเพิ่มไฟล์ OCR จากแบบฟอร์ม DMC อย่างน้อย 1 ไฟล์",
   CURRENT_STUDENTS_OCR_NO_RECORDS: "ไม่พบข้อมูลนักเรียนจากไฟล์ OCR จากแบบฟอร์ม DMC ที่เลือก",
-  AKSONOCR_API_KEY_REQUIRED: "กรุณากรอก AksonOCR API key หรือกำหนด AKSONOCR_API_KEY ใน environment",
-  AKSONOCR_INPUT_NOT_FOUND: "ไม่พบไฟล์ PDF/รูปภาพที่เลือกสำหรับ AksonOCR",
-  AKSONOCR_INPUT_NOT_FILE: "พาธที่เลือกสำหรับ AksonOCR ไม่ใช่ไฟล์",
-  AKSONOCR_INPUT_EMPTY: "ไฟล์ที่เลือกสำหรับ AksonOCR ไม่มีข้อมูล",
-  AKSONOCR_UNSUPPORTED_INPUT_TYPE: "AksonOCR รองรับเฉพาะไฟล์ .pdf, .png, .jpg, .jpeg, .webp",
-  AKSONOCR_FILE_TOO_LARGE: "ไฟล์ใหญ่เกิน 10 MB สำหรับ AksonOCR v2 upload",
-  AKSONOCR_AUTH_FAILED: "AksonOCR API key ไม่ถูกต้องหรือไม่มีสิทธิ์ใช้งาน",
-  AKSONOCR_CREDITS_REQUIRED: "เครดิต AksonOCR ไม่เพียงพอ",
-  AKSONOCR_RATE_LIMITED: "AksonOCR จำกัดจำนวนคำขอชั่วคราว กรุณาลองใหม่อีกครั้ง",
-  AKSONOCR_NETWORK_ERROR: "เชื่อมต่อ AksonOCR ไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ต",
-  AKSONOCR_UPLOAD_REJECTED: "AksonOCR ปฏิเสธไฟล์หรือคำขอที่ส่งไป",
-  AKSONOCR_UPLOAD_FAILED: "อัปโหลดไฟล์ไป AksonOCR ไม่สำเร็จ",
-  AKSONOCR_RESPONSE_INVALID: "AksonOCR ส่งผลลัพธ์กลับมาในรูปแบบที่ระบบอ่านไม่ได้",
+  SIGN_IN_REQUIRED: "กรุณาเข้าสู่ระบบก่อนใช้ OCR แบบคิดเครดิต",
+  INSUFFICIENT_CREDITS: "เครดิตไม่พอสำหรับ OCR จำนวนหน้านี้",
+  TYPHOONOCR_API_KEY_REQUIRED: "ยังไม่ได้ตั้งค่า Typhoon OCR API key ฝั่งระบบ",
+  TYPHOONOCR_DEPENDENCY_MISSING: "ระบบยังไม่มี dependency typhoon-ocr ใน sidecar",
+  TYPHOONOCR_PDF_UTILS_MISSING: "Typhoon OCR ต้องใช้ Poppler สำหรับ PDF (pdfinfo และ pdftoppm)",
+  TYPHOONOCR_INPUT_NOT_FOUND: "ไม่พบไฟล์ PDF/รูปภาพที่เลือกสำหรับ Typhoon OCR",
+  TYPHOONOCR_INPUT_NOT_FILE: "พาธที่เลือกสำหรับ Typhoon OCR ไม่ใช่ไฟล์",
+  TYPHOONOCR_INPUT_EMPTY: "ไฟล์ที่เลือกสำหรับ Typhoon OCR ไม่มีข้อมูล",
+  TYPHOONOCR_UNSUPPORTED_INPUT_TYPE: "Typhoon OCR รองรับเฉพาะไฟล์ .pdf, .png, .jpg, .jpeg",
+  TYPHOONOCR_FILE_TOO_LARGE: "ไฟล์ใหญ่เกิน 10 MB สำหรับ Typhoon OCR",
+  TYPHOONOCR_PAGE_LIMIT_EXCEEDED: "ไฟล์ PDF เกิน 20 หน้า สำหรับ Typhoon OCR",
+  TYPHOONOCR_PAGE_COUNT_UNKNOWN: "ไม่สามารถนับจำนวนหน้า PDF ก่อนทำ OCR ได้",
+  TYPHOONOCR_AUTH_FAILED: "Typhoon OCR API key ไม่ถูกต้องหรือไม่มีสิทธิ์ใช้งาน",
+  TYPHOONOCR_CREDITS_REQUIRED: "เครดิต Typhoon OCR ไม่เพียงพอ",
+  TYPHOONOCR_RATE_LIMITED: "Typhoon OCR จำกัดจำนวนคำขอชั่วคราว กรุณาลองใหม่อีกครั้ง",
+  TYPHOONOCR_NETWORK_ERROR: "เชื่อมต่อ Typhoon OCR ไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ต",
+  TYPHOONOCR_UPLOAD_REJECTED: "Typhoon OCR ปฏิเสธไฟล์หรือคำขอที่ส่งไป",
+  TYPHOONOCR_UPLOAD_FAILED: "ส่งไฟล์ไป Typhoon OCR ไม่สำเร็จ",
+  TYPHOONOCR_PROCESSING_FAILED: "Typhoon OCR ประมวลผลไฟล์ไม่สำเร็จ",
+  TYPHOONOCR_RESPONSE_INVALID: "Typhoon OCR ส่งผลลัพธ์กลับมาในรูปแบบที่ระบบอ่านไม่ได้",
 };
 
 type PreviewColumn = {
@@ -218,9 +224,12 @@ export function FormConverterPage({
   const [ocrMarkdownPaths, setOcrMarkdownPaths] = useState("");
   const [civilRegistrationMarkdownPaths, setCivilRegistrationMarkdownPaths] = useState("");
   const [ocrInputMode, setOcrInputMode] = useState<OcrInputMode>("ocrFile");
-  const [aksonSourcePath, setAksonSourcePath] = useState("");
-  const [aksonApiKey, setAksonApiKey] = useState("");
-  const [aksonOcrResult, setAksonOcrResult] = useState<AksonOcrDmcFormResponse | null>(null);
+  const [typhoonSourcePath, setTyphoonSourcePath] = useState("");
+  const [typhoonOcrResult, setTyphoonOcrResult] = useState<TyphoonOcrDmcFormResponse | null>(null);
+  const [civilRegistrationInputMode, setCivilRegistrationInputMode] = useState<OcrInputMode>("ocrFile");
+  const [civilRegistrationTyphoonSourcePath, setCivilRegistrationTyphoonSourcePath] = useState("");
+  const [civilRegistrationTyphoonOcrResult, setCivilRegistrationTyphoonOcrResult] =
+    useState<TyphoonOcrDmcFormResponse | null>(null);
   const [schoolYear, setSchoolYear] = useState("2569");
   const [gradeLevels, setGradeLevels] = useState("1");
   const [jsonPreview, setJsonPreview] = useState<PreviewDmcFormJsonResponse | null>(null);
@@ -229,7 +238,8 @@ export function FormConverterPage({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
-  const [isRunningAksonOcr, setIsRunningAksonOcr] = useState(false);
+  const [isRunningTyphoonOcr, setIsRunningTyphoonOcr] = useState(false);
+  const [isRunningCivilRegistrationTyphoonOcr, setIsRunningCivilRegistrationTyphoonOcr] = useState(false);
   const activeResult = jsonExport ?? jsonPreview;
   const activeConflicts = activeResult?.conflicts ?? [];
   const activeWarnings = activeResult?.warnings ?? [];
@@ -277,12 +287,12 @@ export function FormConverterPage({
     }
   }
 
-  async function handleBrowseAksonSource() {
+  async function handleBrowseTyphoonSource() {
     try {
       const selected = await openOcrSourceDialog();
       if (selected) {
-        setAksonSourcePath(selected);
-        setAksonOcrResult(null);
+        setTyphoonSourcePath(selected);
+        setTyphoonOcrResult(null);
         setErrorMessage(null);
       }
     } catch (error) {
@@ -290,30 +300,29 @@ export function FormConverterPage({
     }
   }
 
-  async function handleRunAksonOcr() {
-    const sourcePath = aksonSourcePath.trim();
+  async function handleRunTyphoonOcr() {
+    const sourcePath = typhoonSourcePath.trim();
     if (!sourcePath) {
       setErrorMessage("กรุณาเลือกไฟล์ PDF หรือรูปภาพก่อนสร้างไฟล์ OCR");
       return;
     }
 
-    setIsRunningAksonOcr(true);
+    setIsRunningTyphoonOcr(true);
     setErrorMessage(null);
     try {
-      const result = await ocrDmcFormWithAkson({
+      const result = await ocrDmcFormWithTyphoon({
         sourcePath,
-        apiKey: aksonApiKey.trim() || null,
-        model: "AksonOCR-1.0",
+        apiKey: null,
+        model: "typhoon-ocr",
         forceRefresh: false,
       });
-      setAksonOcrResult(result);
-      setAksonApiKey("");
+      setTyphoonOcrResult(result);
       setOcrMarkdownPaths((current) => appendPathList(current, [result.markdown_path]));
       resetResult();
     } catch (error) {
       setErrorMessage(readableError(error));
     } finally {
-      setIsRunningAksonOcr(false);
+      setIsRunningTyphoonOcr(false);
     }
   }
 
@@ -326,6 +335,45 @@ export function FormConverterPage({
       }
     } catch (error) {
       setErrorMessage(readableError(error));
+    }
+  }
+
+  async function handleBrowseCivilRegistrationTyphoonSource() {
+    try {
+      const selected = await openOcrSourceDialog();
+      if (selected) {
+        setCivilRegistrationTyphoonSourcePath(selected);
+        setCivilRegistrationTyphoonOcrResult(null);
+        setErrorMessage(null);
+      }
+    } catch (error) {
+      setErrorMessage(readableError(error));
+    }
+  }
+
+  async function handleRunCivilRegistrationTyphoonOcr() {
+    const sourcePath = civilRegistrationTyphoonSourcePath.trim();
+    if (!sourcePath) {
+      setErrorMessage("กรุณาเลือกไฟล์ PDF หรือรูปภาพก่อนสร้างไฟล์ OCR");
+      return;
+    }
+
+    setIsRunningCivilRegistrationTyphoonOcr(true);
+    setErrorMessage(null);
+    try {
+      const result = await ocrDmcFormWithTyphoon({
+        sourcePath,
+        apiKey: null,
+        model: "typhoon-ocr",
+        forceRefresh: false,
+      });
+      setCivilRegistrationTyphoonOcrResult(result);
+      setCivilRegistrationMarkdownPaths((current) => appendPathList(current, [result.markdown_path]));
+      resetResult();
+    } catch (error) {
+      setErrorMessage(readableError(error));
+    } finally {
+      setIsRunningCivilRegistrationTyphoonOcr(false);
     }
   }
 
@@ -474,7 +522,7 @@ export function FormConverterPage({
               order={2}
               title="ไฟล์ OCR จากแบบฟอร์ม DMC"
               statusLabel="บังคับ"
-              description="เลือกใช้ไฟล์ OCR ที่มีอยู่ หรือสร้างไฟล์ OCR จาก PDF/รูปภาพด้วย AksonOCR"
+              description="เลือกใช้ไฟล์ OCR ที่มีอยู่ หรือสร้างไฟล์ OCR จาก PDF/รูปภาพด้วย Typhoon OCR"
               value={ocrMarkdownPaths}
               placeholder="C:\\dmc\\uploadTest\\1-3ex.md"
               acceptedDescription="รองรับไฟล์ .txt, .md, .csv"
@@ -497,6 +545,7 @@ export function FormConverterPage({
               }}
               beforePicker={
                 <OcrInputModeSelector
+                  ariaLabel="โหมดไฟล์ OCR แบบฟอร์ม DMC"
                   mode={ocrInputMode}
                   onModeChange={(mode) => {
                     setOcrInputMode(mode);
@@ -507,18 +556,16 @@ export function FormConverterPage({
               showPicker={ocrInputMode === "ocrFile"}
             >
               {ocrInputMode === "scanFile" ? (
-                <AksonOcrTool
-                  sourcePath={aksonSourcePath}
-                  apiKey={aksonApiKey}
-                  result={aksonOcrResult}
-                  isRunning={isRunningAksonOcr}
+                <TyphoonOcrTool
+                  sourcePath={typhoonSourcePath}
+                  result={typhoonOcrResult}
+                  isRunning={isRunningTyphoonOcr}
                   onSourcePathChange={(value) => {
-                    setAksonSourcePath(value);
-                    setAksonOcrResult(null);
+                    setTyphoonSourcePath(value);
+                    setTyphoonOcrResult(null);
                   }}
-                  onApiKeyChange={setAksonApiKey}
-                  onBrowseSource={() => void handleBrowseAksonSource()}
-                  onRun={() => void handleRunAksonOcr()}
+                  onBrowseSource={() => void handleBrowseTyphoonSource()}
+                  onRun={() => void handleRunTyphoonOcr()}
                   onRevealPath={onRevealPath}
                 />
               ) : null}
@@ -555,7 +602,7 @@ export function FormConverterPage({
               order={4}
               title="ไฟล์ OCR จากสำเนาทะเบียนบ้านนักเรียน"
               statusLabel="ตัวเลือก"
-              description="ใช้เติมข้อมูลรหัสประจำบ้าน ที่อยู่ตามทะเบียนบ้าน และข้อมูลบิดา/มารดา"
+              description="เลือกใช้ไฟล์ OCR ที่มีอยู่ หรือสร้างไฟล์ OCR จาก PDF/รูปภาพด้วย Typhoon OCR"
               value={civilRegistrationMarkdownPaths}
               placeholder="D:\\DMC\\2569\\CivilDoc.md"
               acceptedDescription="รองรับไฟล์ .txt, .md, .csv"
@@ -577,7 +624,33 @@ export function FormConverterPage({
                 setCivilRegistrationMarkdownPaths(value);
                 resetResult();
               }}
-            />
+              beforePicker={
+                <OcrInputModeSelector
+                  ariaLabel="โหมดไฟล์ OCR ทะเบียนบ้าน"
+                  mode={civilRegistrationInputMode}
+                  onModeChange={(mode) => {
+                    setCivilRegistrationInputMode(mode);
+                    setErrorMessage(null);
+                  }}
+                />
+              }
+              showPicker={civilRegistrationInputMode === "ocrFile"}
+            >
+              {civilRegistrationInputMode === "scanFile" ? (
+                <TyphoonOcrTool
+                  sourcePath={civilRegistrationTyphoonSourcePath}
+                  result={civilRegistrationTyphoonOcrResult}
+                  isRunning={isRunningCivilRegistrationTyphoonOcr}
+                  onSourcePathChange={(value) => {
+                    setCivilRegistrationTyphoonSourcePath(value);
+                    setCivilRegistrationTyphoonOcrResult(null);
+                  }}
+                  onBrowseSource={() => void handleBrowseCivilRegistrationTyphoonSource()}
+                  onRun={() => void handleRunCivilRegistrationTyphoonOcr()}
+                  onRevealPath={onRevealPath}
+                />
+              ) : null}
+            </PrepareFileCard>
           </section>
 
           <section className="grid gap-4 rounded-lg border bg-muted/20 p-4 lg:grid-cols-[minmax(0,1fr)_260px]">
@@ -808,9 +881,11 @@ function PrepareFileCard({
 }
 
 function OcrInputModeSelector({
+  ariaLabel,
   mode,
   onModeChange,
 }: {
+  ariaLabel: string;
   mode: OcrInputMode;
   onModeChange: (mode: OcrInputMode) => void;
 }) {
@@ -820,7 +895,7 @@ function OcrInputModeSelector({
   ];
 
   return (
-    <div className="grid gap-2 rounded-md bg-slate-100 p-1 sm:grid-cols-2" role="tablist" aria-label="โหมดไฟล์ OCR">
+    <div className="grid gap-2 rounded-md bg-slate-100 p-1 sm:grid-cols-2" role="tablist" aria-label={ariaLabel}>
       {options.map((option) => {
         const Icon = option.icon;
         const selected = mode === option.value;
@@ -846,23 +921,19 @@ function OcrInputModeSelector({
   );
 }
 
-function AksonOcrTool({
+function TyphoonOcrTool({
   sourcePath,
-  apiKey,
   result,
   isRunning,
   onSourcePathChange,
-  onApiKeyChange,
   onBrowseSource,
   onRun,
   onRevealPath,
 }: {
   sourcePath: string;
-  apiKey: string;
-  result: AksonOcrDmcFormResponse | null;
+  result: TyphoonOcrDmcFormResponse | null;
   isRunning: boolean;
   onSourcePathChange: (value: string) => void;
-  onApiKeyChange: (value: string) => void;
   onBrowseSource: () => void;
   onRun: () => void;
   onRevealPath: (path: string) => void;
@@ -875,11 +946,11 @@ function AksonOcrTool({
         <div className="min-w-0">
           <div className="text-sm font-semibold">สร้างไฟล์ OCR จาก PDF/รูปภาพ</div>
           <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
-            ระบบจะบันทึกผลเป็น .md และเพิ่มเข้าไฟล์ OCR ด้านบน
+            คิด 3 เครดิต/หน้า และไม่คิดซ้ำเมื่อใช้ไฟล์เดิมที่เคยสร้าง OCR แล้ว
           </div>
         </div>
         <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700">
-          AksonOCR-1.0
+          Typhoon OCR
         </span>
       </div>
 
@@ -887,7 +958,7 @@ function AksonOcrTool({
         <div className="relative min-w-0">
           <FileIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
           <Input
-            aria-label="ไฟล์ PDF หรือรูปภาพสำหรับ AksonOCR"
+            aria-label="ไฟล์ PDF หรือรูปภาพสำหรับ Typhoon OCR"
             className="h-9 pl-9"
             value={sourcePath}
             onChange={(event) => onSourcePathChange(event.target.value)}
@@ -898,7 +969,7 @@ function AksonOcrTool({
           type="button"
           variant="outline"
           className="border-blue-300 text-blue-700 hover:bg-blue-50 hover:text-blue-800"
-          aria-label="เลือกไฟล์ PDF หรือรูปภาพสำหรับ AksonOCR"
+          aria-label="เลือกไฟล์ PDF หรือรูปภาพสำหรับ Typhoon OCR"
           onClick={onBrowseSource}
         >
           <FolderOpen className="h-4 w-4" />
@@ -906,23 +977,10 @@ function AksonOcrTool({
         </Button>
       </div>
 
-      <div className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_auto]">
-        <div className="relative min-w-0">
-          <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-          <Input
-            aria-label="AksonOCR API key"
-            className="h-9 pl-9"
-            type="password"
-            value={apiKey}
-            onChange={(event) => onApiKeyChange(event.target.value)}
-            placeholder="AksonOCR API key หรือใช้ AKSONOCR_API_KEY"
-          />
-        </div>
-        <Button type="button" disabled={!canRun} onClick={onRun}>
-          {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanText className="h-4 w-4" />}
-          สร้างไฟล์ OCR
-        </Button>
-      </div>
+      <Button type="button" disabled={!canRun} onClick={onRun}>
+        {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanText className="h-4 w-4" />}
+        สร้างไฟล์ OCR
+      </Button>
 
       {result ? (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-background px-3 py-2 text-xs">
@@ -934,6 +992,9 @@ function AksonOcrTool({
             <span className="text-muted-foreground">
               {result.pages_processed} หน้า
               {result.average_confidence === null ? "" : ` · confidence ${formatConfidence(result.average_confidence)}`}
+              {result.cached
+                ? " · ไม่คิดเครดิตซ้ำ"
+                : ` · ใช้ ${result.credits_charged} เครดิต (${result.credits_per_page} เครดิต/หน้า)`}
             </span>
           </div>
           <Button type="button" variant="ghost" size="sm" onClick={() => onRevealPath(result.markdown_path)}>

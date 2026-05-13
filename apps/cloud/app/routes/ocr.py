@@ -5,6 +5,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ..account_service import AccountRepository, SessionRecord
 from ..auth import require_account_session
+from ..config import settings
 from ..ocr_request_store import OcrRequestStore
 from ..ocr_service import run_form_converter_ocr
 from ..rate_limit import rate_limit
@@ -25,6 +26,10 @@ def _ocr_request_key(request: OcrFormConverterRequest) -> str:
             str(request.page_count),
         ]
     )
+
+
+def _credits_required(request: OcrFormConverterRequest) -> int:
+    return request.page_count * settings.form_converter_ocr_credits_per_page
 
 
 @router.post(
@@ -73,8 +78,9 @@ async def convert_form_pdf(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail="active form converter credit reservation is required",
         )
+    credits_required = _credits_required(request)
     remaining_units = reservation.units_reserved - reservation.units_captured - reservation.units_released
-    if remaining_units < request.page_count:
+    if remaining_units < credits_required:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail="credit reservation does not cover requested pages",
@@ -97,7 +103,7 @@ async def convert_form_pdf(
         response = await run_in_threadpool(run_form_converter_ocr, request)
         request_store.mark_provider_done(user_id=session.user_id, request_key=request_key, response=response)
         latest = repository.get_reservation(session.user_id, request.credit_reservation_id)
-        target_captured = latest.units_captured + request.page_count
+        target_captured = latest.units_captured + credits_required
         repository.capture_credits(
             session.user_id,
             request.credit_reservation_id,
