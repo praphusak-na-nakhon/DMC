@@ -981,6 +981,43 @@ fn save_diagnostics_dialog(default_name: Option<String>) -> Option<String> {
         .map(|path| path.to_string_lossy().to_string())
 }
 
+#[tauri::command]
+fn save_ocr_markdown_dialog(default_name: Option<String>) -> Option<String> {
+    let mut dialog = rfd::FileDialog::new().add_filter("Markdown", &["md"]);
+    if let Some(name) = default_name.as_deref() {
+        dialog = dialog.set_file_name(name);
+    }
+    dialog
+        .save_file()
+        .map(|path| path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn copy_ocr_markdown_file(source_path: String, destination_path: String) -> Result<String, String> {
+    let source = PathBuf::from(source_path);
+    if !source.exists() {
+        return Err("OCR_MARKDOWN_SOURCE_NOT_FOUND".to_string());
+    }
+    if !source.is_file() {
+        return Err("OCR_MARKDOWN_SOURCE_NOT_FILE".to_string());
+    }
+
+    let mut target = PathBuf::from(destination_path);
+    if target.extension().is_none() {
+        target.set_extension("md");
+    }
+
+    if source == target {
+        return Ok(target.to_string_lossy().to_string());
+    }
+
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::copy(source, &target).map_err(|error| error.to_string())?;
+    Ok(target.to_string_lossy().to_string())
+}
+
 fn template_source_path(app: &AppHandle) -> Result<PathBuf, String> {
     if let Ok(resource_dir) = app.path().resource_dir() {
         let candidate = resource_dir.join("templates").join("obec-study-form.xlsx");
@@ -1175,7 +1212,9 @@ fn main() {
             open_backup_archive_dialog,
             save_backup_dialog,
             save_diagnostics_dialog,
+            save_ocr_markdown_dialog,
             save_template_dialog,
+            copy_ocr_markdown_file,
             copy_template_file,
             write_text_file,
             reveal_path,

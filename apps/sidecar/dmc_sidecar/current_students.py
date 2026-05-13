@@ -7,6 +7,7 @@ import re
 import unicodedata
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -128,6 +129,18 @@ ADDRESS_FIELD_SUFFIXES: tuple[str, ...] = (
 )
 ADDRESS_COPY_MIN_COMPARABLE_FIELDS = 3
 ADDRESS_COPY_MIN_MATCH_RATIO = 0.6
+GUARDIAN_PARENT_FIELD_SUFFIXES: tuple[str, ...] = (
+    "citizen_id",
+    "card_type",
+    "first_name",
+    "last_name",
+    "blood_type",
+    "occupation",
+    "income_text",
+    "phone",
+)
+GUARDIAN_FATHER_MARKER = "\u0e1a\u0e34\u0e14\u0e32"
+GUARDIAN_MOTHER_MARKER = "\u0e21\u0e32\u0e23\u0e14\u0e32"
 DMC_BLOCKING_MISSING_FIELDS: tuple[str, ...] = (
     "student_no",
     "citizen_id",
@@ -172,6 +185,235 @@ DMC_TRANSFER_IN_LEVEL_CODES: dict[int, str] = {
     15: "15",
 }
 DMC_TRANSFER_IN_VALID_LEVEL_CODES = {f"{index:02d}" for index in range(1, 19)}
+DMC_TITLE_CODE_ITEMS: tuple[tuple[str, str], ...] = (
+    ("เด็กชาย", "001"),
+    ("ด.ช.", "001"),
+    ("เด็กหญิง", "002"),
+    ("ด.ญ.", "002"),
+    ("นาย", "003"),
+    ("นางสาว", "004"),
+    ("นาง", "005"),
+    ("สามเณร", "832"),
+)
+DMC_GENDER_CODES = {"ชาย": "M", "หญิง": "F"}
+DMC_GENDER_BY_TITLE_CODE = {
+    "001": "M",
+    "003": "M",
+    "832": "M",
+    "002": "F",
+    "004": "F",
+    "005": "F",
+}
+DMC_PROVINCE_CODES = {
+    "กรุงเทพมหานคร": "10000000",
+    "กระบี่": "81000000",
+    "กาญจนบุรี": "71000000",
+    "กาฬสินธุ์": "46000000",
+    "กำแพงเพชร": "62000000",
+    "ขอนแก่น": "40000000",
+    "จันทบุรี": "22000000",
+    "ฉะเชิงเทรา": "24000000",
+    "ชลบุรี": "20000000",
+    "ชัยนาท": "18000000",
+    "ชัยภูมิ": "36000000",
+    "ชุมพร": "86000000",
+    "ตรัง": "92000000",
+    "ตราด": "23000000",
+    "ตาก": "63000000",
+    "นครนายก": "26000000",
+    "นครปฐม": "73000000",
+    "นครพนม": "48000000",
+    "นครราชสีมา": "30000000",
+    "นครศรีธรรมราช": "80000000",
+    "นครสวรรค์": "60000000",
+    "นนทบุรี": "12000000",
+    "นราธิวาส": "96000000",
+    "น่าน": "55000000",
+    "บึงกาฬ": "38000000",
+    "บุรีรัมย์": "31000000",
+    "ปทุมธานี": "13000000",
+    "ประจวบคีรีขันธ์": "77000000",
+    "ปราจีนบุรี": "25000000",
+    "ปัตตานี": "94000000",
+    "พระนครศรีอยุธยา": "14000000",
+    "พะเยา": "56000000",
+    "พังงา": "82000000",
+    "พัทลุง": "93000000",
+    "พิจิตร": "66000000",
+    "พิษณุโลก": "65000000",
+    "ภูเก็ต": "83000000",
+    "มหาสารคาม": "44000000",
+    "มุกดาหาร": "49000000",
+    "ยะลา": "95000000",
+    "ยโสธร": "35000000",
+    "ระนอง": "85000000",
+    "ระยอง": "21000000",
+    "ราชบุรี": "70000000",
+    "ร้อยเอ็ด": "45000000",
+    "ลพบุรี": "16000000",
+    "ลำปาง": "52000000",
+    "ลำพูน": "51000000",
+    "ศรีสะเกษ": "33000000",
+    "สกลนคร": "47000000",
+    "สงขลา": "90000000",
+    "สตูล": "91000000",
+    "สมุทรปราการ": "11000000",
+    "สมุทรสงคราม": "75000000",
+    "สมุทรสาคร": "74000000",
+    "สระบุรี": "19000000",
+    "สระแก้ว": "27000000",
+    "สิงห์บุรี": "17000000",
+    "สุพรรณบุรี": "72000000",
+    "สุราษฎร์ธานี": "84000000",
+    "สุรินทร์": "32000000",
+    "สุโขทัย": "64000000",
+    "หนองคาย": "43000000",
+    "หนองบัวลำภู": "39000000",
+    "อำนาจเจริญ": "37000000",
+    "อุดรธานี": "41000000",
+    "อุตรดิตถ์": "53000000",
+    "อุทัยธานี": "61000000",
+    "อุบลราชธานี": "34000000",
+    "อ่างทอง": "15000000",
+    "เชียงราย": "57000000",
+    "เชียงใหม่": "50000000",
+    "เพชรบุรี": "76000000",
+    "เพชรบูรณ์": "67000000",
+    "เลย": "42000000",
+    "แพร่": "54000000",
+    "แม่ฮ่องสอน": "58000000",
+}
+DMC_KRABI_DISTRICT_CODES = {
+    "เมืองกระบี่": "81010000",
+    "เขาพนม": "81020000",
+    "เกาะลันตา": "81030000",
+    "คลองท่อม": "81040000",
+    "อ่าวลึก": "81050000",
+    "ปลายพระยา": "81060000",
+    "ลำทับ": "81070000",
+    "เหนือคลอง": "81080000",
+}
+DMC_KRABI_SUBDISTRICT_CODES = {
+    "เหนือคลอง": "81080100",
+    "เกาะศรีบอยา": "81080200",
+    "คลองขนาน": "81080300",
+    "คลองเขม้า": "81080400",
+    "โคกยาง": "81080500",
+    "ตลิ่งชัน": "81080600",
+    "ปกาสัย": "81080700",
+    "ห้วยยูง": "81080800",
+}
+DMC_NATION_CODES = {"ไทย": "099"}
+DMC_RACE_CODES = {"ไทย": "099"}
+DMC_RELIGION_CODES = {
+    "พุทธ": "001",
+    "อิสลาม": "002",
+    "คริสต์": "003",
+    "ซิกส์": "004",
+    "พราหมณ์/ฮินดู": "005",
+    "อื่น": "006",
+    "อื่นๆ": "006",
+}
+DMC_BLOOD_CODES = {
+    "ไม่ทราบ": "N",
+    "A": "A",
+    "B": "B",
+    "O": "O",
+    "AB": "AB",
+    "ARh+": "ARh+",
+    "ARh-": "ARh-",
+    "BRh+": "BRh+",
+    "BRh-": "BRh-",
+    "ABRh+": "ABRh+",
+    "ABRh-": "ABRh-",
+    "ORh+": "ORh+",
+    "ORh-": "ORh-",
+}
+DMC_PARENT_RELATION_CODES: tuple[tuple[str, str], ...] = (
+    ("บิดา", "01"),
+    ("มารดา", "02"),
+    ("พี่", "03"),
+    ("น้อง", "04"),
+    ("ปู่", "05"),
+    ("ย่า", "06"),
+    ("ตา", "07"),
+    ("ยาย", "08"),
+    ("ทวด", "09"),
+    ("ลุง", "10"),
+    ("ป้า", "11"),
+    ("น้า", "12"),
+    ("อา", "13"),
+    ("สามี", "16"),
+    ("ภรรยา", "17"),
+    ("ผู้ปกครอง", "20"),
+)
+DMC_MARRIAGE_STATUS_CODES: tuple[tuple[str, str], ...] = (
+    ("บิดาและมารดาถึงแก่กรรม", "09"),
+    ("บิดาถึงแก่กรรมมารดาแต่งงานใหม่", "10"),
+    ("มารดาถึงแก่กรรมบิดาแต่งงานใหม่", "11"),
+    ("อยู่ด้วยกันไม่ได้จดทะเบียนสมรส", "05"),
+    ("อยู่ด้วยกันจดทะเบียนสมรส", "01"),
+    ("หย่าร้าง", "04"),
+    ("แยกกันอยู่", "06"),
+    ("บิดาถึงแก่กรรม", "07"),
+    ("มารดาถึงแก่กรรม", "08"),
+    ("โสด", "02"),
+)
+DMC_OCCUPATION_CODES: tuple[tuple[str, str], ...] = (
+    ("ไม่ได้ประกอบอาชีพ", "0"),
+    ("รับราชการ", "1"),
+    ("รัฐวิสาหกิจ", "2"),
+    ("ค้าขาย", "3"),
+    ("ธุรกิจ", "3"),
+    ("เกษตร", "4"),
+    ("รับจ้าง", "5"),
+    ("ลูกจ้าง", "6"),
+    ("พนักงาน", "6"),
+    ("เกษียณ", "7"),
+    ("พระ", "8"),
+    ("นักบวช", "8"),
+)
+DMC_CARD_TYPE_CODES: tuple[tuple[str, str], ...] = (
+    ("บัตรประชาชน", "I"),
+    ("ประชาชน", "I"),
+    ("พาสปอร์ต", "P"),
+    ("passport", "P"),
+    ("ต่างด้าว", "A"),
+    ("ไม่มีเอกสาร", "O"),
+    ("อื่น", "O"),
+)
+DMC_JOURNEY_TYPE_CODES: tuple[tuple[str, str], ...] = (
+    ("เดินเท้า", "01"),
+    ("พาหนะไม่เสียค่าโดยสาร", "02"),
+    ("พาหนะเสียค่าโดยสาร", "03"),
+    ("จักรยานยืมเรียน", "04"),
+)
+THAI_MONTH_CODES = {
+    "มกราคม": "01",
+    "ม.ค.": "01",
+    "กุมภาพันธ์": "02",
+    "ก.พ.": "02",
+    "มีนาคม": "03",
+    "มี.ค.": "03",
+    "เมษายน": "04",
+    "เม.ย.": "04",
+    "พฤษภาคม": "05",
+    "พ.ค.": "05",
+    "มิถุนายน": "06",
+    "มิ.ย.": "06",
+    "กรกฎาคม": "07",
+    "ก.ค.": "07",
+    "สิงหาคม": "08",
+    "ส.ค.": "08",
+    "กันยายน": "09",
+    "ก.ย.": "09",
+    "ตุลาคม": "10",
+    "ต.ค.": "10",
+    "พฤศจิกายน": "11",
+    "พ.ย.": "11",
+    "ธันวาคม": "12",
+    "ธ.ค.": "12",
+}
 MISSING_BLOCKER_BASIS = (
     "ตรวจจากบัญชีรายชื่อ, CSV เครื่องสแกนบัตร และ OCR แบบฟอร์มแล้วไม่พบข้อมูล "
     "ต้องเติมข้อมูลนี้ก่อนนำเข้า DMC"
@@ -181,6 +423,19 @@ SourceType = Literal["roster", "thai_id_scan", "ocr_form", "civil_registration",
 FieldConfidence = Literal["authoritative", "high", "review", "missing"]
 OperationType = Literal["current", "transfer_in", "add_new"]
 MatchStatus = Literal["auto_matched", "needs_review", "duplicate", "invalid_id", "new_or_transfer_candidate"]
+DmcFormValue = str | int | float | bool | list[str] | None
+
+
+@dataclass(frozen=True)
+class ThaiAdminCodeIndex:
+    province_codes: dict[str, str]
+    district_codes: dict[tuple[str, str], str]
+    subdistrict_codes: dict[tuple[str, str, str], str]
+    unique_subdistrict_codes_by_province: dict[tuple[str, str], str]
+
+
+THAI_ADMIN_CODES_PATH = Path(__file__).resolve().parent / "data" / "thai_admin_codes.json"
+_THAI_ADMIN_CODE_INDEX: ThaiAdminCodeIndex | None = None
 
 
 class CurrentStudentsWarning(BaseModel):
@@ -461,6 +716,7 @@ class DmcFormJsonRecord(BaseModel):
     suggestions: list[MatchSuggestion] = Field(default_factory=list)
     sources: list[SourceReference] = Field(default_factory=list)
     fields: dict[str, str | int | float | bool | None]
+    dmc_form_values: dict[str, DmcFormValue] = Field(default_factory=dict)
     field_details: dict[str, CurrentStudentField]
 
 
@@ -1451,6 +1707,7 @@ def _build_canonical_records(
 
     _promote_registered_address_to_current_when_matching(records)
     _fill_missing_mother_last_name_from_father(records)
+    _fill_guardian_from_parent_relationship(records)
     return records, ocr_attached, ocr_unmatched
 
 
@@ -1519,6 +1776,10 @@ def _record_import_value(
 
 
 def _json_record(record: CanonicalStudentRecord, *, default_school_year: int | None) -> DmcFormJsonRecord:
+    fields = {
+        field_name: _record_import_value(record, field_name, default_school_year)
+        for field_name in FORM_JSON_FIELD_NAMES
+    }
     return DmcFormJsonRecord(
         record_id=record.record_id,
         match_status=record.match_status,
@@ -1535,15 +1796,530 @@ def _json_record(record: CanonicalStudentRecord, *, default_school_year: int | N
         review_reasons=record.review_reasons,
         suggestions=record.suggestions,
         sources=record.sources,
-        fields={
-            field_name: _record_import_value(record, field_name, default_school_year)
-            for field_name in FORM_JSON_FIELD_NAMES
-        },
+        fields=fields,
+        dmc_form_values=_dmc_form_values(record, default_school_year=default_school_year),
         field_details={
             field_name: _json_field_detail(record, field_name, default_school_year=default_school_year)
             for field_name in FORM_JSON_FIELD_NAMES
         },
     )
+
+
+def _dmc_form_values(record: CanonicalStudentRecord, *, default_school_year: int | None) -> dict[str, DmcFormValue]:
+    values: dict[str, DmcFormValue] = {}
+
+    school_year = _dmc_field_text(record, "school_year", default_school_year)
+    _dmc_put_value(values, "educationYear", school_year)
+    _dmc_put_value(values, "studentNo", _dmc_field_text(record, "student_no", default_school_year))
+    _dmc_put_value(values, "levelDtlCode", _dmc_level_code(record, default_school_year=default_school_year))
+    _dmc_put_value(values, "classroom", _dmc_field_text(record, "room", default_school_year))
+
+    citizen_id = _clean_citizen_id(_dmc_field_text(record, "citizen_id", default_school_year))
+    if citizen_id:
+        _dmc_put_value(values, "cifNo", citizen_id)
+        _dmc_put_value(values, "cifNoChk", citizen_id)
+        _dmc_put_value(values, "cifType", "I")
+
+    title_code = _dmc_title_code(_dmc_field_text(record, "prefix", default_school_year))
+    _dmc_put_value(values, "titleCode", title_code)
+    gender_code = _dmc_gender_code(_dmc_field_text(record, "sex", default_school_year))
+    _dmc_put_value(values, "genderCode", gender_code or DMC_GENDER_BY_TITLE_CODE.get(title_code or ""))
+    _dmc_put_value(values, "firstNameTh", _dmc_field_text(record, "first_name", default_school_year))
+    _dmc_put_value(values, "lastNameTh", _dmc_field_text(record, "last_name", default_school_year))
+    _dmc_put_value(values, "middleNameTh", "")
+    _dmc_put_value(values, "firstNameEn", _dmc_field_text(record, "first_name_en", default_school_year))
+    _dmc_put_value(values, "lastNameEn", _dmc_field_text(record, "last_name_en", default_school_year))
+    _dmc_put_value(values, "middleNameEn", "")
+    _dmc_put_value(values, "birthDate", _dmc_date_text(_dmc_field_text(record, "birth_date", default_school_year)))
+    _dmc_put_value(
+        values,
+        "birthProvinceCode",
+        _dmc_province_code(_dmc_field_text(record, "birth_province", default_school_year)),
+    )
+    _dmc_put_value(values, "bloodCode", _dmc_blood_code(_dmc_field_text(record, "blood_type", default_school_year)))
+    _dmc_put_value(
+        values,
+        "nationCode",
+        _dmc_lookup_code(_dmc_field_text(record, "nationality", default_school_year), DMC_NATION_CODES),
+    )
+    _dmc_put_value(
+        values,
+        "raceCode",
+        _dmc_lookup_code(_dmc_field_text(record, "race", default_school_year), DMC_RACE_CODES),
+    )
+    _dmc_put_value(
+        values,
+        "religionCode",
+        _dmc_lookup_code(_dmc_field_text(record, "religion", default_school_year), DMC_RELIGION_CODES),
+    )
+    _dmc_put_value(values, "studentTypeCode", "01")
+    _dmc_put_value(values, "objectStatus", "Y")
+
+    _dmc_put_address_values(
+        values,
+        record,
+        source_prefix="registered_address",
+        form_prefix="ps",
+        default_school_year=default_school_year,
+    )
+    _dmc_put_address_values(
+        values,
+        record,
+        source_prefix="current_address",
+        form_prefix="",
+        fallback_source_prefix="registered_address",
+        default_school_year=default_school_year,
+    )
+
+    _dmc_put_value(
+        values,
+        "marriageStatusCode",
+        _dmc_code_from_items(
+            _dmc_field_text(record, "parents_marital_status", default_school_year),
+            DMC_MARRIAGE_STATUS_CODES,
+        ),
+    )
+    _dmc_put_value(values, "numOfOlderBrothers", _dmc_integer_text(record, "older_brothers", default_school_year))
+    _dmc_put_value(values, "numOfYoungerBrothers", _dmc_integer_text(record, "younger_brothers", default_school_year))
+    _dmc_put_value(values, "numOfOlderSisters", _dmc_integer_text(record, "older_sisters", default_school_year))
+    _dmc_put_value(values, "numOfYoungerSisters", _dmc_integer_text(record, "younger_sisters", default_school_year))
+    _dmc_put_value(
+        values,
+        "numOfStudyingSiblings",
+        _dmc_integer_text(record, "siblings_studying_count", default_school_year),
+    )
+    _dmc_put_value(values, "childIndex", _dmc_integer_text(record, "child_order", default_school_year))
+
+    relation_code = _dmc_code_from_items(
+        _dmc_field_text(record, "guardian_relationship", default_school_year),
+        DMC_PARENT_RELATION_CODES,
+    )
+    _dmc_put_person_values(
+        values,
+        record,
+        person="father",
+        form_person="father",
+        default_title_code="003",
+        default_school_year=default_school_year,
+    )
+    _dmc_put_person_values(
+        values,
+        record,
+        person="mother",
+        form_person="mother",
+        default_title_code="004",
+        default_school_year=default_school_year,
+    )
+    _dmc_put_person_values(
+        values,
+        record,
+        person="guardian",
+        form_person="parent",
+        default_title_code={"01": "003", "02": "004"}.get(relation_code or ""),
+        default_school_year=default_school_year,
+    )
+    _dmc_put_value(values, "parentFamilyRelationCode", relation_code)
+
+    _dmc_put_value(
+        values,
+        "journeyTypeCode",
+        _dmc_code_from_items(_dmc_field_text(record, "commute_method", default_school_year), DMC_JOURNEY_TYPE_CODES),
+    )
+    _dmc_put_value(
+        values,
+        "timeDt",
+        _dmc_decimal_text(_dmc_field_text(record, "commute_minutes", default_school_year)),
+    )
+    _dmc_put_value(values, "waterDt", "0.0")
+    _dmc_put_value(values, "rockDt", "0.0")
+    _dmc_put_value(
+        values,
+        "rubberDt",
+        _dmc_decimal_text(_dmc_field_text(record, "distance_paved_road_km", default_school_year), multiplier=1000),
+    )
+    _dmc_put_value(values, "weight", _dmc_decimal_text(_dmc_field_text(record, "weight_kg", default_school_year)))
+    _dmc_put_value(values, "height", _dmc_decimal_text(_dmc_field_text(record, "height_cm", default_school_year)))
+
+    return values
+
+
+def _dmc_put_value(values: dict[str, DmcFormValue], name: str, value: DmcFormValue) -> None:
+    if value is None:
+        return
+    if isinstance(value, str):
+        text = _clean_text(value)
+        if text == "" or text in {"........................", "..................."}:
+            return
+    if isinstance(value, list) and not value:
+        return
+    values[name] = value
+
+
+def _dmc_field_text(
+    record: CanonicalStudentRecord,
+    field_name: str,
+    default_school_year: int | None,
+) -> str | None:
+    value = _record_import_value(record, field_name, default_school_year)
+    if _is_missing_import_value(value):
+        return None
+    return _clean_text(value)
+
+
+def _dmc_level_code(record: CanonicalStudentRecord, *, default_school_year: int | None) -> str | None:
+    grade_value = _record_import_value(record, "grade", default_school_year)
+    if isinstance(grade_value, int):
+        return DMC_TRANSFER_IN_LEVEL_CODES.get(grade_value)
+    grade = _first_digits(_clean_text(grade_value))
+    return DMC_TRANSFER_IN_LEVEL_CODES.get(int(grade)) if grade else None
+
+
+def _dmc_title_code(value: str | None) -> str | None:
+    text = _clean_text(value)
+    if not text:
+        return None
+    compact = _compact_thai_lookup_key(text)
+    for title, code in DMC_TITLE_CODE_ITEMS:
+        if compact == _compact_thai_lookup_key(title):
+            return code
+    return None
+
+
+def _dmc_split_prefixed_first_name(value: str | None, default_title_code: str | None) -> tuple[str | None, str | None]:
+    text = _clean_text(value)
+    if not text:
+        return default_title_code, None
+    compact = _compact_thai_lookup_key(text)
+    for title, code in sorted(DMC_TITLE_CODE_ITEMS, key=lambda item: len(_compact_thai_lookup_key(item[0])), reverse=True):
+        title_compact = _compact_thai_lookup_key(title)
+        if not compact.startswith(title_compact):
+            continue
+        if text.startswith(title):
+            return code, _none_if_empty(text[len(title) :])
+        title_without_dot = title.replace(".", "")
+        if text.startswith(title_without_dot):
+            return code, _none_if_empty(text[len(title_without_dot) :])
+    return default_title_code, text
+
+
+def _dmc_gender_code(value: str | None) -> str | None:
+    text = _clean_text(value)
+    if not text:
+        return None
+    for label, code in DMC_GENDER_CODES.items():
+        if label in text:
+            return code
+    return None
+
+
+def _dmc_lookup_code(value: str | None, mapping: dict[str, str]) -> str | None:
+    text = _dmc_area_lookup_key(value)
+    if not text:
+        return None
+    return mapping.get(text)
+
+
+def _dmc_code_from_items(value: str | None, items: Sequence[tuple[str, str]]) -> str | None:
+    text = _clean_text(value)
+    if not text:
+        return None
+    lowered = text.lower()
+    for marker, code in items:
+        if marker.lower() in lowered:
+            return code
+    return None
+
+
+def _dmc_blood_code(value: str | None) -> str | None:
+    text = _clean_text(value).replace(" ", "")
+    if not text:
+        return None
+    normalized = text.upper().replace("RH", "Rh")
+    return DMC_BLOOD_CODES.get(normalized) or DMC_BLOOD_CODES.get(text)
+
+
+def _dmc_province_code(value: str | None) -> str | None:
+    text = _dmc_area_lookup_key(value)
+    if not text:
+        return None
+    digits = "".join(re.findall(r"\d", text))
+    if len(digits) == 8:
+        return digits
+    if len(digits) == 2:
+        return f"{digits}000000"
+    admin_codes = _thai_admin_code_index()
+    return admin_codes.province_codes.get(_admin_area_lookup_key(text)) or DMC_PROVINCE_CODES.get(text)
+
+
+def _dmc_district_code(value: str | None, province_code: str | None) -> str | None:
+    text = _dmc_area_lookup_key(value)
+    if not text:
+        return None
+    digits = "".join(re.findall(r"\d", text))
+    if len(digits) == 8:
+        return digits
+    admin_codes = _thai_admin_code_index()
+    if province_code is not None:
+        code = admin_codes.district_codes.get((province_code, _admin_area_lookup_key(text)))
+        if code is not None:
+            return code
+    if province_code == "81000000":
+        return DMC_KRABI_DISTRICT_CODES.get(text)
+    return None
+
+
+def _dmc_subdistrict_code(value: str | None, province_code: str | None, district_code: str | None) -> str | None:
+    text = _dmc_area_lookup_key(value)
+    if not text:
+        return None
+    digits = "".join(re.findall(r"\d", text))
+    if len(digits) == 8:
+        return digits
+    admin_codes = _thai_admin_code_index()
+    lookup_key = _admin_area_lookup_key(text)
+    if province_code is not None and district_code is not None:
+        code = admin_codes.subdistrict_codes.get((province_code, district_code, lookup_key))
+        if code is not None:
+            return code
+    if province_code is not None:
+        code = admin_codes.unique_subdistrict_codes_by_province.get((province_code, lookup_key))
+        if code is not None:
+            return code
+    if province_code == "81000000":
+        return DMC_KRABI_SUBDISTRICT_CODES.get(text)
+    return None
+
+
+def _dmc_area_lookup_key(value: str | None) -> str:
+    text = _clean_text(value)
+    text = re.sub(r"^(จังหวัด|จ\.|อำเภอ|อ\.|เขต|ตำบล|ต\.|แขวง)\s*", "", text)
+    return text.strip()
+
+
+def _compact_thai_lookup_key(value: str) -> str:
+    return re.sub(r"[\s.]+", "", _clean_text(value))
+
+
+def _admin_area_lookup_key(value: str | None) -> str:
+    return _compact_thai_lookup_key(_dmc_area_lookup_key(value)).lower()
+
+
+def _thai_admin_code_index() -> ThaiAdminCodeIndex:
+    global _THAI_ADMIN_CODE_INDEX
+    if _THAI_ADMIN_CODE_INDEX is not None:
+        return _THAI_ADMIN_CODE_INDEX
+
+    province_codes: dict[str, str] = {}
+    district_codes: dict[tuple[str, str], str] = {}
+    subdistrict_codes: dict[tuple[str, str, str], str] = {}
+    unique_subdistrict_codes_by_province: dict[tuple[str, str], str] = {}
+    ambiguous_subdistricts: set[tuple[str, str]] = set()
+    data = json.loads(THAI_ADMIN_CODES_PATH.read_text(encoding="utf-8"))
+    records = data.get("records", []) if isinstance(data, dict) else []
+    for row in records:
+        if not isinstance(row, dict):
+            continue
+        province = _clean_text(row.get("province"))
+        district = _clean_text(row.get("district"))
+        subdistrict = _clean_text(row.get("subdistrict"))
+        province_code = _clean_text(row.get("province_code"))
+        district_code = _clean_text(row.get("district_code"))
+        subdistrict_code = _clean_text(row.get("subdistrict_code"))
+        if not (
+            province
+            and district
+            and subdistrict
+            and re.fullmatch(r"\d{8}", province_code)
+            and re.fullmatch(r"\d{8}", district_code)
+            and re.fullmatch(r"\d{8}", subdistrict_code)
+        ):
+            continue
+
+        province_key = _admin_area_lookup_key(province)
+        district_key = _admin_area_lookup_key(district)
+        subdistrict_key = _admin_area_lookup_key(subdistrict)
+        province_codes[province_key] = province_code
+        district_codes[(province_code, district_key)] = district_code
+        subdistrict_codes[(province_code, district_code, subdistrict_key)] = subdistrict_code
+
+        unique_key = (province_code, subdistrict_key)
+        if unique_key in ambiguous_subdistricts:
+            continue
+        existing_subdistrict_code = unique_subdistrict_codes_by_province.get(unique_key)
+        if existing_subdistrict_code is None:
+            unique_subdistrict_codes_by_province[unique_key] = subdistrict_code
+        elif existing_subdistrict_code != subdistrict_code:
+            unique_subdistrict_codes_by_province.pop(unique_key, None)
+            ambiguous_subdistricts.add(unique_key)
+
+    _THAI_ADMIN_CODE_INDEX = ThaiAdminCodeIndex(
+        province_codes=province_codes,
+        district_codes=district_codes,
+        subdistrict_codes=subdistrict_codes,
+        unique_subdistrict_codes_by_province=unique_subdistrict_codes_by_province,
+    )
+    return _THAI_ADMIN_CODE_INDEX
+
+
+def _dmc_date_text(value: str | None) -> str | None:
+    text = _clean_text(value)
+    if not text:
+        return None
+    slash_match = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", text)
+    if slash_match:
+        day, month, year = slash_match.groups()
+        return f"{int(day):02d}/{int(month):02d}/{year}"
+    thai_match = re.search(r"(\d{1,2})\s+([ก-๙.]+)\s+(\d{4})", text)
+    if thai_match is None:
+        return None
+    day, month_text, year = thai_match.groups()
+    month = THAI_MONTH_CODES.get(month_text)
+    if month is None:
+        return None
+    return f"{int(day):02d}/{month}/{year}"
+
+
+def _dmc_integer_text(record: CanonicalStudentRecord, field_name: str, default_school_year: int | None) -> str | None:
+    value = _dmc_field_text(record, field_name, default_school_year)
+    return _first_digits(value)
+
+
+def _dmc_decimal_text(value: str | None, *, multiplier: float = 1.0, default: str | None = None) -> str | None:
+    text = _clean_text(value)
+    if not text:
+        return default
+    numbers = [float(match) for match in re.findall(r"\d+(?:\.\d+)?", text)]
+    if not numbers:
+        return default
+    return f"{numbers[0] * multiplier:.1f}"
+
+
+def _dmc_salary_text(value: str | None) -> str:
+    text = _clean_text(value)
+    numbers = [float(match.replace(",", "")) for match in re.findall(r"\d[\d,]*(?:\.\d+)?", text)]
+    if not numbers:
+        return "0.0"
+    salary = sum(numbers[:2]) / min(len(numbers), 2)
+    return f"{salary:.1f}"
+
+
+def _dmc_card_type(value: str | None, *, has_citizen_id: bool) -> str:
+    code = _dmc_code_from_items(value, DMC_CARD_TYPE_CODES)
+    if code is not None:
+        return code
+    return "I" if has_citizen_id else "O"
+
+
+def _dmc_put_address_values(
+    values: dict[str, DmcFormValue],
+    record: CanonicalStudentRecord,
+    *,
+    source_prefix: Literal["registered_address", "current_address"],
+    form_prefix: Literal["ps", ""],
+    default_school_year: int | None,
+    fallback_source_prefix: Literal["registered_address", "current_address"] | None = None,
+) -> None:
+    def text(suffix: str) -> str | None:
+        field_value = _dmc_field_text(record, f"{source_prefix}.{suffix}", default_school_year)
+        if field_value is None and fallback_source_prefix is not None:
+            return _dmc_field_text(record, f"{fallback_source_prefix}.{suffix}", default_school_year)
+        return field_value
+
+    house_id = _dmc_house_id(text("house_id"))
+    house_no = text("house_no")
+    moo = _first_digits(text("moo"))
+    road = text("road")
+    province_code = _dmc_province_code(text("province"))
+    district_code = _dmc_district_code(text("district"), province_code)
+    subdistrict_code = _dmc_subdistrict_code(text("subdistrict"), province_code, district_code)
+    if district_code is None and subdistrict_code is not None:
+        district_code = f"{subdistrict_code[:4]}0000"
+    if province_code is None and district_code is not None:
+        province_code = f"{district_code[:2]}000000"
+    postal_code = _first_digits(text("postal_code"))
+    has_address = any([house_id, house_no, moo, road, province_code, district_code, subdistrict_code, postal_code])
+    if not has_address:
+        return
+
+    if form_prefix == "ps":
+        names = {
+            "house_id": "psHomeIdNo",
+            "house_no": "psHomeNo",
+            "moo": "psMoo",
+            "road": "psStreet",
+            "province": "psProvinceCode",
+            "district": "psAmphurCode",
+            "subdistrict": "psTumbolCode",
+            "postal_code": "psPostalCode",
+            "tel": "psTelNo",
+        }
+    else:
+        names = {
+            "house_id": "homeIdNo",
+            "house_no": "homeNo",
+            "moo": "moo",
+            "road": "street",
+            "province": "provinceCode",
+            "district": "amphurCode",
+            "subdistrict": "tumbolCode",
+            "postal_code": "postalCode",
+            "tel": "telNo",
+        }
+
+    _dmc_put_value(values, names["house_id"], house_id)
+    _dmc_put_value(values, names["house_no"], house_no)
+    _dmc_put_value(values, names["moo"], moo or "0")
+    _dmc_put_value(values, names["road"], road or "-")
+    _dmc_put_value(values, names["province"], province_code)
+    _dmc_put_value(values, names["district"], district_code)
+    _dmc_put_value(values, names["subdistrict"], subdistrict_code)
+    _dmc_put_value(values, names["postal_code"], postal_code)
+    _dmc_put_value(values, names["tel"], "-")
+
+
+def _dmc_house_id(value: str | None) -> str | None:
+    digits = "".join(re.findall(r"\d", _clean_text(value)))
+    return digits if digits else None
+
+
+def _dmc_put_person_values(
+    values: dict[str, DmcFormValue],
+    record: CanonicalStudentRecord,
+    *,
+    person: Literal["father", "mother", "guardian"],
+    form_person: Literal["father", "mother", "parent"],
+    default_title_code: str | None,
+    default_school_year: int | None,
+) -> None:
+    citizen_id = _clean_citizen_id(_dmc_field_text(record, f"{person}.citizen_id", default_school_year))
+    title_code, first_name = _dmc_split_prefixed_first_name(
+        _dmc_field_text(record, f"{person}.first_name", default_school_year),
+        default_title_code,
+    )
+    last_name = _dmc_field_text(record, f"{person}.last_name", default_school_year)
+    card_type = _dmc_field_text(record, f"{person}.card_type", default_school_year)
+    blood_type = _dmc_blood_code(_dmc_field_text(record, f"{person}.blood_type", default_school_year))
+    occupation = _dmc_code_from_items(
+        _dmc_field_text(record, f"{person}.occupation", default_school_year),
+        DMC_OCCUPATION_CODES,
+    )
+    income = _dmc_field_text(record, f"{person}.income_text", default_school_year)
+    phone = _dmc_field_text(record, f"{person}.phone", default_school_year)
+    has_person = any([citizen_id, first_name, last_name, card_type, blood_type, occupation, income, phone])
+    if not has_person:
+        return
+
+    prefix = form_person
+    _dmc_put_value(values, f"{prefix}CifNo", citizen_id or "-")
+    _dmc_put_value(values, f"{prefix}CifType", _dmc_card_type(card_type, has_citizen_id=citizen_id is not None))
+    _dmc_put_value(values, f"{prefix}TitleCode", title_code)
+    _dmc_put_value(values, f"{prefix}OccupationCode", occupation)
+    _dmc_put_value(values, f"{prefix}FirstNameTh", first_name)
+    _dmc_put_value(values, f"{prefix}LastNameTh", last_name)
+    _dmc_put_value(values, f"{prefix}MiddleNameTh", "")
+    _dmc_put_value(values, f"{prefix}BloodCode", blood_type)
+    _dmc_put_value(values, f"{prefix}Salary", _dmc_salary_text(income))
+    _dmc_put_value(values, f"{prefix}TelNo", phone or "-")
 
 
 def _json_field_detail(
@@ -1773,7 +2549,11 @@ def _selected_basis(field_name: str, source: SourceType | None) -> str:
     if source == "civil_registration":
         return "ยึด OCR สำเนาทะเบียนบ้าน เพราะตัวเลขทะเบียนบ้าน เลขบัตรผู้ปกครอง และชื่อบิดามารดามาจากเอกสารทะเบียนราษฎร"
     if source == "derived":
-        return "เติมนามสกุลมารดาจากนามสกุลบิดา เพราะตรวจจากทุกไฟล์แล้วไม่พบนามสกุลมารดาโดยตรง"
+        if field_name.startswith("guardian."):
+            return "เติมข้อมูลผู้ปกครองจากข้อมูลบิดาหรือมารดา เพราะความเกี่ยวข้องผู้ปกครองระบุว่าเป็นบิดาหรือมารดา"
+        if field_name == "mother.last_name":
+            return "เติมนามสกุลมารดาจากนามสกุลบิดา เพราะตรวจจากทุกไฟล์แล้วไม่พบนามสกุลมารดาโดยตรง"
+        return "เติมค่าจากข้อมูลที่ระบบสรุปได้จากไฟล์ที่เลือก"
     if source == "manual":
         return "ยึดค่าที่ผู้ใช้เลือกในหน้าจอสร้างไฟล์"
     return "ยังระบุแหล่งหลักไม่ได้ ต้องตรวจข้อมูลด้วยผู้ใช้"
@@ -2226,6 +3006,37 @@ def _fill_missing_mother_last_name_from_father(records: list[CanonicalStudentRec
             confidence="review",
             raw_value="derived_from_father.last_name",
         )
+
+
+def _fill_guardian_from_parent_relationship(records: list[CanonicalStudentRecord]) -> None:
+    for record in records:
+        relationship_field = record.dmc_fields.get("guardian_relationship")
+        relationship_value = relationship_field.value if relationship_field is not None else None
+        parent = _guardian_parent_from_relationship(relationship_value)
+        if parent is None:
+            continue
+
+        for suffix in GUARDIAN_PARENT_FIELD_SUFFIXES:
+            parent_field = record.dmc_fields.get(f"{parent}.{suffix}")
+            if parent_field is None or _is_missing_import_value(parent_field.value):
+                continue
+            record.dmc_fields[f"guardian.{suffix}"] = CurrentStudentField(
+                value=parent_field.value,
+                source="derived",
+                confidence=parent_field.confidence,
+                raw_value=f"derived_from_{parent}.{suffix}:{parent_field.source}",
+            )
+
+
+def _guardian_parent_from_relationship(value: str | int | float | bool | None) -> Literal["father", "mother"] | None:
+    text = _clean_text(value)
+    if not text:
+        return None
+    has_father = GUARDIAN_FATHER_MARKER in text
+    has_mother = GUARDIAN_MOTHER_MARKER in text
+    if has_father == has_mother:
+        return None
+    return "father" if has_father else "mother"
 
 
 def _merge_authoritative_field(

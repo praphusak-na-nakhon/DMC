@@ -176,8 +176,16 @@ export async function saveDiagnosticsDialog(defaultName?: string): Promise<strin
   return desktopInvoke<string | null>("save_diagnostics_dialog", { defaultName });
 }
 
+export async function saveOcrMarkdownDialog(defaultName?: string): Promise<string | null> {
+  return desktopInvoke<string | null>("save_ocr_markdown_dialog", { defaultName });
+}
+
 export async function saveTemplateDialog(defaultName?: string): Promise<string | null> {
   return desktopInvoke<string | null>("save_template_dialog", { defaultName });
+}
+
+export async function copyOcrMarkdownFile(sourcePath: string, destinationPath: string): Promise<string> {
+  return desktopInvoke<string>("copy_ocr_markdown_file", { sourcePath, destinationPath });
 }
 
 export async function copyTemplateFile(destinationPath: string): Promise<string> {

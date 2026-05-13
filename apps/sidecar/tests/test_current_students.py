@@ -320,12 +320,42 @@ def test_export_dmc_form_json_writes_operation_neutral_json(tmp_path: Path) -> N
     assert result.records[0].field_details["citizen_id"].source == "thai_id_scan"
     assert "operation_type" not in result.records[0].fields
 
+    form_values = result.records[0].dmc_form_values
+    assert form_values["educationYear"] == "2569"
+    assert form_values["studentNo"] == "19984"
+    assert form_values["levelDtlCode"] == "10"
+    assert form_values["classroom"] == "1"
+    assert form_values["cifNo"] == "1819900905157"
+    assert form_values["cifNoChk"] == "1819900905157"
+    assert form_values["cifType"] == "I"
+    assert form_values["titleCode"] == "002"
+    assert form_values["genderCode"] == "F"
+    assert form_values["birthDate"] == "13/02/2557"
+    assert form_values["birthProvinceCode"] == "81000000"
+    assert form_values["psHomeIdNo"] == "81010044089"
+    assert form_values["psProvinceCode"] == "81000000"
+    assert form_values["psAmphurCode"] == "81080000"
+    assert form_values["psTumbolCode"] == "81080300"
+    assert form_values["fatherTitleCode"] == "003"
+    assert form_values["fatherFirstNameTh"] == "ชวลิต"
+    assert form_values["fatherLastNameTh"] == "ตุ้มดำ"
+    assert form_values["fatherOccupationCode"] == "5"
+    assert form_values["fatherSalary"] == "5500.0"
+    assert form_values["parentFamilyRelationCode"] == "01"
+    assert form_values["parentFirstNameTh"] == "ชวลิต"
+    assert form_values["parentLastNameTh"] == "ตุ้มดำ"
+    assert form_values["rubberDt"] == "15000.0"
+    assert form_values["weight"] == "40.0"
+    assert form_values["height"] == "150.0"
+
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["schema_version"] == "dmc_form_json.v1"
     assert payload["records_exported"] == 1
     assert "operation_type" not in payload
     assert "operation_type" not in payload["records"][0]
     assert "operation_type" not in payload["records"][0]["fields"]
+    assert payload["records"][0]["dmc_form_values"]["cifNo"] == "1819900905157"
+    assert payload["records"][0]["dmc_form_values"]["parentFamilyRelationCode"] == "01"
     assert payload["records"][0]["fields"]["siblings_studying_count"] == "1"
     assert payload["records"][0]["fields"]["child_order"] == "2"
 
@@ -348,6 +378,85 @@ def test_dmc_form_json_uses_ocr_citizen_id_as_fallback_when_scan_is_absent(tmp_p
 
     assert result.records[0].fields["citizen_id"] == "1819900905157"
     assert result.records[0].field_details["citizen_id"].source == "ocr_form"
+
+
+def test_dmc_form_json_maps_admin_codes_outside_krabi(tmp_path: Path) -> None:
+    roster_path = tmp_path / "studentListM1-M4 2569.xlsx"
+    ocr_path = tmp_path / "1-3ex.md"
+    _write_roster(roster_path)
+    _write_ocr_markdown(ocr_path)
+
+    ocr_text = ocr_path.read_text(encoding="utf-8")
+    ocr_text = ocr_text.replace("\u0e01\u0e23\u0e30\u0e1a\u0e35\u0e48", "\u0e40\u0e0a\u0e35\u0e22\u0e07\u0e43\u0e2b\u0e21\u0e48")
+    ocr_text = ocr_text.replace(
+        "\u0e40\u0e2b\u0e19\u0e37\u0e2d\u0e04\u0e25\u0e2d\u0e07",
+        "\u0e40\u0e21\u0e37\u0e2d\u0e07\u0e40\u0e0a\u0e35\u0e22\u0e07\u0e43\u0e2b\u0e21\u0e48",
+    )
+    ocr_text = ocr_text.replace(
+        "\u0e04\u0e25\u0e2d\u0e07\u0e02\u0e19\u0e32\u0e19",
+        "\u0e0a\u0e49\u0e32\u0e07\u0e04\u0e25\u0e32\u0e19",
+    )
+    ocr_text = ocr_text.replace("81130", "50100")
+    ocr_path.write_text(ocr_text, encoding="utf-8")
+
+    result = export_dmc_form_json(
+        ExportDmcFormJsonRequest(
+            roster_excel_path=str(roster_path),
+            thai_id_csv_path=None,
+            ocr_markdown_paths=[str(ocr_path)],
+            school_year=2569,
+            grade_levels=[1],
+        )
+    )
+
+    form_values = result.records[0].dmc_form_values
+    assert form_values["psProvinceCode"] == "50000000"
+    assert form_values["psAmphurCode"] == "50010000"
+    assert form_values["psTumbolCode"] == "50010500"
+    assert form_values["provinceCode"] == "50000000"
+    assert form_values["amphurCode"] == "50010000"
+    assert form_values["tumbolCode"] == "50010500"
+
+
+def test_dmc_form_json_derives_guardian_fields_from_parent_relationship(tmp_path: Path) -> None:
+    roster_path = tmp_path / "studentListM1-M4 2569.xlsx"
+    thai_id_path = tmp_path / "ThaiID M1-2569.CSV"
+    ocr_path = tmp_path / "1-3ex.md"
+    _write_roster(roster_path)
+    _write_thai_id_csv(thai_id_path)
+    _write_ocr_markdown(ocr_path)
+
+    text = ocr_path.read_text(encoding="utf-8")
+    assert "ชื่อผู้ปกครอง* นาย ชวลิต" in text
+    assert "หมายเลขโทรศัพท์ผู้ปกครอง* 063-839-5699" in text
+    ocr_path.write_text(
+        text.replace("ชื่อผู้ปกครอง* นาย ชวลิต", "ชื่อผู้ปกครอง* นาย สมชาย").replace(
+            "หมายเลขโทรศัพท์ผู้ปกครอง* 063-839-5699",
+            "หมายเลขโทรศัพท์ผู้ปกครอง* 099-999-9999",
+        ),
+        encoding="utf-8",
+    )
+
+    result = preview_dmc_form_json(
+        PreviewDmcFormJsonRequest(
+            roster_excel_path=str(roster_path),
+            thai_id_csv_path=str(thai_id_path),
+            ocr_markdown_paths=[str(ocr_path)],
+            school_year=2569,
+            grade_levels=[1],
+        )
+    )
+
+    record = result.records[0]
+    assert record.fields["guardian_relationship"] == "บิดาและบุตร"
+    assert record.fields["guardian.first_name"] == record.fields["father.first_name"]
+    assert record.fields["guardian.last_name"] == record.fields["father.last_name"]
+    assert record.fields["guardian.phone"] == record.fields["father.phone"]
+    assert record.field_details["guardian.first_name"].source == "derived"
+    assert record.field_details["guardian.first_name"].raw_value == "derived_from_father.first_name:ocr_form"
+    assert record.dmc_form_values["parentFamilyRelationCode"] == "01"
+    assert record.dmc_form_values["parentFirstNameTh"] == record.dmc_form_values["fatherFirstNameTh"]
+    assert record.dmc_form_values["parentLastNameTh"] == record.dmc_form_values["fatherLastNameTh"]
 
 
 def test_validate_current_students_accepts_dmc_form_json_for_transfer_in(tmp_path: Path) -> None:

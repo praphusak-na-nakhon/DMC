@@ -337,6 +337,8 @@ export type ExportCurrentStudentsImportExcelResponse = {
   conflicts: CurrentStudentsFieldConflict[];
 };
 
+export type DmcFormValue = string | number | boolean | string[] | null;
+
 export type DmcFormJsonRecord = {
   record_id: string;
   match_status: CurrentStudentMatchStatus;
@@ -354,6 +356,7 @@ export type DmcFormJsonRecord = {
   suggestions: CurrentStudentMatchSuggestion[];
   sources: CurrentStudentSourceReference[];
   fields: Record<string, CurrentStudentFieldValue>;
+  dmc_form_values: Record<string, DmcFormValue>;
   field_details: Record<string, CurrentStudentField>;
 };
 
@@ -1024,6 +1027,26 @@ function parseCurrentStudentFieldValueMap(value: unknown, context: string): Reco
   );
 }
 
+function parseDmcFormValueMap(value: unknown, context: string): Record<string, DmcFormValue> {
+  const record = asRecord(value, context);
+  return Object.fromEntries(
+    Object.entries(record).map(([key, fieldValue]) => {
+      if (
+        fieldValue === null ||
+        typeof fieldValue === "string" ||
+        typeof fieldValue === "number" ||
+        typeof fieldValue === "boolean"
+      ) {
+        return [key, fieldValue];
+      }
+      if (Array.isArray(fieldValue) && fieldValue.every((item) => typeof item === "string")) {
+        return [key, fieldValue];
+      }
+      throw new Error(`${context}.${key} must be a string, number, boolean, string array, or null`);
+    }),
+  );
+}
+
 function parseStringMap(value: unknown, context: string): Record<string, string> {
   const record = asRecord(value, context);
   return Object.fromEntries(
@@ -1108,6 +1131,10 @@ function parseDmcFormJsonRecord(value: unknown, index: number): DmcFormJsonRecor
     suggestions: readArray(record, "suggestions", context).map(parseCurrentStudentMatchSuggestion),
     sources: readArray(record, "sources", context).map(parseCurrentStudentSourceReference),
     fields: parseCurrentStudentFieldValueMap(record.fields, `${context}.fields`),
+    dmc_form_values:
+      record.dmc_form_values === undefined
+        ? {}
+        : parseDmcFormValueMap(record.dmc_form_values, `${context}.dmc_form_values`),
     field_details: parseCurrentStudentDmcFields(record.field_details, `${context}.field_details`),
   };
 }

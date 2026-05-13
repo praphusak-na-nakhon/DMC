@@ -10,6 +10,8 @@ const mockRpc = vi.hoisted(() => ({
   openMarkdownDialog: vi.fn(),
   openOcrSourceDialog: vi.fn(),
   ocrDmcFormWithTyphoon: vi.fn(),
+  saveOcrMarkdownDialog: vi.fn(),
+  copyOcrMarkdownFile: vi.fn(),
 }));
 
 vi.mock("../lib/rpcClient", () => mockRpc);
@@ -462,10 +464,18 @@ describe("FormConverterPage", () => {
     fireEvent.click(within(dmcOcrCard).getByRole("button", { name: "เปิดไฟล์" }));
     expect(onRevealPath).toHaveBeenCalledWith("C:\\dmc\\.dmc-assistant-data\\ocr\\typhoonocr\\dmc-form-typhoon-ocr.md");
 
+    mockRpc.saveOcrMarkdownDialog.mockResolvedValue("D:\\DMC\\OCR\\dmc-form-ocr.md");
+    mockRpc.copyOcrMarkdownFile.mockResolvedValue("D:\\DMC\\OCR\\dmc-form-ocr.md");
+    fireEvent.click(within(dmcOcrCard).getByRole("button", { name: /บันทึกเป็น/ }));
+    await waitFor(() => expect(mockRpc.copyOcrMarkdownFile).toHaveBeenCalled());
+    expect(mockRpc.saveOcrMarkdownDialog).toHaveBeenCalledWith("dmc-form-typhoon-ocr.md");
+    expect(mockRpc.copyOcrMarkdownFile).toHaveBeenCalledWith(
+      "C:\\dmc\\.dmc-assistant-data\\ocr\\typhoonocr\\dmc-form-typhoon-ocr.md",
+      "D:\\DMC\\OCR\\dmc-form-ocr.md",
+    );
+
     fireEvent.click(within(dmcOcrCard).getByRole("tab", { name: "มีไฟล์ OCR แล้ว" }));
-    expect(
-      within(dmcOcrCard).getByDisplayValue("C:\\dmc\\.dmc-assistant-data\\ocr\\typhoonocr\\dmc-form-typhoon-ocr.md"),
-    ).toBeInTheDocument();
+    expect(within(dmcOcrCard).getByDisplayValue("D:\\DMC\\OCR\\dmc-form-ocr.md")).toBeInTheDocument();
   });
 
   it("creates Typhoon OCR markdown and adds it to the civil registration OCR file list", async () => {
@@ -511,11 +521,17 @@ describe("FormConverterPage", () => {
     expect(within(civilCard).getByText("สร้างไฟล์ OCR แล้ว")).toBeInTheDocument();
     expect(within(civilCard).getByText("1 หน้า · confidence 94 · ใช้ 3 เครดิต (3 เครดิต/หน้า)")).toBeInTheDocument();
 
+    mockRpc.saveOcrMarkdownDialog.mockResolvedValue("D:\\DMC\\OCR\\civil-registration-ocr.md");
+    mockRpc.copyOcrMarkdownFile.mockResolvedValue("D:\\DMC\\OCR\\civil-registration-ocr.md");
+    fireEvent.click(within(civilCard).getByRole("button", { name: /บันทึกเป็น/ }));
+    await waitFor(() => expect(mockRpc.copyOcrMarkdownFile).toHaveBeenCalled());
+    expect(mockRpc.saveOcrMarkdownDialog).toHaveBeenCalledWith("civil-registration-typhoon-ocr.md");
+    expect(mockRpc.copyOcrMarkdownFile).toHaveBeenCalledWith(
+      "C:\\dmc\\.dmc-assistant-data\\ocr\\typhoonocr\\civil-registration-typhoon-ocr.md",
+      "D:\\DMC\\OCR\\civil-registration-ocr.md",
+    );
+
     fireEvent.click(within(civilCard).getByRole("tab", { name: "มีไฟล์ OCR แล้ว" }));
-    expect(
-      within(civilCard).getByDisplayValue(
-        "C:\\dmc\\.dmc-assistant-data\\ocr\\typhoonocr\\civil-registration-typhoon-ocr.md",
-      ),
-    ).toBeInTheDocument();
+    expect(within(civilCard).getByDisplayValue("D:\\DMC\\OCR\\civil-registration-ocr.md")).toBeInTheDocument();
   });
 });

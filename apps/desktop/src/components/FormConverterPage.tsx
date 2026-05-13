@@ -22,6 +22,8 @@ import {
   openOcrSourceDialog,
   ocrDmcFormWithTyphoon,
   previewDmcFormJson,
+  copyOcrMarkdownFile,
+  saveOcrMarkdownDialog,
 } from "../lib/rpcClient";
 import type {
   TyphoonOcrDmcFormResponse,
@@ -77,6 +79,8 @@ const errorMessages: Record<string, string> = {
   TYPHOONOCR_UPLOAD_FAILED: "ส่งไฟล์ไป Typhoon OCR ไม่สำเร็จ",
   TYPHOONOCR_PROCESSING_FAILED: "Typhoon OCR ประมวลผลไฟล์ไม่สำเร็จ",
   TYPHOONOCR_RESPONSE_INVALID: "Typhoon OCR ส่งผลลัพธ์กลับมาในรูปแบบที่ระบบอ่านไม่ได้",
+  OCR_MARKDOWN_SOURCE_NOT_FOUND: "ไม่พบไฟล์ OCR ต้นทางสำหรับบันทึกเป็นไฟล์ใหม่",
+  OCR_MARKDOWN_SOURCE_NOT_FILE: "ตำแหน่งไฟล์ OCR ต้นทางไม่ใช่ไฟล์",
 };
 
 type PreviewColumn = {
@@ -326,6 +330,27 @@ export function FormConverterPage({
     }
   }
 
+  async function handleSaveTyphoonOcrAs() {
+    if (!typhoonOcrResult) {
+      return;
+    }
+
+    setErrorMessage(null);
+    try {
+      const destinationPath = await saveOcrMarkdownDialog(fileNameFromPath(typhoonOcrResult.markdown_path));
+      if (!destinationPath) {
+        return;
+      }
+      const savedPath = await copyOcrMarkdownFile(typhoonOcrResult.markdown_path, destinationPath);
+      const originalPath = typhoonOcrResult.markdown_path;
+      setTyphoonOcrResult({ ...typhoonOcrResult, markdown_path: savedPath });
+      setOcrMarkdownPaths((current) => replacePathList(current, originalPath, savedPath));
+      resetResult();
+    } catch (error) {
+      setErrorMessage(readableError(error));
+    }
+  }
+
   async function handleBrowseCivilRegistrationMarkdown() {
     try {
       const selected = await openMarkdownDialog();
@@ -374,6 +399,29 @@ export function FormConverterPage({
       setErrorMessage(readableError(error));
     } finally {
       setIsRunningCivilRegistrationTyphoonOcr(false);
+    }
+  }
+
+  async function handleSaveCivilRegistrationTyphoonOcrAs() {
+    if (!civilRegistrationTyphoonOcrResult) {
+      return;
+    }
+
+    setErrorMessage(null);
+    try {
+      const destinationPath = await saveOcrMarkdownDialog(
+        fileNameFromPath(civilRegistrationTyphoonOcrResult.markdown_path),
+      );
+      if (!destinationPath) {
+        return;
+      }
+      const savedPath = await copyOcrMarkdownFile(civilRegistrationTyphoonOcrResult.markdown_path, destinationPath);
+      const originalPath = civilRegistrationTyphoonOcrResult.markdown_path;
+      setCivilRegistrationTyphoonOcrResult({ ...civilRegistrationTyphoonOcrResult, markdown_path: savedPath });
+      setCivilRegistrationMarkdownPaths((current) => replacePathList(current, originalPath, savedPath));
+      resetResult();
+    } catch (error) {
+      setErrorMessage(readableError(error));
     }
   }
 
@@ -566,6 +614,7 @@ export function FormConverterPage({
                   }}
                   onBrowseSource={() => void handleBrowseTyphoonSource()}
                   onRun={() => void handleRunTyphoonOcr()}
+                  onSaveAs={() => void handleSaveTyphoonOcrAs()}
                   onRevealPath={onRevealPath}
                 />
               ) : null}
@@ -647,6 +696,7 @@ export function FormConverterPage({
                   }}
                   onBrowseSource={() => void handleBrowseCivilRegistrationTyphoonSource()}
                   onRun={() => void handleRunCivilRegistrationTyphoonOcr()}
+                  onSaveAs={() => void handleSaveCivilRegistrationTyphoonOcrAs()}
                   onRevealPath={onRevealPath}
                 />
               ) : null}
@@ -928,6 +978,7 @@ function TyphoonOcrTool({
   onSourcePathChange,
   onBrowseSource,
   onRun,
+  onSaveAs,
   onRevealPath,
 }: {
   sourcePath: string;
@@ -936,6 +987,7 @@ function TyphoonOcrTool({
   onSourcePathChange: (value: string) => void;
   onBrowseSource: () => void;
   onRun: () => void;
+  onSaveAs: () => void;
   onRevealPath: (path: string) => void;
 }) {
   const canRun = sourcePath.trim().length > 0 && !isRunning;
@@ -997,9 +1049,15 @@ function TyphoonOcrTool({
                 : ` · ใช้ ${result.credits_charged} เครดิต (${result.credits_per_page} เครดิต/หน้า)`}
             </span>
           </div>
-          <Button type="button" variant="ghost" size="sm" onClick={() => onRevealPath(result.markdown_path)}>
-            เปิดไฟล์
-          </Button>
+          <div className="flex shrink-0 flex-wrap items-center gap-1">
+            <Button type="button" variant="ghost" size="sm" onClick={onSaveAs}>
+              <FileOutput className="h-4 w-4" />
+              บันทึกเป็น...
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => onRevealPath(result.markdown_path)}>
+              เปิดไฟล์
+            </Button>
+          </div>
         </div>
       ) : null}
     </div>
@@ -1318,6 +1376,20 @@ function pathInputValue(value: string): string {
 function appendPathList(current: string, paths: string[]): string {
   const mergedPaths = [...markdownPaths(current), ...paths.map((path) => path.trim()).filter(Boolean)];
   return Array.from(new Set(mergedPaths)).join("\n");
+}
+
+function replacePathList(current: string, oldPath: string, newPath: string): string {
+  const trimmedOldPath = oldPath.trim();
+  const trimmedNewPath = newPath.trim();
+  if (!trimmedNewPath) {
+    return current;
+  }
+  const currentPaths = markdownPaths(current);
+  const replacedPaths = currentPaths.map((path) => (path === trimmedOldPath ? trimmedNewPath : path));
+  if (!currentPaths.includes(trimmedOldPath)) {
+    replacedPaths.push(trimmedNewPath);
+  }
+  return Array.from(new Set(replacedPaths)).join("\n");
 }
 
 function droppedFilePaths(event: DragEvent): string[] {
