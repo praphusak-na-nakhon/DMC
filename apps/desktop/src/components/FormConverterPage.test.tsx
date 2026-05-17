@@ -134,6 +134,22 @@ const thaiIdWarning = {
   sheet_name: null,
 };
 
+const ocrCitizenWarning = {
+  code: "OCR_CITIZEN_ID_INVALID_OR_MISSING",
+  message: "OCR form citizen ID is missing or failed checksum validation.",
+  source: "ocr_form",
+  source_path: "C:\\dmc\\uploadTest\\1-3ex.md",
+  row_index: null,
+  sheet_name: null,
+};
+
+const missingCitizenConflict = {
+  ...missingMotherConflict,
+  citizen_id: null,
+  field_name: "citizen_id",
+  field_label: fieldLabels.citizen_id,
+};
+
 const previewRecord = {
   record_id: "roster:1.1:4:19984",
   match_status: "auto_matched",
@@ -272,10 +288,10 @@ describe("FormConverterPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /ตรวจและแสดงตัวอย่าง/ }));
 
     await waitFor(() => expect(mockRpc.previewDmcFormJson).toHaveBeenCalled());
-    expect(await screen.findByText("คำเตือนจากไฟล์ที่เลือก")).toBeInTheDocument();
-    expect(screen.getByText("เลขประจำตัวประชาชนจาก CSV เครื่องสแกนบัตรหาย ถูกปิดบัง หรือ checksum ไม่ผ่าน")).toBeInTheDocument();
-    expect(screen.getByText("CSV เครื่องสแกนบัตร · ThaiID M1-2569.CSV · แถว 34")).toBeInTheDocument();
-    expect(await screen.findByText("ข้อมูลจำเป็นที่ยังไม่พบ")).toBeInTheDocument();
+    await screen.findByText("ข้อมูลจำเป็นที่ยังไม่พบ");
+    expect(screen.queryByText("คำเตือนจากไฟล์ที่เลือก")).not.toBeInTheDocument();
+    expect(screen.queryByText("THAI_ID_INVALID_OR_MASKED")).not.toBeInTheDocument();
+    expect(screen.getByText("ข้อมูลจำเป็นที่ยังไม่พบ")).toBeInTheDocument();
     expect(screen.getByText("ชื่อมารดา")).toBeInTheDocument();
     expect(screen.getByText("ผลลัพธ์หลังตรวจครบ")).toBeInTheDocument();
     expect(screen.getByText("ไม่มีข้อมูล ต้องเติมก่อนนำเข้า")).toBeInTheDocument();
@@ -399,6 +415,44 @@ describe("FormConverterPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /เปิดไฟล์ JSON/ }));
     expect(onRevealPath).toHaveBeenCalledWith("C:\\dmc\\reports\\dmc-form-data-2569.json");
+  });
+
+  it("shows selected-file warnings only when they affect missing fields without fallback", async () => {
+    mockRpc.openExcelDialog.mockResolvedValue("C:\\dmc\\uploadTest\\studentListM1-M4 2569.xlsx");
+    mockRpc.openMarkdownDialog.mockResolvedValue("C:\\dmc\\uploadTest\\1-3ex.md");
+    mockRpc.previewDmcFormJson.mockResolvedValue({
+      module: "formConverter",
+      schema_version: "dmc_form_json.v1",
+      generated_at: "2026-05-07T00:00:00+00:00",
+      school_year: 2569,
+      grade_levels: [1],
+      records_previewed: 1,
+      field_labels: fieldLabels,
+      summary: { ...summary, warnings_total: 2 },
+      warnings: [thaiIdWarning, ocrCitizenWarning],
+      conflicts: [missingCitizenConflict],
+      records: [
+        {
+          ...previewRecord,
+          citizen_id: null,
+          fields: { ...previewRecord.fields, citizen_id: null },
+        },
+      ],
+    });
+
+    render(<FormConverterPage onBackHome={vi.fn()} onRevealPath={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /เลือกไฟล์ Excel/ }));
+    fireEvent.click(screen.getByRole("button", { name: /เลือกไฟล์ OCR จากแบบฟอร์ม DMC/ }));
+    await waitFor(() =>
+      expect(screen.getByDisplayValue("C:\\dmc\\uploadTest\\studentListM1-M4 2569.xlsx")).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /ตรวจและแสดงตัวอย่าง/ }));
+
+    expect(await screen.findByText("คำเตือนจากไฟล์ที่เลือก")).toBeInTheDocument();
+    expect(screen.getByText("OCR_CITIZEN_ID_INVALID_OR_MISSING")).toBeInTheDocument();
+    expect(screen.queryByText("THAI_ID_INVALID_OR_MASKED")).not.toBeInTheDocument();
   });
 
   it("shows a retryable desktop runtime error when a file dialog is opened from browser preview", async () => {

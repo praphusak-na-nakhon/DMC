@@ -49,6 +49,80 @@ type FormConverterPageProps = {
 
 type OcrInputMode = "ocrFile" | "scanFile";
 
+const ROSTER_WARNING_FIELDS = [
+  "student_no",
+  "citizen_id",
+  "grade",
+  "room",
+  "sex",
+  "prefix",
+  "first_name",
+  "last_name",
+  "birth_date",
+];
+
+const THAI_ID_WARNING_FIELDS = [
+  "citizen_id",
+  "prefix",
+  "first_name",
+  "last_name",
+  "sex",
+  "birth_date",
+  "first_name_en",
+  "last_name_en",
+  "registered_address.house_no",
+  "registered_address.moo",
+  "registered_address.road",
+  "registered_address.subdistrict",
+  "registered_address.district",
+  "registered_address.province",
+];
+
+const OCR_FORM_WARNING_FIELDS = [
+  "citizen_id",
+  "student_no",
+  "prefix",
+  "first_name",
+  "last_name",
+  "sex",
+  "birth_date",
+  "birth_province",
+  "weight_kg",
+  "height_cm",
+  "religion",
+  "race",
+  "nationality",
+  "registered_address.house_id",
+  "registered_address.house_no",
+  "registered_address.subdistrict",
+  "registered_address.district",
+  "registered_address.province",
+  "registered_address.postal_code",
+  "father.first_name",
+  "father.last_name",
+  "mother.first_name",
+  "mother.last_name",
+  "guardian.first_name",
+  "guardian.last_name",
+];
+
+const CIVIL_REGISTRATION_WARNING_FIELDS = [
+  "citizen_id",
+  "registered_address.house_id",
+  "registered_address.house_no",
+  "registered_address.moo",
+  "registered_address.subdistrict",
+  "registered_address.district",
+  "registered_address.province",
+  "father.citizen_id",
+  "father.first_name",
+  "father.last_name",
+  "mother.citizen_id",
+  "mother.first_name",
+  "mother.last_name",
+];
+
+
 const errorMessages: Record<string, string> = {
   ...(messages.app.formConverter.errors as Record<string, string>),
   CURRENT_STUDENTS_INPUT_NOT_FOUND: "ไม่พบไฟล์ที่เลือก",
@@ -247,6 +321,7 @@ export function FormConverterPage({
   const activeResult = jsonExport ?? jsonPreview;
   const activeConflicts = activeResult?.conflicts ?? [];
   const activeWarnings = activeResult?.warnings ?? [];
+  const blockingMissingWarnings = filterWarningsForMissingNoFallback(activeWarnings, activeConflicts);
   const selectedOcrCount = markdownPaths(ocrMarkdownPaths).length;
   const canPreview = !isPreviewing && rosterPath.trim().length > 0 && selectedOcrCount > 0;
   const previewHint = !rosterPath.trim()
@@ -750,7 +825,7 @@ export function FormConverterPage({
                 <SummaryItem label="ทะเบียนบ้าน" value={activeResult.summary.civil_registration_records} />
                 <SummaryItem label="ต้องตรวจ" value={activeResult.summary.review_queue_records} />
                 <SummaryItem label="ข้อมูลจำเป็นขาด" value={activeConflicts.length} />
-                <SummaryItem label="คำเตือน" value={activeResult.summary.warnings_total} />
+                <SummaryItem label="คำเตือน" value={blockingMissingWarnings.length} />
               </div>
               <div className="flex flex-wrap gap-2 lg:justify-end">
                 <Button variant="outline" onClick={() => setShowTablePreview((current) => !current)}>
@@ -769,7 +844,7 @@ export function FormConverterPage({
                 ) : null}
               </div>
               <div className="lg:col-span-2">
-                <WarningAudit warnings={activeWarnings} />
+                <WarningAudit warnings={blockingMissingWarnings} />
                 <ConflictAudit conflicts={activeConflicts} />
                 {showTablePreview ? (
                   <DmcFormTablePreview
@@ -1064,6 +1139,105 @@ function TyphoonOcrTool({
   );
 }
 
+function filterWarningsForMissingNoFallback(
+  warnings: CurrentStudentsWarning[],
+  conflicts: CurrentStudentsFieldConflict[],
+): CurrentStudentsWarning[] {
+  const missingConflicts = conflicts.filter(isMissingNoFallbackConflict);
+  if (!missingConflicts.length) {
+    return [];
+  }
+
+  return warnings.filter((warning) => {
+    const impactedFields = warningImpactedFields(warning);
+    if (!impactedFields.length) {
+      return false;
+    }
+    return missingConflicts.some(
+      (conflict) =>
+        impactedFields.includes(conflict.field_name) && warningCanAffectConflictRecord(warning, conflict),
+    );
+  });
+}
+
+function isMissingNoFallbackConflict(conflict: CurrentStudentsFieldConflict): boolean {
+  return (
+    conflict.reason === "missing_after_all_sources" &&
+    conflict.selected_value === null &&
+    conflict.selected_source === null &&
+    conflict.source_values.length === 0
+  );
+}
+
+function warningImpactedFields(warning: CurrentStudentsWarning): string[] {
+  switch (warning.code) {
+    case "ROSTER_CITIZEN_ID_INVALID":
+      return ["citizen_id"];
+    case "ROSTER_NO_MATCHING_SHEETS":
+      return ROSTER_WARNING_FIELDS;
+    case "THAI_ID_INVALID_OR_MASKED":
+      return ["citizen_id"];
+    case "THAI_ID_CSV_SHORT_ROW":
+      return THAI_ID_WARNING_FIELDS;
+    case "OCR_CITIZEN_ID_INVALID_OR_MISSING":
+      return OCR_FORM_WARNING_FIELDS;
+    case "CIVIL_REGISTRATION_CITIZEN_ID_INVALID_OR_MISSING":
+    case "CIVIL_REGISTRATION_NO_MATCH_KEY":
+      return CIVIL_REGISTRATION_WARNING_FIELDS;
+    default:
+      return [];
+  }
+}
+
+function warningCanAffectConflictRecord(
+  warning: CurrentStudentsWarning,
+  conflict: CurrentStudentsFieldConflict,
+): boolean {
+  if (warning.source === "roster" && warning.row_index !== null) {
+    const rosterRecord = parseRosterRecordId(conflict.record_id);
+    return (
+      rosterRecord !== null &&
+      rosterRecord.rowIndex === warning.row_index &&
+      (!warning.sheet_name || rosterRecord.sheetName === warning.sheet_name)
+    );
+  }
+
+  if (warning.source === "thai_id_scan" && warning.row_index !== null) {
+    const scanRecord = parseSourceRecordId(conflict.record_id, "scan");
+    return (
+      scanRecord !== null &&
+      scanRecord.rowIndex === warning.row_index &&
+      (!warning.source_path || scanRecord.fileName === fileNameFromPath(warning.source_path))
+    );
+  }
+
+  return true;
+}
+
+function parseRosterRecordId(recordId: string): { sheetName: string; rowIndex: number } | null {
+  const parts = recordId.split(":");
+  if (parts.length < 4 || parts[0] !== "roster") {
+    return null;
+  }
+  const rowIndex = Number.parseInt(parts[2], 10);
+  if (!Number.isInteger(rowIndex)) {
+    return null;
+  }
+  return { sheetName: parts[1], rowIndex };
+}
+
+function parseSourceRecordId(recordId: string, prefix: string): { fileName: string; rowIndex: number } | null {
+  const parts = recordId.split(":");
+  if (parts.length < 3 || parts[0] !== prefix) {
+    return null;
+  }
+  const rowIndex = Number.parseInt(parts[2], 10);
+  if (!Number.isInteger(rowIndex)) {
+    return null;
+  }
+  return { fileName: parts[1], rowIndex };
+}
+
 function WarningAudit({ warnings }: { warnings: CurrentStudentsWarning[] }) {
   if (!warnings.length) {
     return null;
@@ -1076,7 +1250,7 @@ function WarningAudit({ warnings }: { warnings: CurrentStudentsWarning[] }) {
         <div>
           <div className="font-medium text-amber-950">คำเตือนจากไฟล์ที่เลือก</div>
           <div className="text-sm text-amber-900">
-            รายการนี้ไม่ใช่ข้อมูลจำเป็นที่ขาดเสมอไป แต่อาจเป็นข้อมูลที่ระบบอ่านได้ไม่สมบูรณ์หรือควรตรวจทาน
+            แสดงเฉพาะคำเตือนที่ทำให้ข้อมูลจำเป็นยังขาดและไม่มีแหล่งอื่นช่วยเติมได้
           </div>
         </div>
       </div>
