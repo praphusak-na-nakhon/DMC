@@ -20,6 +20,7 @@ from ..errors import DomainError
 from ..runtime import JobContext, utc_now
 from ..schemas import PreviewRow, ValidateExcelResponse, ValidationWarning
 from .base import AutomationModule
+from .dry_run_review import pause_for_dry_run_review, should_pause_for_dry_run_review
 
 DMC_PORTAL_HOME_URL = "https://portal.bopp-obec.info/obec69/"
 DMC_TRANSFER_IN_LIST_URL = "https://portal.bopp-obec.info/obec69/studentin/"
@@ -29,6 +30,16 @@ AUTH_ENTRY_URLS = (
     DMC_THAID_AUTH_URL,
     DMC_LOGIN_URL,
 )
+DMC_HISTORY_FORM_URL_MARKER = "/studentin/add"
+DMC_HISTORY_REVIEW_NOTE = "history_filled_for_review"
+DMC_ADDRESS_CHAIN_FIELDS = {
+    "psProvinceCode",
+    "psAmphurCode",
+    "psTumbolCode",
+    "provinceCode",
+    "amphurCode",
+    "tumbolCode",
+}
 
 
 class ChromiumLauncher(Protocol):
@@ -146,6 +157,23 @@ class CurrentStudentsModule(AutomationModule):
                     checkpoint.failed = context.snapshot.failed
                     checkpoint.next_page = context.snapshot.processed + 1
                     context.job_store.save_checkpoint(job_id, checkpoint)
+                    if result.get("note") == DMC_HISTORY_REVIEW_NOTE:
+                        self._pause_after_history_review(
+                            page=page,
+                            record=record,
+                            context=context,
+                            checkpoint=checkpoint,
+                            record_number=record_number,
+                        )
+
+                if should_pause_for_dry_run_review(options):
+                    pause_for_dry_run_review(
+                        context=context,
+                        checkpoint=checkpoint,
+                        module_name=self.name,
+                        page_url=page.url,
+                        current_record=context.snapshot.processed,
+                    )
 
                 self._finish_job(
                     job_id=job_id,
@@ -188,18 +216,7 @@ class CurrentStudentsModule(AutomationModule):
                 reason="login_required" if attempt == 0 else "session_expired",
             )
             self._fill_transfer_form(page, record)
-            if dry_run:
-                return self._result(
-                    record=record,
-                    record_number=record_number,
-                    applied=False,
-                    note="dry_run",
-                    status="success",
-                    message="Form fields were filled without submitting.",
-                    page_url=page.url,
-                )
-
-            submitted = self._submit_transfer_form(page)
+            submitted = self._submit_transfer_form(page, record)
             if submitted["note"] == "session_expired" and attempt == 0:
                 self._pause_for_auth(
                     page=page,
@@ -210,12 +227,20 @@ class CurrentStudentsModule(AutomationModule):
                 )
                 continue
 
+            if dry_run and submitted["note"] == DMC_HISTORY_REVIEW_NOTE:
+                submitted = {
+                    **submitted,
+                    "note": "dry_run",
+                    "status": "success",
+                    "message": "Dry run opened the student history form and filled it without clicking the final save button.",
+                }
+
             return self._result(
                 record=record,
                 record_number=record_number,
                 applied=bool(submitted["applied"]),
                 note=str(submitted["note"]),
-                status="success" if bool(submitted["applied"]) else "review",
+                status=str(submitted.get("status") or ("success" if bool(submitted["applied"]) else "review")),
                 message=str(submitted["message"]),
                 page_url=page.url,
             )
@@ -321,6 +346,55 @@ class CurrentStudentsModule(AutomationModule):
         checkpoint.awaiting_auth = False
         checkpoint.auth_reason = None
         checkpoint.next_page = current_record
+        context.job_store.save_checkpoint(context.job_id, checkpoint)
+        context.job_store.set_status(context.job_id, "running")
+
+    def _pause_after_history_review(
+        self,
+        *,
+        page: Page,
+        record: DmcTransferInImportRecord,
+        context: JobContext,
+        checkpoint: JobCheckpoint,
+        record_number: int,
+    ) -> None:
+        stopped_item = {
+            "reason": DMC_HISTORY_REVIEW_NOTE,
+            "row_index": record.row_index,
+            "record_id": record.record_id,
+            "student_no": record.student_no,
+            "citizen_id": record.citizen_id,
+            "full_name": record.full_name,
+            "page_url": page.url,
+        }
+        checkpoint.next_page = context.snapshot.processed + 1
+        checkpoint.stopped_item = stopped_item
+        context.snapshot.status = "paused"
+        context.snapshot.stopped_item = stopped_item
+        context.job_store.save_checkpoint(context.job_id, checkpoint)
+        context.job_store.set_status(context.job_id, "paused")
+        context.emit_event(
+            {
+                "type": "job_stopped",
+                "job_id": context.job_id,
+                "status": "paused",
+                "stopped_item": stopped_item,
+            }
+        )
+        context.emit_event(
+            {
+                "type": "sidecar_stderr",
+                "message": (
+                    "currentStudents paused after filling the DMC history form "
+                    f"for record {record_number}. Final save was not clicked."
+                ),
+            }
+        )
+        context.control.pause()
+        context.control.wait_point()
+        checkpoint.stopped_item = None
+        context.snapshot.status = "running"
+        context.snapshot.stopped_item = None
         context.job_store.save_checkpoint(context.job_id, checkpoint)
         context.job_store.set_status(context.job_id, "running")
 
@@ -453,6 +527,18 @@ class CurrentStudentsModule(AutomationModule):
         except PlaywrightError:
             return False
 
+    def _is_history_form(self, page: Page) -> bool:
+        if "/auth/" in page.url:
+            return False
+        try:
+            if page.locator('form[action$="/studentin/add"]').count() > 0:
+                return True
+            return page.locator('input[name="firstNameTh"]').count() > 0 and page.locator(
+                'input[name="psHomeIdNo"]'
+            ).count() > 0
+        except PlaywrightError:
+            return False
+
     def _is_login_error_page(self, page: Page) -> bool:
         if "login_error=1" in page.url:
             return True
@@ -477,22 +563,33 @@ class CurrentStudentsModule(AutomationModule):
         page.locator('input[name="classroom"]').wait_for(state="visible", timeout=30000)
         page.locator('input[name="cifNo"]').wait_for(state="visible", timeout=30000)
 
-    def _fill_transfer_form(self, page: Page, record: DmcTransferInImportRecord) -> None:
-        page.locator('input[name="studentNo"]').fill(record.student_no)
-        page.locator('select[name="levelDtlCode"]').select_option(value=record.level_dtl_code)
-        page.locator('input[name="classroom"]').fill(record.classroom)
-        page.locator('input[name="cifNo"]').fill(record.citizen_id)
-        page.evaluate(
-            """
-            (citizenId) => {
-              const input = document.querySelector('input[name="cifNoChk"]');
-              if (input) input.value = citizenId;
-            }
-            """,
-            record.citizen_id,
-        )
+    def _wait_for_history_form(self, page: Page) -> None:
+        page.locator('input[name="firstNameTh"]').wait_for(state="attached", timeout=30000)
+        page.locator('input[name="psHomeIdNo"]').wait_for(state="attached", timeout=30000)
+        page.locator('input[name="fatherFirstNameTh"]').wait_for(state="attached", timeout=30000)
 
-    def _submit_transfer_form(self, page: Page) -> dict[str, object]:
+    def _fill_transfer_form(self, page: Page, record: DmcTransferInImportRecord) -> None:
+        values = {
+            "studentNo": record.student_no,
+            "levelDtlCode": record.level_dtl_code,
+            "classroom": record.classroom,
+            "cifNo": record.citizen_id,
+            "cifNoChk": record.citizen_id,
+            "cifType": record.dmc_form_values.get("cifType", "I"),
+        }
+        self._fill_admission_date(page, self._string_form_value(record.dmc_form_values.get("admissionDate")))
+        self._fill_form_values(page, values)
+
+    def _submit_transfer_form(self, page: Page, record: DmcTransferInImportRecord) -> dict[str, object]:
+        if self._is_history_form(page):
+            self._fill_student_history_form(page, record)
+            return {
+                "applied": False,
+                "note": DMC_HISTORY_REVIEW_NOTE,
+                "status": "review",
+                "message": "DMC history form was filled for review. Final save was not clicked.",
+            }
+
         try:
             with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
                 page.locator('input[name="submit"]').click(timeout=10000)
@@ -507,7 +604,7 @@ class CurrentStudentsModule(AutomationModule):
             return {
                 "applied": False,
                 "note": "session_expired",
-                "message": "DMC redirected to login while submitting.",
+                "message": "DMC redirected to login while submitting the add_cif form.",
             }
 
         error_text = self._extract_error_text(page)
@@ -518,11 +615,333 @@ class CurrentStudentsModule(AutomationModule):
                 "message": error_text,
             }
 
+        if not self._is_history_form(page):
+            return {
+                "applied": False,
+                "note": "dmc_history_form_not_opened",
+                "message": "DMC accepted the add_cif form but did not open the full history form.",
+            }
+
+        self._fill_student_history_form(page, record)
         return {
-            "applied": True,
-            "note": "submitted",
-            "message": "DMC transfer-in form was submitted.",
+            "applied": False,
+            "note": DMC_HISTORY_REVIEW_NOTE,
+            "status": "review",
+            "message": "DMC history form was filled for review. Final save was not clicked.",
         }
+
+    def _fill_student_history_form(self, page: Page, record: DmcTransferInImportRecord) -> None:
+        self._wait_for_history_form(page)
+        values = dict(record.dmc_form_values)
+        values.setdefault("studentNo", record.student_no)
+        values.setdefault("levelDtlCode", record.level_dtl_code)
+        values.setdefault("classroom", record.classroom)
+        values.setdefault("cifNo", record.citizen_id)
+        values.setdefault("cifNoChk", record.citizen_id)
+        values.setdefault("cifType", "I")
+
+        self._fill_admission_date(page, self._string_form_value(values.get("admissionDate")))
+        non_chained_values = {
+            name: value
+            for name, value in values.items()
+            if name not in DMC_ADDRESS_CHAIN_FIELDS and name != "admissionDate"
+        }
+        self._fill_form_values(page, non_chained_values)
+        self._fill_address_chain(
+            page,
+            values,
+            province_name="psProvinceCode",
+            district_name="psAmphurCode",
+            subdistrict_name="psTumbolCode",
+        )
+        self._fill_address_chain(
+            page,
+            values,
+            province_name="provinceCode",
+            district_name="amphurCode",
+            subdistrict_name="tumbolCode",
+        )
+        gender_code = self._string_form_value(values.get("genderCode"))
+        if gender_code:
+            self._fill_form_values(page, {"genderCode": gender_code})
+        page.wait_for_timeout(300)
+
+    def _fill_admission_date(self, page: Page, value: str | None) -> None:
+        page.evaluate(
+            """
+            (explicitValue) => {
+              const field = document.querySelector('[name="admissionDate"]');
+              if (!field) return;
+              const dispatch = (element) => {
+                element.dispatchEvent(new Event('input', { bubbles: true }));
+                element.dispatchEvent(new Event('change', { bubbles: true }));
+              };
+              const postDate = document.querySelector('[name="postDate"]')?.value || "";
+              const nextValue = explicitValue || postDate;
+              if (field.tagName === 'SELECT') {
+                if (nextValue && Array.from(field.options).some((option) => option.value === nextValue)) {
+                  field.value = nextValue;
+                } else {
+                  const option = Array.from(field.options).find((item) => item.value);
+                  if (option) field.value = option.value;
+                }
+              } else if (nextValue) {
+                field.value = nextValue;
+              }
+              dispatch(field);
+            }
+            """,
+            value,
+        )
+
+    def _fill_address_chain(
+        self,
+        page: Page,
+        values: dict[str, Any],
+        *,
+        province_name: str,
+        district_name: str,
+        subdistrict_name: str,
+    ) -> None:
+        province_code = self._string_form_value(values.get(province_name))
+        district_code = self._string_form_value(values.get(district_name))
+        subdistrict_code = self._string_form_value(values.get(subdistrict_name))
+        if not province_code:
+            return
+        self._set_named_field_value(page, province_name, province_code, trigger_change=False)
+        if district_code:
+            self._populate_address_child_options(
+                page,
+                child_name=district_name,
+                remote_method="getAmphurListByProvinceCode",
+                parent_code=province_code,
+            )
+            if not self._wait_for_select_option(page, district_name, district_code):
+                return
+            self._set_named_field_value(page, district_name, district_code, trigger_change=False)
+            if subdistrict_code:
+                self._populate_address_child_options(
+                    page,
+                    child_name=subdistrict_name,
+                    remote_method="getTumbolListByAmphurCode",
+                    parent_code=district_code,
+                )
+        if subdistrict_code:
+            if not self._wait_for_select_option(page, subdistrict_name, subdistrict_code):
+                return
+            self._set_named_field_value(page, subdistrict_name, subdistrict_code, trigger_change=False)
+        if district_code:
+            self._set_named_field_value(page, district_name, district_code, trigger_change=False)
+
+    def _select_has_option(self, page: Page, name: str, value: str) -> bool:
+        try:
+            return bool(
+                page.evaluate(
+                    """
+                    ([fieldName, fieldValue]) => {
+                      const field = document.getElementsByName(fieldName)[0];
+                      return !!field && !!field.options && Array.from(field.options).some((option) => option.value === fieldValue);
+                    }
+                    """,
+                    [name, value],
+                )
+            )
+        except PlaywrightError:
+            return False
+
+    def _populate_address_child_options(
+        self,
+        page: Page,
+        *,
+        child_name: str,
+        remote_method: str,
+        parent_code: str,
+    ) -> bool:
+        try:
+            return bool(
+                page.evaluate(
+                    """
+                    ([childName, remoteMethod, parentCode]) => new Promise((resolve) => {
+                      const target = document.getElementsByName(childName)[0];
+                      const remote = window.studentInfoRemote;
+                      if (!target || !remote || typeof remote[remoteMethod] !== 'function') {
+                        resolve(false);
+                        return;
+                      }
+                      let settled = false;
+                      const finish = (value) => {
+                        if (settled) return;
+                        settled = true;
+                        clearTimeout(timer);
+                        resolve(value);
+                      };
+                      const timer = setTimeout(() => finish(false), 10000);
+                      try {
+                        remote[remoteMethod](parentCode, (data) => {
+                          try {
+                            const placeholder = target.options[0];
+                            const placeholderText = placeholder?.text || (childName.toLowerCase().includes('tumbol') ? '-- ตำบล --' : '-- อำเภอ --');
+                            const options = [];
+                            for (const item of Array.isArray(data) ? data : []) {
+                              const value = item && (item.code ?? item.value ?? '');
+                              if (!value) continue;
+                              const label = item.nameTh ?? item.name ?? item.text ?? value;
+                              options.push([String(value), String(label)]);
+                            }
+                            if (options.length === 0) {
+                              finish(false);
+                              return;
+                            }
+                            target.innerHTML = '';
+                            target.add(new Option(placeholderText, ''));
+                            for (const [value, label] of options) {
+                              target.add(new Option(label, value));
+                            }
+                            target.dispatchEvent(new Event('input', { bubbles: true }));
+                            finish(true);
+                          } catch (_error) {
+                            finish(false);
+                          }
+                        });
+                      } catch (_error) {
+                        finish(false);
+                      }
+                    })
+                    """,
+                    [child_name, remote_method, parent_code],
+                )
+            )
+        except PlaywrightError:
+            return False
+
+    def _wait_for_select_option(self, page: Page, name: str, value: str) -> bool:
+        try:
+            page.wait_for_function(
+                """
+                ([fieldName, fieldValue]) => {
+                  const field = document.getElementsByName(fieldName)[0];
+                  return !!field && !!field.options && Array.from(field.options).some((option) => option.value === fieldValue);
+                }
+                """,
+                arg=[name, value],
+                timeout=15000,
+            )
+            return True
+        except TimeoutError:
+            return False
+
+    def _set_named_field_value(self, page: Page, name: str, value: str, *, trigger_change: bool = True) -> None:
+        page.evaluate(
+            """
+            ([fieldName, fieldValue, shouldTriggerChange]) => {
+              const field = document.getElementsByName(fieldName)[0];
+              if (!field) return;
+              const dispatch = (element) => {
+                element.dispatchEvent(new Event('input', { bubbles: true }));
+                if (!shouldTriggerChange) return;
+                if (window.jQuery) {
+                  window.jQuery(element).trigger('change');
+                } else {
+                  element.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+              };
+              if (field.tagName === 'SELECT') {
+                if (!Array.from(field.options).some((option) => option.value === fieldValue)) {
+                  return;
+                }
+                field.value = fieldValue;
+                Array.from(field.options).forEach((option) => {
+                  option.selected = option.value === fieldValue;
+                });
+                const selectedIndex = Array.from(field.options).findIndex((option) => option.value === fieldValue);
+                if (selectedIndex >= 0) field.selectedIndex = selectedIndex;
+              } else {
+                field.value = fieldValue;
+              }
+              dispatch(field);
+            }
+            """,
+            [name, value, trigger_change],
+        )
+
+    def _fill_form_values(self, page: Page, values: dict[str, Any]) -> None:
+        page.evaluate(
+            """
+            (values) => {
+              const dispatch = (element) => {
+                element.dispatchEvent(new Event('input', { bubbles: true }));
+                element.dispatchEvent(new Event('change', { bubbles: true }));
+              };
+              const asString = (value) => value === null || value === undefined ? "" : String(value);
+              const setSelectValue = (field, value) => {
+                const rawValues = Array.isArray(value) ? value.map(asString) : [asString(value)];
+                for (const rawValue of rawValues) {
+                  if (!Array.from(field.options).some((option) => option.value === rawValue)) {
+                    field.add(new Option(rawValue, rawValue));
+                  }
+                }
+                if (field.multiple) {
+                  const selected = new Set(rawValues);
+                  Array.from(field.options).forEach((option) => {
+                    option.selected = selected.has(option.value);
+                  });
+                } else {
+                  field.value = rawValues[0] ?? "";
+                }
+                dispatch(field);
+                try {
+                  if (window.jQuery && window.jQuery.fn && typeof window.jQuery(field).multiselect === 'function') {
+                    window.jQuery(field).multiselect('refresh');
+                  }
+                } catch (_error) {
+                  // Best effort only. The native select value has already been set.
+                }
+              };
+              for (const [name, value] of Object.entries(values)) {
+                const fields = Array.from(document.getElementsByName(name));
+                if (fields.length === 0) continue;
+                const first = fields[0];
+                const tag = first.tagName;
+                const type = (first.getAttribute('type') || '').toLowerCase();
+                if (type === 'radio') {
+                  const expected = asString(value);
+                  for (const field of fields) {
+                    field.checked = field.value === expected;
+                    dispatch(field);
+                  }
+                  continue;
+                }
+                if (type === 'checkbox') {
+                  if (Array.isArray(value)) {
+                    const selected = new Set(value.map(asString));
+                    for (const field of fields) {
+                      field.checked = selected.has(field.value);
+                      dispatch(field);
+                    }
+                  } else {
+                    first.checked = value === true || asString(value).toLowerCase() === 'true' || first.value === asString(value);
+                    dispatch(first);
+                  }
+                  continue;
+                }
+                if (tag === 'SELECT') {
+                  setSelectValue(first, value);
+                  continue;
+                }
+                if ('value' in first) {
+                  first.value = asString(value);
+                  dispatch(first);
+                }
+              }
+            }
+            """,
+            values,
+        )
+
+    def _string_form_value(self, value: Any) -> str | None:
+        if value is None or isinstance(value, bool) or isinstance(value, list):
+            return None
+        return str(value)
 
     def _extract_error_text(self, page: Page) -> str:
         selectors = [
@@ -626,6 +1045,8 @@ class CurrentStudentsModule(AutomationModule):
                 "report_path": str(csv_path),
                 "review_report_path": str(review_path),
                 "run_summary": status.get("run_summary"),
+                "summary_report_path": status.get("summary_report_path"),
+                "completion_summary": status.get("completion_summary"),
                 "json_report_path": str(json_path),
             }
         )

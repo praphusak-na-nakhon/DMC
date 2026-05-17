@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from openpyxl import Workbook, load_workbook  # type: ignore[import-untyped]
 
 from dmc_sidecar.current_students import (
+    DmcTransferInImportRecord,
     ExportDmcFormJsonRequest,
     ExportCurrentStudentsBlankFormRequest,
     ExportCurrentStudentsImportExcelRequest,
@@ -19,9 +21,13 @@ from dmc_sidecar.current_students import (
     load_dmc_transfer_in_import_records,
     preview_dmc_form_json,
     read_civil_registration_markdown_records,
+    read_ocr_markdown,
+    read_student_roster,
     reconcile_current_students,
     validate_current_students_import_form,
 )
+from dmc_sidecar.checkpoint import JobCheckpoint
+from dmc_sidecar.modules.current_students import CurrentStudentsModule
 from dmc_sidecar.rpc import RpcServer
 
 
@@ -80,6 +86,215 @@ def _write_thai_id_csv(path: Path) -> None:
     path.write_bytes(("\n".join(lines) + "\n").encode("cp874"))
 
 
+def test_current_students_dry_run_opens_history_and_fills_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = CurrentStudentsModule()
+    page = SimpleNamespace(url="https://portal.test/studentin/add_cif")
+    calls: list[str] = []
+    record = DmcTransferInImportRecord(
+        row_index=3,
+        record_id="record-1",
+        student_no="20018",
+        level_dtl_code="12",
+        classroom="3",
+        citizen_id="1810800164491",
+        full_name="Test Student",
+        dmc_form_values={"firstNameTh": "Test", "lastNameTh": "Student"},
+    )
+
+    def fake_open_transfer_form(**_kwargs: object) -> SimpleNamespace:
+        calls.append("open_transfer_form")
+        return page
+
+    def fake_fill_transfer_form(_page: SimpleNamespace, _record: DmcTransferInImportRecord) -> None:
+        calls.append("fill_transfer_form")
+
+    def fake_submit_transfer_form(_page: SimpleNamespace, _record: DmcTransferInImportRecord) -> dict[str, object]:
+        calls.append("submit_transfer_form")
+        page.url = "https://portal.test/studentin/add"
+        return {
+            "applied": False,
+            "note": "history_filled_for_review",
+            "status": "review",
+            "message": "History form filled.",
+        }
+
+    monkeypatch.setattr(module, "_open_transfer_form", fake_open_transfer_form)
+    monkeypatch.setattr(module, "_fill_transfer_form", fake_fill_transfer_form)
+    monkeypatch.setattr(module, "_submit_transfer_form", fake_submit_transfer_form)
+
+    result = module._process_record(
+        page=page,  # type: ignore[arg-type]
+        record=record,
+        dry_run=True,
+        context=object(),  # type: ignore[arg-type]
+        checkpoint=JobCheckpoint.initial(level_label="DMC transfer-in", base_url="https://portal.test"),
+        record_number=1,
+    )
+
+    assert calls == ["open_transfer_form", "fill_transfer_form", "submit_transfer_form"]
+    assert result["status"] == "success"
+    assert result["note"] == "dry_run"
+    assert "student history form" in result["message"]
+    assert result["page_url"] == "https://portal.test/studentin/add"
+
+
+def test_current_students_address_chain_waits_before_selecting_children(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = CurrentStudentsModule()
+    page = SimpleNamespace()
+    calls: list[tuple[str, ...]] = []
+
+    def fake_set(_page: SimpleNamespace, name: str, value: str, *, trigger_change: bool = True) -> None:
+        calls.append(("set", name, value, str(trigger_change)))
+
+    def fake_wait(_page: SimpleNamespace, name: str, value: str) -> bool:
+        calls.append(("wait", name, value))
+        return True
+
+    def fake_populate(_page: SimpleNamespace, *, child_name: str, remote_method: str, parent_code: str) -> bool:
+        calls.append(("populate", child_name, remote_method, parent_code))
+        return True
+
+    monkeypatch.setattr(module, "_set_named_field_value", fake_set)
+    monkeypatch.setattr(module, "_wait_for_select_option", fake_wait)
+    monkeypatch.setattr(module, "_populate_address_child_options", fake_populate)
+
+    module._fill_address_chain(  # type: ignore[arg-type]
+        page,
+        {
+            "psProvinceCode": "81000000",
+            "psAmphurCode": "81080000",
+            "psTumbolCode": "81080300",
+        },
+        province_name="psProvinceCode",
+        district_name="psAmphurCode",
+        subdistrict_name="psTumbolCode",
+    )
+
+    assert calls == [
+        ("set", "psProvinceCode", "81000000", "False"),
+        ("populate", "psAmphurCode", "getAmphurListByProvinceCode", "81000000"),
+        ("wait", "psAmphurCode", "81080000"),
+        ("set", "psAmphurCode", "81080000", "False"),
+        ("populate", "psTumbolCode", "getTumbolListByAmphurCode", "81080000"),
+        ("wait", "psTumbolCode", "81080300"),
+        ("set", "psTumbolCode", "81080300", "False"),
+        ("set", "psAmphurCode", "81080000", "False"),
+    ]
+
+
+def test_current_students_address_chain_does_not_trigger_dmc_change_handlers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = CurrentStudentsModule()
+    page = SimpleNamespace()
+    calls: list[tuple[str, ...]] = []
+
+    def fake_set(_page: SimpleNamespace, name: str, value: str, *, trigger_change: bool = True) -> None:
+        calls.append(("set", name, value, str(trigger_change)))
+
+    def fake_wait(_page: SimpleNamespace, name: str, value: str) -> bool:
+        calls.append(("wait", name, value))
+        return True
+
+    monkeypatch.setattr(module, "_set_named_field_value", fake_set)
+    monkeypatch.setattr(module, "_wait_for_select_option", fake_wait)
+    monkeypatch.setattr(
+        module,
+        "_populate_address_child_options",
+        lambda _page, *, child_name, remote_method, parent_code: calls.append(
+            ("populate", child_name, remote_method, parent_code)
+        )
+        or True,
+    )
+
+    module._fill_address_chain(  # type: ignore[arg-type]
+        page,
+        {
+            "psProvinceCode": "81000000",
+            "psAmphurCode": "81040000",
+            "psTumbolCode": "81040400",
+        },
+        province_name="psProvinceCode",
+        district_name="psAmphurCode",
+        subdistrict_name="psTumbolCode",
+    )
+
+    assert calls == [
+        ("set", "psProvinceCode", "81000000", "False"),
+        ("populate", "psAmphurCode", "getAmphurListByProvinceCode", "81000000"),
+        ("wait", "psAmphurCode", "81040000"),
+        ("set", "psAmphurCode", "81040000", "False"),
+        ("populate", "psTumbolCode", "getTumbolListByAmphurCode", "81040000"),
+        ("wait", "psTumbolCode", "81040400"),
+        ("set", "psTumbolCode", "81040400", "False"),
+        ("set", "psAmphurCode", "81040000", "False"),
+    ]
+    assert not any(call[0] == "set" and call[3] == "True" for call in calls)
+
+
+def test_current_students_address_chain_stops_when_district_option_never_loads(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = CurrentStudentsModule()
+    page = SimpleNamespace(wait_for_timeout=lambda _ms: None)
+    set_calls: list[tuple[str, str]] = []
+
+    def fake_set(_page: SimpleNamespace, name: str, value: str, *, trigger_change: bool = True) -> None:
+        set_calls.append((name, value))
+
+    monkeypatch.setattr(module, "_set_named_field_value", fake_set)
+    monkeypatch.setattr(module, "_wait_for_select_option", lambda *_args: False)
+    monkeypatch.setattr(module, "_populate_address_child_options", lambda *_args, **_kwargs: True)
+
+    module._fill_address_chain(  # type: ignore[arg-type]
+        page,
+        {
+            "psProvinceCode": "81000000",
+            "psAmphurCode": "81080000",
+            "psTumbolCode": "81080300",
+        },
+        province_name="psProvinceCode",
+        district_name="psAmphurCode",
+        subdistrict_name="psTumbolCode",
+    )
+
+    assert set_calls == [
+        ("psProvinceCode", "81000000"),
+    ]
+
+
+def test_current_students_address_chain_uses_existing_options_when_direct_load_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = CurrentStudentsModule()
+    page = SimpleNamespace(wait_for_timeout=lambda _ms: None)
+    set_calls: list[tuple[str, str, bool]] = []
+
+    def fake_set(_page: SimpleNamespace, name: str, value: str, *, trigger_change: bool = True) -> None:
+        set_calls.append((name, value, trigger_change))
+
+    monkeypatch.setattr(module, "_set_named_field_value", fake_set)
+    monkeypatch.setattr(module, "_wait_for_select_option", lambda *_args: True)
+    monkeypatch.setattr(module, "_populate_address_child_options", lambda *_args, **_kwargs: False)
+
+    module._fill_address_chain(  # type: ignore[arg-type]
+        page,
+        {
+            "psProvinceCode": "81000000",
+            "psAmphurCode": "81080000",
+            "psTumbolCode": "81080300",
+        },
+        province_name="psProvinceCode",
+        district_name="psAmphurCode",
+        subdistrict_name="psTumbolCode",
+    )
+
+    assert set_calls == [
+        ("psProvinceCode", "81000000", False),
+        ("psAmphurCode", "81080000", False),
+        ("psTumbolCode", "81080300", False),
+        ("psAmphurCode", "81080000", False),
+    ]
+
+
 def _write_ocr_markdown(path: Path) -> None:
     path.write_text(
         "\n".join(
@@ -121,6 +336,121 @@ def _write_civil_registration_markdown(path: Path) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def test_read_ocr_markdown_accepts_typhoon_labels_without_asterisks(tmp_path: Path) -> None:
+    ocr_path = tmp_path / "ocr-no-stars.md"
+    ocr_path.write_text(
+        "\n".join(
+            [
+                "หน้า 1",
+                "เลขประจำตัวประชาชน 1928800047 068 เลขประจำตัวนักเรียน........................................ คำนำหน้านาม............................ เพศ ................ ชื่อ........................................................นามสกุล........................................ ชื่อ(อังกฤษ) Hussuna นามสกุล(อังกฤษ) Madta วันเดือนปีเกิด 20 มีนาคม 2556 จังหวัดที่เกิด ตรัง สถานพยาบาลที่เกิด รพ. วังวิเศษ กลุ่มเลือด — เชื้อชาติ ไทย สัญชาติ ไทย ศาสนา อิสลาม",
+                "ตามทะเบียนบ้าน รหัสประจำบ้าน 8104 0015336 บ้านเลขที่ 231 หมู่ที่ (ถ้าไม่มีใส่ -) 1 ถนน (ถ้าไม่มีใส่ -) — จังหวัด กระบี่ อำเภอ คลองท่อม ตำบล ทรายขาว รหัสไปรษณีย์ 81170 หมายเลขโทรศัพท์บ้าน — มือถือ 065038 0104",
+                "ที่อยู่ปัจจุบัน รหัสประจำบ้าน 81040015336 บ้านเลขที่ 231 หมู่ที่ (ถ้าไม่มีใส่ -) 1 ถนน (ถ้าไม่มีใส่ -) — จังหวัด กระบี่ อำเภอ คลองท่อม ตำบล ทรายขาว รหัสไปรษณีย์ 81170 หมายเลขโทรศัพท์บ้าน — มือถือ 0650380104",
+                "๓. รายละเอียดนักเรียน การเดินทางมาโรงเรียน [ ] เดินเท้า [ ] พาหนะไม่เสียค่าโดยสาร [x] พาหนะเสียค่าโดยสาร อื่นๆ........................................ ระยะทางจากบ้านมา ร.ร. ทางน้ำ (กม.)............................ถนนลูกรัง(กม.)............................ถนนลาดยาง(กม.) 40 รวมระยะเวลาการเดินทางมาโรงเรียน (นาที) 30 นาที",
+                "น้ำหนัก .....35..... กิโลกรัม ส่วนสูง ....150..... เซนติเมตร",
+                "สถานภาพสมรส [ ] สมรส [ ] โสด [ ] หม้าย [x] หย่าร้าง [ ] อยู่ด้วยกัน [ ] แยกกันอยู่ ข้อมูลพี่น้อง จำนวนพี่ชาย .........—..........คน จำนวนน้องชาย .........1..........คน จำนวนพี่สาว .........—..........คน จำนวนน้องสาว .........1..........คน จำนวนพี่น้องที่ศึกษาอยู่ (ไม่รวมตัวนักเรียนเอง) ........1.......... คน นักเรียนเป็นบุตรคนที่ ........1..........",
+                "ข้อมูลบิดา เลขบัตรประจำตัวประชาชนบิดา ...1909800344128... ชนิดบัตร [ ] บัตรประชาชน [ ] อื่นๆ ชื่อบิดา ......นายดาฟิก.......นามสกุล ..หมาดอาหา.......กลุ่มเลือดบิดา ..B... อาชีพ .......—.......... รายได้ต่อเดือน(บาท) .......—.......... หมายเลขโทรศัพท์บิดา .......—..........",
+                "ข้อมูลมารดา เลขบัตรประจำตัวประชาชนมารดา ...1810400052734... ชนิดบัตร [x] บัตรประชาชน [ ] อื่นๆ ชื่อมารดา ....นางสาวรัตนา....นามสกุล ...ท้วยยอ.....กลุ่มเลือดมารดา ..O... อาชีพ ....รับจ้างทั่วไป.... รายได้ต่อเดือน(บาท) ..30,000.. หมายเลขโทรศัพท์มารดา ...0650380104...",
+                "ข้อมูลผู้ปกครอง เลขบัตรประจำตัวประชาชนผู้ปกครอง...1810400052734... ชนิดบัตร [x] บัตรประชาชน [ ] อื่นๆ ชื่อผู้ปกครอง ...นางสาวรัตนา...นามสกุล ...ท้วยยอ....กลุ่มเลือดปกครอง ..O... อาชีพ ....รับจ้างทั่วไป.... รายได้ต่อเดือน(บาท) ..30,000.. หมายเลขโทรศัพท์ปกครอง ....0650380104....หมายเลขโทรศัพท์ผู้ปกครอง ..0650380104.. ความเกี่ยวข้องของผู้ปกครองกับนักเรียน ....มารดา..... หมายเหตุ",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    record, warnings = read_ocr_markdown(ocr_path)
+
+    assert [warning.code for warning in warnings] == []
+    assert record.citizen_id == "1928800047068"
+    assert record.student_no is None
+    assert record.fields["birth_date"].value == "20 มีนาคม 2556"
+    assert record.fields["registered_address.house_no"].value == "231"
+    assert "registered_address.road" not in record.fields
+    assert record.fields["registered_address.subdistrict"].value == "ทรายขาว"
+    assert record.fields["current_address.house_id"].value == "81040015336"
+    assert record.fields["distance_paved_road_km"].value == "40"
+    assert record.fields["commute_minutes"].value == "30"
+    assert record.fields["younger_brothers"].value == "1"
+    assert record.fields["younger_sisters"].value == "1"
+    assert record.fields["father.first_name"].value == "นายดาฟิก"
+    assert record.fields["father.last_name"].value == "หมาดอาหา"
+    assert "father.phone" not in record.fields
+    assert record.fields["mother.first_name"].value == "นางสาวรัตนา"
+    assert record.fields["mother.phone"].value == "0650380104"
+    assert record.fields["guardian.phone"].value == "0650380104"
+    assert record.fields["guardian_relationship"].value == "มารดา"
+
+
+def test_read_student_roster_accepts_header_based_student_list(tmp_path: Path) -> None:
+    roster_path = tmp_path / "studentlist-M1.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Worksheet"
+    sheet.append(["ลำดับ", "รหัสนักเรียน", "ชื่อ - นามสกุล", "วันเกิด", "เลขบัตรประชาชน", "ชั้น", "ห้อง"])
+    sheet.append([80, 20020, "เด็กหญิง อัซซูน่า หมาดตา", "20 มีนาคม 2556", 1928800047068, "ม.1", 3])
+    workbook.save(roster_path)
+
+    records, warnings = read_student_roster(roster_path, school_year=2569, grade_levels=[1])
+
+    assert warnings == []
+    assert len(records) == 1
+    assert records[0].student_no == "20020"
+    assert records[0].citizen_id == "1928800047068"
+    assert records[0].birth_date == "20 มีนาคม 2556"
+    assert records[0].grade == 1
+    assert records[0].room == 3
+    assert records[0].seat_no == 80
+    assert records[0].prefix == "เด็กหญิง"
+    assert records[0].first_name == "อัซซูน่า"
+    assert records[0].last_name == "หมาดตา"
+
+
+def test_dmc_form_json_uses_header_roster_citizen_id_to_attach_ocr(tmp_path: Path) -> None:
+    roster_path = tmp_path / "studentlist-M1.xlsx"
+    ocr_path = tmp_path / "ocr.md"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Worksheet"
+    sheet.append(["ลำดับ", "รหัสนักเรียน", "ชื่อ - นามสกุล", "วันเกิด", "เลขบัตรประชาชน", "ชั้น", "ห้อง"])
+    sheet.append([80, 20020, "เด็กหญิง อัซซูน่า หมาดตา", "20 มีนาคม 2556", 1928800047068, "ม.1", 3])
+    workbook.save(roster_path)
+    ocr_path.write_text(
+        "เลขประจำตัวประชาชน 1928800047 068 เลขประจำตัวนักเรียน........................................ "
+        "คำนำหน้านาม............................ เพศ หญิง ชื่อ........................................................"
+        "นามสกุล........................................ ชื่อ(อังกฤษ) Hussuna นามสกุล(อังกฤษ) Madta "
+        "วันเดือนปีเกิด 20 มีนาคม 2556 จังหวัดที่เกิด ตรัง",
+        encoding="utf-8",
+    )
+
+    result = preview_dmc_form_json(
+        PreviewDmcFormJsonRequest(
+            roster_excel_path=str(roster_path),
+            thai_id_csv_path=None,
+            ocr_markdown_paths=[str(ocr_path)],
+            civil_registration_markdown_paths=[],
+            school_year=2569,
+            grade_levels=[1],
+        )
+    )
+
+    assert result.summary.roster_records == 1
+    assert result.summary.auto_matched == 1
+    assert result.summary.ocr_attached_records == 1
+    assert result.summary.ocr_unmatched_records == 0
+    assert result.summary.review_queue_records == 0
+    record = result.records[0]
+    assert record.student_no == "20020"
+    assert record.citizen_id == "1928800047068"
+    assert record.grade == 1
+    assert record.room == 3
+    assert record.prefix == "เด็กหญิง"
+    assert record.first_name == "อัซซูน่า"
+    assert record.last_name == "หมาดตา"
+    assert record.fields["birth_date"] == "20 มีนาคม 2556"
+    assert record.dmc_form_values["studentNo"] == "20020"
+    assert record.dmc_form_values["levelDtlCode"] == "10"
+    assert record.dmc_form_values["classroom"] == "3"
+    assert record.dmc_form_values["titleCode"] == "002"
 
 
 def test_reconcile_current_students_builds_canonical_records_and_review_queue(tmp_path: Path) -> None:
@@ -495,6 +825,9 @@ def test_validate_current_students_accepts_dmc_form_json_for_transfer_in(tmp_pat
     assert import_records[0].student_no == "19984"
     assert import_records[0].level_dtl_code == "10"
     assert import_records[0].classroom == "1"
+    assert import_records[0].dmc_form_values["firstNameTh"] == "กัญญาณัฐ"
+    assert import_records[0].dmc_form_values["middleNameTh"] == ""
+    assert import_records[0].dmc_form_values["parentFamilyRelationCode"] == "01"
 
 
 def test_preview_dmc_form_json_reports_missing_required_data_read_only(tmp_path: Path) -> None:
