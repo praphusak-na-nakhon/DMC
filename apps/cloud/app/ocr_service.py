@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import importlib
 import json
 import re
 import urllib.error
 import urllib.parse
 import urllib.request
 from binascii import Error as Base64Error
+from dataclasses import dataclass
+from io import BytesIO
 from typing import Any, Protocol
 
 from fastapi import HTTPException, status
@@ -32,6 +35,12 @@ FIELD_LABELS: tuple[tuple[str, str], ...] = (
     ("address", "ที่อยู่"),
 )
 OCR_PROVIDER_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class ValidatedOcrDocument:
+    document_bytes: bytes
+    actual_page_count: int
 
 
 class OcrProvider(Protocol):
@@ -285,12 +294,28 @@ class GeminiOcrProvider:
 
 
 def run_form_converter_ocr(request: OcrFormConverterRequest) -> OcrFormConverterResponse:
-    document_bytes = _validate_document_hash(request)
-    _validate_limits(request, document_bytes)
+    validated = validate_form_converter_document(request)
     try:
-        return _provider().extract(request, document_bytes)
+        return _provider().extract(request, validated.document_bytes)
     except OcrProviderError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.code) from exc
+
+
+def validate_form_converter_document(request: OcrFormConverterRequest) -> ValidatedOcrDocument:
+    document_bytes = _validate_document_hash(request)
+    actual_page_count = _actual_pdf_page_count(document_bytes)
+    if actual_page_count <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="OCR_PAGE_COUNT_UNKNOWN",
+        )
+    if actual_page_count != request.page_count:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="OCR_PAGE_COUNT_MISMATCH",
+        )
+    _validate_limits(request, document_bytes)
+    return ValidatedOcrDocument(document_bytes=document_bytes, actual_page_count=actual_page_count)
 
 
 def _provider() -> OcrProvider:
@@ -334,6 +359,15 @@ def _validate_limits(request: OcrFormConverterRequest, document_bytes: bytes) ->
             status_code=413,
             detail="OCR_PAGE_LIMIT_EXCEEDED",
         )
+
+
+def _actual_pdf_page_count(document_bytes: bytes) -> int:
+    try:
+        pypdf = importlib.import_module("pypdf")
+        pdf_reader: Any = getattr(pypdf, "PdfReader")
+        return int(len(pdf_reader(BytesIO(document_bytes)).pages))
+    except Exception:
+        return 0
 
 
 def _ocr_prompt(request: OcrFormConverterRequest) -> str:

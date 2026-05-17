@@ -108,6 +108,27 @@ export type JobRunSummary = {
   dry_run_rows: number;
 };
 
+export type JobCompletionItem = {
+  row_index: number | null;
+  record_id: string | null;
+  student_no: string | null;
+  citizen_id: string | null;
+  full_name: string | null;
+  classroom: string | null;
+  status: string;
+  note: string | null;
+  message: string | null;
+  applied: boolean;
+};
+
+export type JobCompletionSummary = {
+  total: number;
+  succeeded: number;
+  failed: number;
+  success_items: JobCompletionItem[];
+  failure_items: JobCompletionItem[];
+};
+
 export type JobStatusSnapshot = {
   job_id: string;
   module: string;
@@ -127,6 +148,8 @@ export type JobStatusSnapshot = {
   finished_at: string | null;
   level_label: string | null;
   run_summary: JobRunSummary | null;
+  summary_report_path: string | null;
+  completion_summary: JobCompletionSummary | null;
   credit_reservation_id: string | null;
   credits_reserved: number;
   credits_captured: number;
@@ -676,6 +699,8 @@ export type SidecarEvent =
       report_path: string;
       review_report_path: string;
       run_summary: JobRunSummary | null;
+      summary_report_path: string | null;
+      completion_summary: JobCompletionSummary | null;
     }
   | {
       type: "job_stopped";
@@ -775,6 +800,50 @@ function parseOptionalJobRunSummary(record: UnknownRecord, key: string, context:
   return parseJobRunSummary(value, `${context}.${key}`);
 }
 
+function parseJobCompletionItem(value: unknown, index: number, context: string): JobCompletionItem {
+  const itemContext = `${context}[${index}]`;
+  const record = asRecord(value, itemContext);
+  return {
+    row_index: readOptionalNumber(record, "row_index", itemContext),
+    record_id: readOptionalString(record, "record_id", itemContext),
+    student_no: readOptionalString(record, "student_no", itemContext),
+    citizen_id: readOptionalString(record, "citizen_id", itemContext),
+    full_name: readOptionalString(record, "full_name", itemContext),
+    classroom: readOptionalString(record, "classroom", itemContext),
+    status: readString(record, "status", itemContext),
+    note: readOptionalString(record, "note", itemContext),
+    message: readOptionalString(record, "message", itemContext),
+    applied: readBoolean(record, "applied", itemContext),
+  };
+}
+
+function parseJobCompletionSummary(value: unknown, context = "job_completion_summary"): JobCompletionSummary {
+  const record = asRecord(value, context);
+  return {
+    total: readNumber(record, "total", context),
+    succeeded: readNumber(record, "succeeded", context),
+    failed: readNumber(record, "failed", context),
+    success_items: readArray(record, "success_items", context).map((item, index) =>
+      parseJobCompletionItem(item, index, `${context}.success_items`),
+    ),
+    failure_items: readArray(record, "failure_items", context).map((item, index) =>
+      parseJobCompletionItem(item, index, `${context}.failure_items`),
+    ),
+  };
+}
+
+function parseOptionalJobCompletionSummary(
+  record: UnknownRecord,
+  key: string,
+  context: string,
+): JobCompletionSummary | null {
+  const value = readObjectOrNull(record, key, context);
+  if (!value) {
+    return null;
+  }
+  return parseJobCompletionSummary(value, `${context}.${key}`);
+}
+
 export function parseJobStatusSnapshot(value: unknown): JobStatusSnapshot {
   const record = asRecord(value, "job_status_snapshot");
   return {
@@ -796,6 +865,8 @@ export function parseJobStatusSnapshot(value: unknown): JobStatusSnapshot {
     finished_at: readOptionalString(record, "finished_at", "job_status_snapshot"),
     level_label: readOptionalString(record, "level_label", "job_status_snapshot"),
     run_summary: parseOptionalJobRunSummary(record, "run_summary", "job_status_snapshot"),
+    summary_report_path: readOptionalString(record, "summary_report_path", "job_status_snapshot"),
+    completion_summary: parseOptionalJobCompletionSummary(record, "completion_summary", "job_status_snapshot"),
     credit_reservation_id: readOptionalString(record, "credit_reservation_id", "job_status_snapshot"),
     credits_reserved: readNumber(record, "credits_reserved", "job_status_snapshot"),
     credits_captured: readNumber(record, "credits_captured", "job_status_snapshot"),
@@ -1795,6 +1866,8 @@ export function parseSidecarEvent(value: unknown): SidecarEvent {
         report_path: readString(record, "report_path", "sidecar_event"),
         review_report_path: readString(record, "review_report_path", "sidecar_event"),
         run_summary: parseOptionalJobRunSummary(record, "run_summary", "sidecar_event"),
+        summary_report_path: readOptionalString(record, "summary_report_path", "sidecar_event"),
+        completion_summary: parseOptionalJobCompletionSummary(record, "completion_summary", "sidecar_event"),
       };
     case "job_stopped":
       return {

@@ -429,9 +429,12 @@ function ImportPreviewRow({ row }: { row: CurrentStudentsImportRowPreview }) {
             <Badge variant="outline">แถว {row.row_index}</Badge>
             {row.operation_type ? <Badge variant="outline">{row.operation_type}</Badge> : null}
           </div>
-          <div className="mt-2 break-words text-lg font-semibold">{row.full_name || "-"}</div>
-          <div className="mt-1 text-sm text-muted-foreground">
-            เลขประจำตัว: {row.student_no ?? "-"} | เลขบัตร: {row.citizen_id ?? "-"}
+          <div className="mt-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            <div className="min-w-0 break-words text-lg font-semibold">{row.full_name || "-"}</div>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground">
+              <span>เลขประจำตัว: {row.student_no ?? "-"}</span>
+              <span>เลขบัตร: {row.citizen_id ?? "-"}</span>
+            </div>
           </div>
         </div>
       </div>

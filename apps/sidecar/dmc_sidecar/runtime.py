@@ -248,7 +248,9 @@ class JobManager:
                 current_statuses=RESUMABLE_STATUSES,
             )
             if not updated:
-                raise DomainError("JOB_NOT_ACTIVE")
+                job_record = self.job_store.get_job_record(job_id) or {}
+                if job_record.get("status") != "running":
+                    raise DomainError("JOB_NOT_ACTIVE")
             active.snapshot.status = "running"
             active.snapshot.needs_auth = False
             active.snapshot.auth_reason = None
@@ -300,6 +302,8 @@ class JobManager:
             "finished_at": snapshot.finished_at or persisted.get("finished_at"),
             "level_label": snapshot.level_label or persisted.get("level_label"),
             "run_summary": persisted.get("run_summary"),
+            "summary_report_path": persisted.get("summary_report_path"),
+            "completion_summary": persisted.get("completion_summary"),
             "credit_reservation_id": snapshot.credit_reservation_id or persisted.get("credit_reservation_id"),
             "credits_reserved": snapshot.credits_reserved or persisted.get("credits_reserved", 0),
             "credits_captured": snapshot.credits_captured or persisted.get("credits_captured", 0),

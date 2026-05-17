@@ -204,6 +204,8 @@ export function buildDraftJob(
     finished_at: null,
     level_label: null,
     run_summary: null,
+    summary_report_path: null,
+    completion_summary: null,
     credit_reservation_id: null,
     credits_reserved: 0,
     credits_captured: 0,
@@ -248,8 +250,16 @@ function sanitizeJobForDiagnostics(job: JobStatusSnapshot | null): Record<string
     level_label: job.level_label,
     has_report_path: Boolean(job.report_path),
     has_review_report_path: Boolean(job.review_report_path),
+    has_summary_report_path: Boolean(job.summary_report_path),
     has_stopped_item: Boolean(job.stopped_item),
     run_summary: job.run_summary,
+    completion_summary: job.completion_summary
+      ? {
+          total: job.completion_summary.total,
+          succeeded: job.completion_summary.succeeded,
+          failed: job.completion_summary.failed,
+        }
+      : null,
     credits_reserved: job.credits_reserved,
     credits_captured: job.credits_captured,
     credits_refunded: job.credits_refunded,

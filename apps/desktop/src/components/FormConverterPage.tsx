@@ -122,7 +122,6 @@ const CIVIL_REGISTRATION_WARNING_FIELDS = [
   "mother.last_name",
 ];
 
-
 const errorMessages: Record<string, string> = {
   ...(messages.app.formConverter.errors as Record<string, string>),
   CURRENT_STUDENTS_INPUT_NOT_FOUND: "ไม่พบไฟล์ที่เลือก",
@@ -142,8 +141,11 @@ const errorMessages: Record<string, string> = {
   TYPHOONOCR_INPUT_NOT_FILE: "พาธที่เลือกสำหรับ Typhoon OCR ไม่ใช่ไฟล์",
   TYPHOONOCR_INPUT_EMPTY: "ไฟล์ที่เลือกสำหรับ Typhoon OCR ไม่มีข้อมูล",
   TYPHOONOCR_UNSUPPORTED_INPUT_TYPE: "Typhoon OCR รองรับเฉพาะไฟล์ .pdf, .png, .jpg, .jpeg",
-  TYPHOONOCR_FILE_TOO_LARGE: "ไฟล์ใหญ่เกิน 10 MB สำหรับ Typhoon OCR",
-  TYPHOONOCR_PAGE_LIMIT_EXCEEDED: "ไฟล์ PDF เกิน 20 หน้า สำหรับ Typhoon OCR",
+  TYPHOONOCR_FILE_TOO_LARGE: "ไฟล์ใหญ่เกินขีดจำกัด Typhoon OCR: PDF สูงสุด 100 MB, รูปภาพสูงสุด 10 MB",
+  TYPHOONOCR_PAGE_LIMIT_EXCEEDED: "ไฟล์ PDF เกิน 100 หน้า สำหรับ Typhoon OCR",
+  TYPHOONOCR_PAGE_TOO_LARGE: "หน้า PDF หลังแยกไฟล์ใหญ่เกิน 10 MB กรุณาสแกนใหม่หรือบีบอัดหน้านี้",
+  TYPHOONOCR_PDF_SPLIT_UNAVAILABLE: "ระบบยังไม่มี pypdf สำหรับแยก PDF ก่อนส่ง Typhoon OCR",
+  TYPHOONOCR_PDF_SPLIT_FAILED: "ไม่สามารถแยก PDF เป็นรายหน้าก่อนส่ง Typhoon OCR ได้",
   TYPHOONOCR_PAGE_COUNT_UNKNOWN: "ไม่สามารถนับจำนวนหน้า PDF ก่อนทำ OCR ได้",
   TYPHOONOCR_AUTH_FAILED: "Typhoon OCR API key ไม่ถูกต้องหรือไม่มีสิทธิ์ใช้งาน",
   TYPHOONOCR_CREDITS_REQUIRED: "เครดิต Typhoon OCR ไม่เพียงพอ",

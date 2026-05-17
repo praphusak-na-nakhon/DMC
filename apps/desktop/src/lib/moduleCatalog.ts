@@ -122,7 +122,7 @@ export const moduleDefinitions: ModuleDefinition[] = [
       version: "0.1",
       inputs: ["obec_study_excel_path", "grade_level", "minimum_match_score"],
       validations: ["excel_schema", "status_mapping", "browser_runtime", "credit_policy"],
-      outputs: ["obec_fill_report_csv", "obec_fill_review_csv", "run_summary"],
+      outputs: ["obec_fill_report_csv", "obec_fill_review_csv", "run_summary", "completion_summary_xlsx"],
       events: ["validate_excel", "start_job", "progress", "job_done"],
     },
   },

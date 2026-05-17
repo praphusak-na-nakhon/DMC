@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 
 import pytest
+from pypdf import PdfWriter
 
 from dmc_sidecar import config
 from dmc_sidecar.errors import DomainError
 from dmc_sidecar.typhoon_ocr import TyphoonOcrDmcFormRequest, ocr_dmc_form_with_typhoon
+
+
+def _pdf_with_pages(page_count: int) -> bytes:
+    stream = BytesIO()
+    writer = PdfWriter()
+    for _ in range(page_count):
+        writer.add_blank_page(width=72, height=72)
+    writer.write(stream)
+    return stream.getvalue()
 
 
 def test_ocr_dmc_form_with_typhoon_writes_markdown_and_uses_cache(
@@ -16,10 +27,8 @@ def test_ocr_dmc_form_with_typhoon_writes_markdown_and_uses_cache(
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path / "data")
     monkeypatch.setattr("dmc_sidecar.typhoon_ocr.TYPHOON_OCR_PAGE_DELAY_SECONDS", 0)
     source_path = tmp_path / "form.pdf"
-    source_path.write_bytes(
-        b"%PDF-1.7\n1 0 obj << /Type /Page >> endobj\n2 0 obj << /Type /Page >> endobj\n%%EOF"
-    )
-    pages: list[int] = []
+    source_path.write_bytes(_pdf_with_pages(2))
+    pages: list[tuple[Path, int]] = []
 
     def fake_ocr_page(
         source: Path,
@@ -29,12 +38,14 @@ def test_ocr_dmc_form_with_typhoon_writes_markdown_and_uses_cache(
         model: str,
         page_number: int,
     ) -> str:
-        pages.append(page_number)
-        assert source == source_path
+        pages.append((source, page_number))
+        assert source != source_path
+        assert source.exists()
         assert api_key == "secret"
         assert base_url == "https://api.opentyphoon.ai/v1"
         assert model == "typhoon-ocr"
-        if page_number == 1:
+        assert page_number == 1
+        if len(pages) == 1:
             return "เลขประจำตัวประชาชน* 1810800164491\nเลขประจำตัวนักเรียน 20018"
         return "คำนำหน้านาม* เด็กชาย\nเพศ* ชาย"
 
@@ -62,7 +73,46 @@ def test_ocr_dmc_form_with_typhoon_writes_markdown_and_uses_cache(
     assert cached_response.cached is True
     assert cached_response.markdown_path == response.markdown_path
     assert cached_response.credits_charged == 0
-    assert pages == [1, 2]
+    assert [page.name for page, _page_number in pages] == ["page-0001.pdf", "page-0002.pdf"]
+
+
+def test_ocr_dmc_form_with_typhoon_handles_classroom_sized_pdf_by_splitting(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path / "data")
+    monkeypatch.setattr("dmc_sidecar.typhoon_ocr.TYPHOON_OCR_PAGE_DELAY_SECONDS", 0)
+    source_path = tmp_path / "classroom-registration.pdf"
+    source_path.write_bytes(_pdf_with_pages(45))
+    calls: list[tuple[Path, int]] = []
+
+    def fake_ocr_page(
+        source: Path,
+        *,
+        api_key: str,
+        base_url: str,
+        model: str,
+        page_number: int,
+    ) -> str:
+        del api_key, base_url, model
+        calls.append((source, page_number))
+        assert source != source_path
+        assert source.exists()
+        assert page_number == 1
+        return f"ทะเบียนบ้านหน้า {len(calls)}"
+
+    monkeypatch.setattr("dmc_sidecar.typhoon_ocr._ocr_page_with_typhoon", fake_ocr_page)
+
+    response = ocr_dmc_form_with_typhoon(
+        TyphoonOcrDmcFormRequest(source_path=str(source_path), api_key="secret", model="typhoon-ocr")
+    )
+
+    assert response.pages_processed == 45
+    assert response.pages_estimated == 45
+    assert len(calls) == 45
+    assert [page.name for page, _page_number in calls[:3]] == ["page-0001.pdf", "page-0002.pdf", "page-0003.pdf"]
+    markdown = Path(response.markdown_path).read_text(encoding="utf-8")
+    assert "<!-- Page 45 confidence: n/a -->" in markdown
 
 
 def test_ocr_dmc_form_with_typhoon_requires_api_key_when_not_cached(
@@ -71,7 +121,7 @@ def test_ocr_dmc_form_with_typhoon_requires_api_key_when_not_cached(
 ) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path / "data")
     source_path = tmp_path / "form.pdf"
-    source_path.write_bytes(b"%PDF-1.7\n1 0 obj << /Type /Page >> endobj\n%%EOF")
+    source_path.write_bytes(_pdf_with_pages(1))
 
     with pytest.raises(DomainError) as exc_info:
         ocr_dmc_form_with_typhoon(TyphoonOcrDmcFormRequest(source_path=str(source_path)))

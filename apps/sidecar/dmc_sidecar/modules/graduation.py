@@ -13,6 +13,7 @@ from ..module_config import ModuleConfigState, load_effective_config, sync_modul
 from ..runtime import JobContext, utc_now
 from ..schemas import PreviewRow, ValidateExcelResponse, ValidationWarning
 from .base import AutomationModule
+from .dry_run_review import pause_for_dry_run_review, should_pause_for_dry_run_review
 from . import graduation_legacy
 
 T = TypeVar("T")
@@ -245,6 +246,14 @@ class GraduationModule(AutomationModule):
                     context.job_store.save_checkpoint(job_id, checkpoint)
 
                     if current_page >= total_pages:
+                        if should_pause_for_dry_run_review(options):
+                            pause_for_dry_run_review(
+                                context=context,
+                                checkpoint=checkpoint,
+                                module_name=self.name,
+                                page_url=page.url,
+                                current_page=current_page,
+                            )
                         persisted_results = context.job_store.list_results(job_id)
                         json_path, csv_path, review_path = legacy.save_reports(
                             persisted_results,
@@ -276,6 +285,8 @@ class GraduationModule(AutomationModule):
                                 "report_path": str(csv_path),
                                 "review_report_path": str(review_path),
                                 "run_summary": status.get("run_summary"),
+                                "summary_report_path": status.get("summary_report_path"),
+                                "completion_summary": status.get("completion_summary"),
                             }
                         )
                         return

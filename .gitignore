@@ -12,8 +12,16 @@ obec-fill-review.csv
 .venv/
 *.egg-info/
 .dmc-assistant-data/
+*.sqlite3
+*.sqlite3-*
 .cloud-state.sqlite3
+.cloud-*.sqlite3*
 apps/.cloud-state.sqlite3
+rate-limit.sqlite3*
+uploadTest/
+%TEMP%/
+2568-*-student.xlsx
+student_basic_info_form.xlsx
 node_modules/
 dist/
 coverage/

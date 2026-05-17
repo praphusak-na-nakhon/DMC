@@ -24,6 +24,8 @@ function buildJob(index: number): JobStatusSnapshot {
     finished_at: `2026-04-22T00:${String(index).padStart(2, "0")}:30Z`,
     level_label: "ม.3",
     run_summary: null,
+    summary_report_path: null,
+    completion_summary: null,
     credit_reservation_id: null,
     credits_reserved: 0,
     credits_captured: 0,

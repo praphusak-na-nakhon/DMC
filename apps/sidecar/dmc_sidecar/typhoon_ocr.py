@@ -9,6 +9,8 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from threading import Lock
 from typing import Any, Callable, Literal, cast
 
 from pydantic import BaseModel, ConfigDict
@@ -20,10 +22,13 @@ from .errors import DomainError
 TYPHOON_OCR_MODEL: Literal["typhoon-ocr"] = "typhoon-ocr"
 TYPHOON_OCR_BASE_URL = "https://api.opentyphoon.ai/v1"
 TYPHOON_OCR_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
-TYPHOON_OCR_MAX_PAGES = 20
+TYPHOON_OCR_MAX_SOURCE_PDF_BYTES = 100 * 1024 * 1024
+TYPHOON_OCR_MAX_PAGES = 100
 TYPHOON_OCR_CREDITS_PER_PAGE = 3
 TYPHOON_OCR_PAGE_DELAY_SECONDS = 3.1
 SUPPORTED_TYPHOON_OCR_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg"}
+_TYPHOON_RATE_LOCK = Lock()
+_next_typhoon_request_at = 0.0
 
 
 class TyphoonOcrDmcFormRequest(BaseModel):
@@ -63,6 +68,13 @@ class TyphoonOcrPreparation:
     metadata_path: Path
     pages_estimated: int
     cached_response: TyphoonOcrDmcFormResponse | None
+
+
+@dataclass(frozen=True)
+class TyphoonUploadPage:
+    source_path: Path
+    source_page_number: int
+    upload_page_number: int
 
 
 def prepare_typhoon_ocr_request(request: TyphoonOcrDmcFormRequest) -> TyphoonOcrPreparation:
@@ -160,8 +172,11 @@ def _validated_source_path(path: Path) -> Path:
     size_bytes = path.stat().st_size
     if size_bytes <= 0:
         raise DomainError("TYPHOONOCR_INPUT_EMPTY", "Typhoon OCR source file is empty.")
-    if size_bytes > TYPHOON_OCR_MAX_UPLOAD_BYTES:
-        raise DomainError("TYPHOONOCR_FILE_TOO_LARGE", "Typhoon OCR input is limited to 10 MB per request.")
+    if path.suffix.lower() == ".pdf":
+        if size_bytes > TYPHOON_OCR_MAX_SOURCE_PDF_BYTES:
+            raise DomainError("TYPHOONOCR_FILE_TOO_LARGE", "Typhoon OCR PDF source is limited to 100 MB per run.")
+    elif size_bytes > TYPHOON_OCR_MAX_UPLOAD_BYTES:
+        raise DomainError("TYPHOONOCR_FILE_TOO_LARGE", "Typhoon OCR image input is limited to 10 MB per request.")
     return path
 
 
@@ -172,20 +187,27 @@ def _estimate_page_count(path: Path) -> int:
     if page_count <= 0:
         raise DomainError("TYPHOONOCR_PAGE_COUNT_UNKNOWN", "Unable to estimate PDF page count before OCR.")
     if page_count > TYPHOON_OCR_MAX_PAGES:
-        raise DomainError("TYPHOONOCR_PAGE_LIMIT_EXCEEDED", "Typhoon OCR is limited to 20 pages per run.")
+        raise DomainError("TYPHOONOCR_PAGE_LIMIT_EXCEEDED", "Typhoon OCR is limited to 100 pages per run.")
     return page_count
 
 
 def _pypdf_page_count(path: Path) -> int | None:
+    classes = _pypdf_classes()
+    if classes is None:
+        return None
+    PdfReader, _PdfWriter = classes
+    try:
+        return len(PdfReader(str(path)).pages)
+    except Exception:
+        return None
+
+
+def _pypdf_classes() -> tuple[Callable[..., Any], Callable[..., Any]] | None:
     try:
         pypdf = importlib.import_module("pypdf")
     except ModuleNotFoundError:
         return None
-    try:
-        PdfReader = getattr(pypdf, "PdfReader")
-        return len(PdfReader(str(path)).pages)
-    except Exception:
-        return None
+    return cast(Callable[..., Any], getattr(pypdf, "PdfReader")), cast(Callable[..., Any], getattr(pypdf, "PdfWriter"))
 
 
 def _regex_pdf_page_count(path: Path) -> int:
@@ -310,22 +332,105 @@ def _ocr_pages_with_typhoon(
     model: Literal["typhoon-ocr"],
     pages_estimated: int,
 ) -> list[dict[str, Any]]:
-    page_numbers = range(1, pages_estimated + 1) if source_path.suffix.lower() == ".pdf" else range(1, 2)
-    pages: list[dict[str, Any]] = []
-    for page_number in page_numbers:
-        markdown = _ocr_page_with_typhoon(
-            source_path,
+    if source_path.suffix.lower() != ".pdf":
+        upload_pages = [TyphoonUploadPage(source_path=source_path, source_page_number=1, upload_page_number=1)]
+        return _ocr_upload_pages_with_typhoon(
+            upload_pages,
             api_key=api_key,
             base_url=base_url,
             model=model,
-            page_number=page_number,
+        )
+
+    with TemporaryDirectory(prefix="dmc-typhoon-ocr-pages-") as temp_dir:
+        upload_pages = _split_pdf_into_upload_pages(
+            source_path,
+            temp_dir=Path(temp_dir),
+            pages_estimated=pages_estimated,
+        )
+        return _ocr_upload_pages_with_typhoon(
+            upload_pages,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+        )
+
+
+def _ocr_upload_pages_with_typhoon(
+    upload_pages: list[TyphoonUploadPage],
+    *,
+    api_key: str,
+    base_url: str,
+    model: Literal["typhoon-ocr"],
+) -> list[dict[str, Any]]:
+    pages: list[dict[str, Any]] = []
+    for upload_page in upload_pages:
+        _wait_for_typhoon_rate_limit()
+        markdown = _ocr_page_with_typhoon(
+            upload_page.source_path,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            page_number=upload_page.upload_page_number,
         ).strip()
         if not markdown:
             raise DomainError("TYPHOONOCR_RESPONSE_INVALID", "Typhoon OCR returned empty markdown.")
-        pages.append({"index": page_number, "markdown": markdown, "confidence": None})
-        if source_path.suffix.lower() == ".pdf" and page_number < pages_estimated and TYPHOON_OCR_PAGE_DELAY_SECONDS > 0:
-            time.sleep(TYPHOON_OCR_PAGE_DELAY_SECONDS)
+        pages.append({"index": upload_page.source_page_number, "markdown": markdown, "confidence": None})
     return pages
+
+
+def _split_pdf_into_upload_pages(
+    source_path: Path,
+    *,
+    temp_dir: Path,
+    pages_estimated: int,
+) -> list[TyphoonUploadPage]:
+    classes = _pypdf_classes()
+    if classes is None:
+        raise DomainError(
+            "TYPHOONOCR_PDF_SPLIT_UNAVAILABLE",
+            "Typhoon OCR needs pypdf to split large PDFs into 10 MB page uploads.",
+        )
+    PdfReader, PdfWriter = classes
+    try:
+        reader = PdfReader(str(source_path))
+    except Exception as exc:
+        raise DomainError("TYPHOONOCR_PDF_SPLIT_FAILED", "Unable to split PDF into page uploads before OCR.") from exc
+
+    actual_pages = len(reader.pages)
+    if actual_pages != pages_estimated:
+        raise DomainError("TYPHOONOCR_PAGE_COUNT_UNKNOWN", "PDF page count changed while preparing OCR uploads.")
+
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    upload_pages: list[TyphoonUploadPage] = []
+    for page_index, page in enumerate(reader.pages, start=1):
+        writer = PdfWriter()
+        writer.add_page(page)
+        page_path = temp_dir / f"page-{page_index:04d}.pdf"
+        with page_path.open("wb") as handle:
+            writer.write(handle)
+        size_bytes = page_path.stat().st_size
+        if size_bytes <= 0:
+            raise DomainError("TYPHOONOCR_INPUT_EMPTY", f"PDF page {page_index} is empty after splitting.")
+        if size_bytes > TYPHOON_OCR_MAX_UPLOAD_BYTES:
+            raise DomainError(
+                "TYPHOONOCR_PAGE_TOO_LARGE",
+                f"PDF page {page_index} is larger than 10 MB after splitting. Rescan or compress this page.",
+            )
+        upload_pages.append(TyphoonUploadPage(source_path=page_path, source_page_number=page_index, upload_page_number=1))
+    return upload_pages
+
+
+def _wait_for_typhoon_rate_limit() -> None:
+    global _next_typhoon_request_at
+    interval_seconds = max(float(TYPHOON_OCR_PAGE_DELAY_SECONDS), 0.0)
+    if interval_seconds <= 0:
+        return
+    with _TYPHOON_RATE_LOCK:
+        now = time.monotonic()
+        wait_seconds = max(_next_typhoon_request_at - now, 0.0)
+        _next_typhoon_request_at = max(_next_typhoon_request_at, now) + interval_seconds
+    if wait_seconds > 0:
+        time.sleep(wait_seconds)
 
 
 def _ocr_page_with_typhoon(

@@ -1,19 +1,23 @@
 from __future__ import annotations
 
-import sys
+import base64
+import hashlib
 import json
+import sys
+from io import BytesIO
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
-import base64
-import hashlib
+from pypdf import PdfWriter
 
+from app.account_service import AccountRepository
 from app.config import settings
 from app.db import connect
 from app.main import app
 from app.ocr_request_store import OcrRequestStore
-from app.schemas import OcrFieldResponse, OcrFormConverterResponse, OcrRecordResponse
+from app.schemas import CreditCaptureRequest, OcrFieldResponse, OcrFormConverterResponse, OcrRecordResponse
 from app.telemetry_store import TelemetryStore
 
 _SCRIPT_SPEC = spec_from_file_location(
@@ -31,6 +35,15 @@ client = TestClient(app)
 
 def _form_ocr_credits(page_count: int) -> int:
     return page_count * settings.form_converter_ocr_credits_per_page
+
+
+def _pdf_with_pages(page_count: int) -> bytes:
+    stream = BytesIO()
+    writer = PdfWriter()
+    for _ in range(page_count):
+        writer.add_blank_page(width=72, height=72)
+    writer.write(stream)
+    return stream.getvalue()
 
 
 def _configure(monkeypatch, tmp_path: Path) -> None:
@@ -335,6 +348,50 @@ def test_credit_capture_idempotency_records_noop_requests(monkeypatch, tmp_path:
     assert sorted(entry["amount"] for entry in capture_entries) == [0, 2]
 
 
+def test_credit_routes_reject_reserved_ocr_idempotency_prefix(monkeypatch, tmp_path: Path) -> None:
+    user_id = _create_user(monkeypatch, tmp_path)
+    assert (
+        client.post(
+            f"/v1/admin/users/{user_id}/credits/topup",
+            headers=_admin_headers(),
+            json={"amount": 3, "idempotency_key": "topup-reserved-prefix"},
+        ).status_code
+        == 200
+    )
+    token = _login()
+    headers = {"Authorization": f"Bearer {token}"}
+    reserve = client.post(
+        "/v1/credits/reservations",
+        headers=headers,
+        json={
+            "job_id": "job-credit-reserved-prefix",
+            "module": "formConverter",
+            "units": 3,
+            "idempotency_key": "reserve-reserved-prefix",
+        },
+    )
+    assert reserve.status_code == 200
+    reservation_id = reserve.json()["reservation_id"]
+
+    capture = client.post(
+        f"/v1/credits/reservations/{reservation_id}/capture",
+        headers=headers,
+        json={"units": 0, "idempotency_key": "ocr:form-converter:test:capture"},
+    )
+    release = client.post(
+        f"/v1/credits/reservations/{reservation_id}/release",
+        headers=headers,
+        json={"units": 0, "idempotency_key": "ocr:form-converter:test:provider-failed-refund"},
+    )
+
+    assert capture.status_code == 400
+    assert capture.json()["detail"] == "reserved idempotency key"
+    assert release.status_code == 400
+    assert release.json()["detail"] == "reserved idempotency key"
+    ledger = client.get(f"/v1/admin/users/{user_id}/ledger", headers=_admin_headers())
+    assert sorted(entry["type"] for entry in ledger.json()) == ["reserve", "topup"]
+
+
 def test_admin_topup_request_approval_records_audit(monkeypatch, tmp_path: Path) -> None:
     user_id = _create_user(monkeypatch, tmp_path)
     created = client.post(
@@ -590,7 +647,7 @@ def test_form_converter_ocr_requires_login_and_returns_mock_records(monkeypatch,
         },
     )
     assert reservation.status_code == 200
-    document = b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n%%EOF"
+    document = _pdf_with_pages(1)
     payload = {
         "job_id": "form-job-cloud-1",
         "module": "formConverter",
@@ -644,7 +701,7 @@ def test_form_converter_ocr_openai_provider_uses_pdf_file_input(monkeypatch, tmp
             "idempotency_key": "reserve-openai-ocr",
         },
     ).json()
-    document = b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n%%EOF"
+    document = _pdf_with_pages(1)
     captured_payloads: list[dict[str, object]] = []
 
     class FakeOpenAiResponse:
@@ -733,7 +790,7 @@ def test_form_converter_ocr_gemini_provider_uploads_pdf_and_deletes_file(monkeyp
             "idempotency_key": "reserve-gemini-ocr",
         },
     ).json()
-    document = b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n%%EOF"
+    document = _pdf_with_pages(1)
     calls: list[tuple[str, str, bytes | None]] = []
     generate_payloads: list[dict[str, object]] = []
 
@@ -866,7 +923,7 @@ def test_form_converter_ocr_gemini_provider_requires_api_key(monkeypatch, tmp_pa
             "idempotency_key": "reserve-gemini-key",
         },
     ).json()
-    document = b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n%%EOF"
+    document = _pdf_with_pages(1)
     monkeypatch.setattr(settings, "ocr_provider", "gemini")
     monkeypatch.setattr(settings, "ocr_gemini_api_key", "")
 
@@ -909,7 +966,7 @@ def test_form_converter_ocr_enforces_pdf_limits(monkeypatch, tmp_path: Path) -> 
             "idempotency_key": "reserve-ocr-limits",
         },
     ).json()
-    document = b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n%%EOF"
+    document = _pdf_with_pages(2)
     payload = {
         "job_id": "form-job-limits-1",
         "module": "formConverter",
@@ -927,10 +984,123 @@ def test_form_converter_ocr_enforces_pdf_limits(monkeypatch, tmp_path: Path) -> 
 
     monkeypatch.setattr(settings, "ocr_max_pages_per_job", 100)
     monkeypatch.setattr(settings, "ocr_max_pdf_bytes", 4)
+    small_document = _pdf_with_pages(1)
     payload["page_count"] = 1
+    payload["document_sha256"] = hashlib.sha256(small_document).hexdigest()
+    payload["document_base64"] = base64.b64encode(small_document).decode("ascii")
     response = client.post("/v1/ocr/form-converter", headers={"Authorization": f"Bearer {token}"}, json=payload)
     assert response.status_code == 413
     assert response.json()["detail"] == "OCR_DOCUMENT_TOO_LARGE"
+
+
+def test_form_converter_ocr_rejects_page_count_mismatch_before_capture(monkeypatch, tmp_path: Path) -> None:
+    user_id = _create_user(monkeypatch, tmp_path)
+    assert (
+        client.post(
+            f"/v1/admin/users/{user_id}/credits/topup",
+            headers=_admin_headers(),
+            json={"amount": 5, "idempotency_key": "topup-ocr-mismatch"},
+        ).status_code
+        == 200
+    )
+    token = _login()
+    headers = {"Authorization": f"Bearer {token}"}
+    reservation = client.post(
+        "/v1/credits/reservations",
+        headers=headers,
+        json={
+            "job_id": "form-job-mismatch-1",
+            "module": "formConverter",
+            "units": _form_ocr_credits(1),
+            "idempotency_key": "reserve-ocr-mismatch",
+        },
+    ).json()
+    document = _pdf_with_pages(2)
+
+    def fake_ocr(_request) -> OcrFormConverterResponse:  # noqa: ANN001
+        raise AssertionError("provider should not run when PDF page count mismatches the request")
+
+    monkeypatch.setattr("app.routes.ocr.run_form_converter_ocr", fake_ocr)
+    response = client.post(
+        "/v1/ocr/form-converter",
+        headers=headers,
+        json={
+            "job_id": "form-job-mismatch-1",
+            "module": "formConverter",
+            "template_type": "student_history_v1",
+            "page_count": 1,
+            "credit_reservation_id": reservation["reservation_id"],
+            "document_sha256": hashlib.sha256(document).hexdigest(),
+            "document_base64": base64.b64encode(document).decode("ascii"),
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "OCR_PAGE_COUNT_MISMATCH"
+    assert client.get("/v1/wallet", headers=headers).json() == {
+        "user_id": user_id,
+        "balance": 5,
+        "reserved": _form_ocr_credits(1),
+        "available": 5 - _form_ocr_credits(1),
+    }
+    ledger = client.get(f"/v1/admin/users/{user_id}/ledger", headers=_admin_headers()).json()
+    assert {entry["type"] for entry in ledger} == {"topup", "reserve"}
+
+
+def test_form_converter_ocr_refunds_capture_when_provider_fails(monkeypatch, tmp_path: Path) -> None:
+    user_id = _create_user(monkeypatch, tmp_path)
+    assert (
+        client.post(
+            f"/v1/admin/users/{user_id}/credits/topup",
+            headers=_admin_headers(),
+            json={"amount": 5, "idempotency_key": "topup-ocr-provider-fail"},
+        ).status_code
+        == 200
+    )
+    token = _login()
+    headers = {"Authorization": f"Bearer {token}"}
+    reservation = client.post(
+        "/v1/credits/reservations",
+        headers=headers,
+        json={
+            "job_id": "form-job-provider-fail-1",
+            "module": "formConverter",
+            "units": _form_ocr_credits(1),
+            "idempotency_key": "reserve-ocr-provider-fail",
+        },
+    ).json()
+    document = _pdf_with_pages(1)
+
+    def fake_ocr(_request) -> OcrFormConverterResponse:  # noqa: ANN001
+        raise HTTPException(status_code=503, detail="OCR_PROVIDER_TIMEOUT")
+
+    monkeypatch.setattr("app.routes.ocr.run_form_converter_ocr", fake_ocr)
+    response = client.post(
+        "/v1/ocr/form-converter",
+        headers=headers,
+        json={
+            "job_id": "form-job-provider-fail-1",
+            "module": "formConverter",
+            "template_type": "student_history_v1",
+            "page_count": 1,
+            "credit_reservation_id": reservation["reservation_id"],
+            "document_sha256": hashlib.sha256(document).hexdigest(),
+            "document_base64": base64.b64encode(document).decode("ascii"),
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "OCR_PROVIDER_TIMEOUT"
+    assert client.get("/v1/wallet", headers=headers).json() == {
+        "user_id": user_id,
+        "balance": 5,
+        "reserved": 0,
+        "available": 5,
+    }
+    ledger = client.get(f"/v1/admin/users/{user_id}/ledger", headers=_admin_headers()).json()
+    ledger_amounts = {(entry["type"], entry["module"]): entry["amount"] for entry in ledger}
+    assert ledger_amounts[("capture", "formConverter")] == _form_ocr_credits(1)
+    assert ledger_amounts[("release", "formConverter")] == _form_ocr_credits(1)
 
 
 def test_form_converter_ocr_credit_ledger_end_to_end(monkeypatch, tmp_path: Path) -> None:
@@ -955,7 +1125,7 @@ def test_form_converter_ocr_credit_ledger_end_to_end(monkeypatch, tmp_path: Path
             "idempotency_key": "reserve-form-ledger-1",
         },
     ).json()
-    document = b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n2 0 obj << /Type /Page >> endobj\n%%EOF"
+    document = _pdf_with_pages(2)
     ocr = client.post(
         "/v1/ocr/form-converter",
         headers=headers,
@@ -972,6 +1142,7 @@ def test_form_converter_ocr_credit_ledger_end_to_end(monkeypatch, tmp_path: Path
     assert ocr.status_code == 200
     assert len(ocr.json()["records"]) == 2
 
+    second_document = _pdf_with_pages(1)
     second_ocr = client.post(
         "/v1/ocr/form-converter",
         headers=headers,
@@ -981,8 +1152,8 @@ def test_form_converter_ocr_credit_ledger_end_to_end(monkeypatch, tmp_path: Path
             "template_type": "student_history_v1",
             "page_count": 1,
             "credit_reservation_id": reservation["reservation_id"],
-            "document_sha256": hashlib.sha256(document).hexdigest(),
-            "document_base64": base64.b64encode(document).decode("ascii"),
+            "document_sha256": hashlib.sha256(second_document).hexdigest(),
+            "document_base64": base64.b64encode(second_document).decode("ascii"),
         },
     )
     assert second_ocr.status_code == 402
@@ -1053,7 +1224,7 @@ def test_form_converter_ocr_retry_uses_cached_response_without_double_capture(mo
         )
 
     monkeypatch.setattr("app.routes.ocr.run_form_converter_ocr", fake_ocr)
-    document = b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n2 0 obj << /Type /Page >> endobj\n%%EOF"
+    document = _pdf_with_pages(2)
     payload = {
         "job_id": "form-job-retry-1",
         "module": "formConverter",
@@ -1105,18 +1276,18 @@ def test_form_converter_ocr_stale_captured_request_does_not_call_provider(monkey
             "idempotency_key": "reserve-form-stale-1",
         },
     ).json()
-    document = b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n2 0 obj << /Type /Page >> endobj\n%%EOF"
+    document = _pdf_with_pages(2)
     document_sha = hashlib.sha256(document).hexdigest()
     capture_key = (
         f"ocr:form-converter:form-job-stale-1:{reservation['reservation_id']}:"
         f"student_history_v1:{document_sha}:2:capture"
     )
-    capture = client.post(
-        f"/v1/credits/reservations/{reservation['reservation_id']}/capture",
-        headers=headers,
-        json={"units": _form_ocr_credits(2), "idempotency_key": capture_key},
+    capture = AccountRepository().capture_credits(
+        user_id,
+        reservation["reservation_id"],
+        CreditCaptureRequest(units=_form_ocr_credits(2), idempotency_key=capture_key),
     )
-    assert capture.status_code == 200
+    assert capture.units_captured == _form_ocr_credits(2)
 
     def fake_ocr(_request) -> OcrFormConverterResponse:  # noqa: ANN001
         raise AssertionError("provider should not be called after a captured OCR request")
@@ -1162,7 +1333,7 @@ def test_form_converter_ocr_finalizes_provider_done_capture_without_provider_ret
             "idempotency_key": "reserve-form-provider-done-1",
         },
     ).json()
-    document = b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n2 0 obj << /Type /Page >> endobj\n%%EOF"
+    document = _pdf_with_pages(2)
     document_sha = hashlib.sha256(document).hexdigest()
     request_key = (
         f"form-converter:form-job-provider-done-1:{reservation['reservation_id']}:"
@@ -1203,12 +1374,12 @@ def test_form_converter_ocr_finalizes_provider_done_capture_without_provider_ret
     )
     assert claim.claimed is True
     request_store.mark_provider_done(user_id=user_id, request_key=request_key, response=cached_response)
-    capture = client.post(
-        f"/v1/credits/reservations/{reservation['reservation_id']}/capture",
-        headers=headers,
-        json={"units": _form_ocr_credits(2), "idempotency_key": capture_key},
+    capture = AccountRepository().capture_credits(
+        user_id,
+        reservation["reservation_id"],
+        CreditCaptureRequest(units=_form_ocr_credits(2), idempotency_key=capture_key),
     )
-    assert capture.status_code == 200
+    assert capture.units_captured == _form_ocr_credits(2)
 
     def fake_ocr(_request) -> OcrFormConverterResponse:  # noqa: ANN001
         raise AssertionError("provider should not be called when provider_done response exists")

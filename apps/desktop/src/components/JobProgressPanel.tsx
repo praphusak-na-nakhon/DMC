@@ -1,11 +1,11 @@
-import { AlertCircle, CheckCircle2, ExternalLink, FileText, FolderOpen, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, ExternalLink, FileSpreadsheet, FileText, FolderOpen, Loader2 } from "lucide-react";
 import messages from "../i18n/th.json";
 import { describeJobStatus } from "../lib/appUi";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Progress } from "./ui/progress";
-import type { JobStatusSnapshot } from "../types/contracts";
+import type { JobCompletionItem, JobStatusSnapshot } from "../types/contracts";
 
 type JobProgressPanelProps = {
   currentJob: JobStatusSnapshot | null;
@@ -33,15 +33,71 @@ function describeAuthReason(reason: string | null) {
   return "ต้อง login DMC ให้สำเร็จใน Chromium แล้วกด Resume";
 }
 
+function completionItemLabel(item: JobCompletionItem) {
+  return item.full_name ?? item.student_no ?? item.citizen_id ?? item.record_id ?? `row ${item.row_index ?? "-"}`;
+}
+
+function completionItemMeta(item: JobCompletionItem) {
+  return [
+    item.student_no ? `เลขประจำตัว ${item.student_no}` : null,
+    item.classroom ? `ห้อง ${item.classroom}` : null,
+    item.note ?? item.status,
+  ]
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function CompletionList({
+  title,
+  items,
+  emptyText,
+}: {
+  title: string;
+  items: JobCompletionItem[];
+  emptyText: string;
+}) {
+  const visibleItems = items.slice(0, 8);
+  return (
+    <div className="rounded-md border bg-background p-3">
+      <div className="font-semibold">{title}</div>
+      {visibleItems.length > 0 ? (
+        <ul className="mt-2 space-y-2">
+          {visibleItems.map((item, index) => (
+            <li key={`${item.record_id ?? item.student_no ?? item.row_index ?? index}-${index}`} className="min-w-0">
+              <div className="truncate font-medium">{completionItemLabel(item)}</div>
+              <div className="truncate text-xs text-muted-foreground">{completionItemMeta(item)}</div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="mt-2 text-sm text-muted-foreground">{emptyText}</div>
+      )}
+      {items.length > visibleItems.length ? (
+        <div className="mt-2 text-xs text-muted-foreground">และอีก {items.length - visibleItems.length} คนในไฟล์ Excel</div>
+      ) : null}
+    </div>
+  );
+}
+
+function stoppedReason(job: JobStatusSnapshot) {
+  const reason = job.stopped_item?.reason;
+  return typeof reason === "string" ? reason : null;
+}
+
 export function JobProgressPanel({ currentJob, progressPercent, onRevealPath }: JobProgressPanelProps) {
   const reportPath = currentJob?.report_path ?? null;
   const reviewReportPath = currentJob?.review_report_path ?? null;
+  const summaryReportPath = currentJob?.summary_report_path ?? null;
   const runSummary = currentJob?.run_summary ?? null;
+  const completionSummary = currentJob?.completion_summary ?? null;
   const processedLabel =
     currentJob?.total !== null && currentJob?.total !== undefined && currentJob.processed > currentJob.total
       ? `${currentJob.processed} แถวบนเว็บ (Excel validate ${currentJob.total} รายการ)`
       : `${currentJob?.processed ?? 0}/${currentJob?.total ?? "-"}`;
-  const reportDirectory = reportPath?.replace(/[\\/][^\\/]+$/, "") ?? reviewReportPath?.replace(/[\\/][^\\/]+$/, "");
+  const reportDirectory =
+    reportPath?.replace(/[\\/][^\\/]+$/, "") ??
+    reviewReportPath?.replace(/[\\/][^\\/]+$/, "") ??
+    summaryReportPath?.replace(/[\\/][^\\/]+$/, "");
 
   return (
     <Card className="min-w-0">
@@ -118,6 +174,37 @@ export function JobProgressPanel({ currentJob, progressPercent, onRevealPath }: 
               </div>
             ) : null}
 
+            {completionSummary ? (
+              <div className="space-y-3 rounded-lg border bg-muted/25 p-3">
+                <div>
+                  <div className="font-semibold">สรุปผลกรอกข้อมูล</div>
+                  <div className="text-xs text-muted-foreground">รวม {completionSummary.total} คน</div>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="rounded-md border bg-background p-3">
+                    <div className="text-xs text-muted-foreground">สำเร็จ</div>
+                    <div className="mt-1 text-xl font-semibold">{completionSummary.succeeded}</div>
+                  </div>
+                  <div className="rounded-md border bg-background p-3">
+                    <div className="text-xs text-muted-foreground">ล้มเหลว/ต้องตรวจ</div>
+                    <div className="mt-1 text-xl font-semibold">{completionSummary.failed}</div>
+                  </div>
+                </div>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <CompletionList
+                    title="รายชื่อที่สำเร็จ"
+                    items={completionSummary.success_items}
+                    emptyText="ยังไม่มีรายการสำเร็จ"
+                  />
+                  <CompletionList
+                    title="รายชื่อที่ล้มเหลว/ต้องตรวจ"
+                    items={completionSummary.failure_items}
+                    emptyText="ไม่มีรายการล้มเหลว"
+                  />
+                </div>
+              </div>
+            ) : null}
+
             <div className="grid gap-2 text-sm">
               <div className="break-words">
                 <span className="font-semibold">ไฟล์:</span> {currentJob.source_file}
@@ -128,9 +215,12 @@ export function JobProgressPanel({ currentJob, progressPercent, onRevealPath }: 
               <div className="break-words">
                 <span className="font-semibold">Review:</span> {reviewReportPath ?? "-"}
               </div>
+              <div className="break-words">
+                <span className="font-semibold">Summary Excel:</span> {summaryReportPath ?? "-"}
+              </div>
             </div>
 
-            {reportPath || reviewReportPath ? (
+            {reportPath || reviewReportPath || summaryReportPath ? (
               <div className="flex flex-wrap gap-2">
                 {reportPath ? (
                   <Button size="sm" onClick={() => onRevealPath(reportPath)}>
@@ -142,6 +232,12 @@ export function JobProgressPanel({ currentJob, progressPercent, onRevealPath }: 
                   <Button size="sm" variant="outline" onClick={() => onRevealPath(reportDirectory)}>
                     <FolderOpen className="h-4 w-4" />
                     {messages.app.progress.openReportFolder}
+                  </Button>
+                ) : null}
+                {summaryReportPath ? (
+                  <Button size="sm" variant="outline" onClick={() => onRevealPath(summaryReportPath)}>
+                    <FileSpreadsheet className="h-4 w-4" />
+                    เปิดสรุป Excel
                   </Button>
                 ) : null}
                 {reviewReportPath ? (
@@ -160,6 +256,14 @@ export function JobProgressPanel({ currentJob, progressPercent, onRevealPath }: 
                   {describeAuthReason(currentJob.auth_reason)}
                 </div>
                 <div className="mt-1 text-muted-foreground">reason: {currentJob.auth_reason ?? "auth_required"}</div>
+              </div>
+            ) : currentJob.status === "paused" && stoppedReason(currentJob) === "dry_run_review" ? (
+              <div className="rounded-lg border bg-muted/40 p-3 text-sm">
+                <div className="flex items-center gap-2 font-semibold">
+                  <AlertCircle className="h-4 w-4" />
+                  Dry run กรอกครบแล้ว Chromium ถูกค้างไว้ให้ตรวจสอบ
+                </div>
+                <div className="mt-1 text-muted-foreground">ตรวจหน้า Chromium แล้วกด Resume เพื่อปิด browser และเขียน report</div>
               </div>
             ) : currentJob.status === "done" ? (
               <div className="rounded-lg border bg-muted/40 p-3 text-sm">

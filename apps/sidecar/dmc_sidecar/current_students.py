@@ -42,7 +42,7 @@ TITLE_PREFIXES = (
     "Mrs",
     "Ms",
 )
-EMPTY_MARKERS = {"", "-", "........................", "..................."}
+EMPTY_MARKERS = {"", "-", "—", "–", "........................", "..................."}
 
 IMPORT_FIELD_DEFINITIONS: tuple[tuple[str, str, bool], ...] = (
     ("operation_type", "ประเภทงาน", True),
@@ -516,6 +516,9 @@ class RosterStudent(BaseModel):
     grade: int
     room: int
     seat_no: int | None
+    citizen_id: str | None = None
+    citizen_id_valid: bool = False
+    birth_date: str | None = None
     prefix: str
     first_name: str
     last_name: str
@@ -809,6 +812,7 @@ class DmcTransferInImportRecord(BaseModel):
     classroom: str
     citizen_id: str
     full_name: str
+    dmc_form_values: dict[str, DmcFormValue] = Field(default_factory=dict)
 
 
 class ValidateCurrentStudentsImportFormRequest(BaseModel):
@@ -1227,6 +1231,7 @@ def load_dmc_transfer_in_import_records(json_path: Path) -> list[DmcTransferInIm
                 classroom=classroom,
                 citizen_id=citizen_id,
                 full_name=_json_record_full_name(record),
+                dmc_form_values=record.dmc_form_values,
             )
         )
 
@@ -1319,6 +1324,17 @@ def read_student_roster(
     records: list[RosterStudent] = []
     for sheet in workbook.worksheets:
         sheet_name = str(sheet.title)
+        header_records, header_warnings = _read_header_roster_sheet(
+            sheet,
+            path=path,
+            school_year=school_year,
+            wanted_grades=wanted_grades,
+        )
+        records.extend(header_records)
+        warnings.extend(header_warnings)
+        if header_records:
+            continue
+
         match = re.fullmatch(r"(?P<grade>\d+)[.](?P<room>\d+)", sheet_name)
         if match is None:
             continue
@@ -1366,6 +1382,87 @@ def read_student_roster(
                 message="No roster sheets matched the requested school year and grade filters.",
                 source="roster",
                 source_path=str(path),
+            )
+        )
+    return records, warnings
+
+
+def _read_header_roster_sheet(
+    sheet: Any,
+    *,
+    path: Path,
+    school_year: int,
+    wanted_grades: set[int] | None,
+) -> tuple[list[RosterStudent], list[CurrentStudentsWarning]]:
+    header_row_index: int | None = None
+    header_columns: dict[str, int] = {}
+    for row_index, row in enumerate(sheet.iter_rows(min_row=1, max_row=10, values_only=True), start=1):
+        columns: dict[str, int] = {}
+        for column_index, value in enumerate(row):
+            key = _roster_header_key(value)
+            if key is not None:
+                columns[key] = column_index
+        required = {"student_no", "full_name", "citizen_id", "grade", "room"}
+        if required.issubset(columns):
+            header_row_index = row_index
+            header_columns = columns
+            break
+    if header_row_index is None:
+        return [], []
+
+    records: list[RosterStudent] = []
+    warnings: list[CurrentStudentsWarning] = []
+    blank_streak = 0
+    for row_index, row in enumerate(sheet.iter_rows(min_row=header_row_index + 1, values_only=True), start=header_row_index + 1):
+        if _row_is_empty([str(value) if value is not None else "" for value in row]):
+            blank_streak += 1
+            if blank_streak >= 10:
+                break
+            continue
+        blank_streak = 0
+        student_no = _student_no_text(_cell_by_header(row, header_columns, "student_no"))
+        full_name = _clean_text(_cell_by_header(row, header_columns, "full_name"))
+        grade = _grade_level_number(_cell_by_header(row, header_columns, "grade"))
+        room = _int_cell(_cell_by_header(row, header_columns, "room"))
+        if student_no is None or not full_name or grade is None or room is None:
+            continue
+        if wanted_grades is not None and grade not in wanted_grades:
+            continue
+
+        raw_citizen_id = _clean_text(_cell_by_header(row, header_columns, "citizen_id"))
+        citizen_id = _clean_citizen_id(raw_citizen_id)
+        citizen_id_valid = citizen_id is not None and is_valid_thai_citizen_id(citizen_id)
+        if raw_citizen_id and not citizen_id_valid:
+            warnings.append(
+                CurrentStudentsWarning(
+                    code="ROSTER_CITIZEN_ID_INVALID",
+                    message="Citizen ID from student roster is missing or failed checksum validation.",
+                    source="roster",
+                    source_path=str(path),
+                    row_index=row_index,
+                    sheet_name=str(sheet.title),
+                )
+            )
+
+        prefix, first_name, last_name = _split_roster_full_name(full_name)
+        records.append(
+            RosterStudent(
+                student_no=student_no,
+                school_year=school_year,
+                grade=grade,
+                room=room,
+                seat_no=_int_cell(_cell_by_header(row, header_columns, "seat_no")),
+                citizen_id=citizen_id if citizen_id_valid else None,
+                citizen_id_valid=citizen_id_valid,
+                birth_date=_none_if_empty(_cell_by_header(row, header_columns, "birth_date")),
+                prefix=prefix or "",
+                first_name=first_name,
+                last_name=last_name,
+                full_name=_full_name(prefix or "", first_name, last_name) or full_name,
+                name_key=normalized_name(first_name, last_name),
+                source_path=str(path),
+                sheet_name=str(sheet.title),
+                row_index=row_index,
             )
         )
     return records, warnings
@@ -1948,7 +2045,7 @@ def _dmc_put_value(values: dict[str, DmcFormValue], name: str, value: DmcFormVal
         return
     if isinstance(value, str):
         text = _clean_text(value)
-        if text == "" or text in {"........................", "..................."}:
+        if text in {"........................", "..................."}:
             return
     if isinstance(value, list) and not value:
         return
@@ -2785,12 +2882,17 @@ def _base_record(student: RosterStudent, operation_type: OperationType) -> Canon
         "last_name": _field(student.last_name, "roster", "high"),
         "full_name": _field(student.full_name, "roster", "high"),
     }
+    if student.citizen_id:
+        fields["citizen_id"] = _field(student.citizen_id, "roster", "authoritative")
+    if student.birth_date:
+        fields["birth_date"] = _field(student.birth_date, "roster", "high")
+    has_roster_citizen_id = student.citizen_id is not None and student.citizen_id_valid
     return CanonicalStudentRecord(
         record_id=_roster_key(student),
         operation_type=operation_type,
-        match_status="needs_review",
+        match_status="auto_matched" if has_roster_citizen_id else "needs_review",
         student_no=student.student_no,
-        citizen_id=None,
+        citizen_id=student.citizen_id if has_roster_citizen_id else None,
         grade=student.grade,
         room=student.room,
         seat_no=student.seat_no,
@@ -2798,7 +2900,7 @@ def _base_record(student: RosterStudent, operation_type: OperationType) -> Canon
         first_name=student.first_name,
         last_name=student.last_name,
         full_name=student.full_name,
-        review_reasons=["missing_thai_id_scan"],
+        review_reasons=[] if has_roster_citizen_id else ["missing_thai_id_scan"],
         dmc_fields=fields,
         sources=[
             SourceReference(
@@ -3373,6 +3475,31 @@ def _regex_first(text: str, pattern: str) -> str | None:
     return _none_if_empty(match.group(1)) if match is not None else None
 
 
+def _marker_variants(marker: str) -> tuple[str, ...]:
+    clean_marker = _clean_text(marker)
+    stripped_marker = _clean_text(clean_marker.replace("*", ""))
+    candidates = [
+        clean_marker,
+        stripped_marker,
+        stripped_marker.replace("/", ""),
+        stripped_marker.replace(" ", ""),
+        stripped_marker.replace("/", "").replace(" ", ""),
+    ]
+    unique: list[str] = []
+    for candidate in candidates:
+        if candidate and candidate not in unique:
+            unique.append(candidate)
+    return tuple(unique)
+
+
+def _find_marker(text: str, marker: str, start: int = 0) -> tuple[int, int] | None:
+    for candidate in _marker_variants(marker):
+        index = text.find(candidate, start)
+        if index >= 0:
+            return index, len(candidate)
+    return None
+
+
 def _clean_house_id(value: str | None) -> str | None:
     text = _clean_text(value)
     if not text:
@@ -3429,6 +3556,61 @@ def _detect_roster_year(sheet: Any) -> int | None:
     return int(years[-1]) if years else None
 
 
+def _roster_header_key(value: Any) -> str | None:
+    text = re.sub(r"\s+", "", _clean_text(value).lower())
+    text = text.replace("-", "")
+    aliases = {
+        "ลำดับ": "seat_no",
+        "เลขที่": "seat_no",
+        "รหัสนักเรียน": "student_no",
+        "เลขประจำตัวนักเรียน": "student_no",
+        "เลขนักเรียน": "student_no",
+        "ชื่อ–นามสกุล": "full_name",
+        "ชื่อนามสกุล": "full_name",
+        "ชื่อ": "full_name",
+        "วันเกิด": "birth_date",
+        "วันเดือนปีเกิด": "birth_date",
+        "เลขบัตรประชาชน": "citizen_id",
+        "เลขประจำตัวประชาชน": "citizen_id",
+        "เลขบัตรประจำตัวประชาชน": "citizen_id",
+        "ชั้น": "grade",
+        "ระดับชั้น": "grade",
+        "ห้อง": "room",
+    }
+    return aliases.get(text)
+
+
+def _cell_by_header(row: Sequence[Any], columns: dict[str, int], name: str) -> Any:
+    index = columns.get(name)
+    if index is None or index >= len(row):
+        return None
+    return row[index]
+
+
+def _int_cell(value: Any) -> int | None:
+    if _looks_numeric(value):
+        return int(float(str(value)))
+    digits = _first_digits(_clean_text(value))
+    return int(digits) if digits is not None else None
+
+
+def _student_no_text(value: Any) -> str | None:
+    if _looks_numeric(value):
+        return str(int(float(str(value))))
+    digits = _first_digits(_clean_text(value))
+    return digits
+
+
+def _grade_level_number(value: Any) -> int | None:
+    text = _clean_text(value)
+    if not text:
+        return None
+    match = re.search(r"(?:ม\.?|มัธยมศึกษาปีที่)\s*(\d+)", text)
+    if match is not None:
+        return int(match.group(1))
+    return _int_cell(value)
+
+
 def _split_roster_name(full_name: str) -> tuple[str, str]:
     parts = [part for part in re.split(r"\s+", _clean_text(full_name)) if part]
     if not parts:
@@ -3436,6 +3618,14 @@ def _split_roster_name(full_name: str) -> tuple[str, str]:
     if len(parts) == 1:
         return parts[0], ""
     return parts[0], " ".join(parts[1:])
+
+
+def _split_roster_full_name(full_name: str) -> tuple[str | None, str, str]:
+    prefix, first_name, last_name = _split_civil_name(full_name)
+    if first_name:
+        return prefix, first_name, last_name or ""
+    first_name, last_name = _split_roster_name(full_name)
+    return None, first_name, last_name
 
 
 def _clean_citizen_id(value: str | None) -> str | None:
@@ -3454,11 +3644,14 @@ def _number_text(value: str | None) -> str | None:
     text = _clean_text(value)
     if text in EMPTY_MARKERS:
         return None
-    return text
+    match = re.search(r"\d+(?:[.,]\d+)?", text)
+    if match is None:
+        return None
+    return match.group(0)
 
 
 def _phone_text(value: str) -> str | None:
-    matches = re.findall(r"\d{2,3}[- ]?\d{3}[- ]?\d{4}", value)
+    matches = re.findall(r"(?<!\d)\d{2,3}[- ]?\d{3}[- ]?\d{4}(?!\d)", value)
     return matches[-1] if matches else None
 
 
@@ -3471,14 +3664,16 @@ def _checked_option(value: str | None) -> str | None:
 
 
 def _extract_between(text: str, start: str, end_markers: Sequence[str]) -> str | None:
-    start_index = text.find(start)
-    if start_index < 0:
+    start_match = _find_marker(text, start)
+    if start_match is None:
         return None
-    value_start = start_index + len(start)
+    start_index, start_length = start_match
+    value_start = start_index + start_length
     value_end = len(text)
     for marker in end_markers:
-        marker_index = text.find(marker, value_start)
-        if marker_index >= 0:
+        marker_match = _find_marker(text, marker, value_start)
+        if marker_match is not None:
+            marker_index, _marker_length = marker_match
             value_end = min(value_end, marker_index)
     return _none_if_empty(text[value_start:value_end])
 
@@ -3500,7 +3695,10 @@ def _clean_text(value: Any) -> str:
     if value is None:
         return ""
     text = unicodedata.normalize("NFC", str(value))
-    return re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"^(?:\.{2,}|…+)+\s*", "", text)
+    text = re.sub(r"\s*(?:\.{2,}|…+)+$", "", text)
+    return text.strip()
 
 
 def _row_is_empty(row: Sequence[str]) -> bool:

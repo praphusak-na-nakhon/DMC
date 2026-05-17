@@ -826,6 +826,98 @@ class AccountRepository:
             self._sync_reservation_status(connection, user_id, reservation_id)
         return self.get_reservation(user_id, reservation_id)
 
+    def refund_captured_credits(
+        self,
+        user_id: str,
+        reservation_id: str,
+        *,
+        units: int,
+        idempotency_key: str,
+        note: str | None = None,
+    ) -> CreditReservationResponse:
+        requested_units = max(int(units), 0)
+        with connect(self.sqlite_path, immediate=True) as connection:
+            row = self._get_reservation_row(connection, user_id, reservation_id)
+            existing = connection.execute(
+                """
+                SELECT type, amount, requested_units, reservation_id
+                FROM credit_transactions
+                WHERE user_id = ? AND idempotency_key = ?
+                """,
+                (user_id, idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing["type"] != "release"
+                    or existing["reservation_id"] != reservation_id
+                    or (
+                        existing["requested_units"] is not None
+                        and int(existing["requested_units"]) != requested_units
+                    )
+                ):
+                    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="credit transaction idempotency conflict")
+                self._sync_reservation_status(connection, user_id, reservation_id)
+                return_row = self._get_reservation_row(connection, user_id, reservation_id)
+                return CreditReservationResponse(
+                    reservation_id=str(return_row["id"]),
+                    job_id=str(return_row["job_id"]),
+                    module=str(return_row["module"]),
+                    status=cast(CreditReservationStatus, return_row["status"]),
+                    units_reserved=int(return_row["units_reserved"]),
+                    units_captured=int(return_row["units_captured"]),
+                    units_released=int(return_row["units_released"]),
+                    wallet=self._wallet_from_connection(connection, user_id),
+                )
+
+            refund_units = min(requested_units, int(row["units_captured"]))
+            if refund_units > 0:
+                now = utc_now()
+                connection.execute(
+                    """
+                    UPDATE wallets
+                    SET balance = balance + ?,
+                        updated_at = ?
+                    WHERE user_id = ?
+                    """,
+                    (refund_units, now, user_id),
+                )
+                reservation_cursor = connection.execute(
+                    """
+                    UPDATE credit_reservations
+                    SET units_captured = units_captured - ?,
+                        units_released = units_released + ?,
+                        updated_at = ?
+                    WHERE id = ? AND user_id = ? AND units_captured >= ?
+                    """,
+                    (refund_units, refund_units, now, reservation_id, user_id, refund_units),
+                )
+                if reservation_cursor.rowcount != 1:
+                    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="credit reservation changed")
+            if refund_units > 0 or idempotency_key:
+                connection.execute(
+                    """
+                    INSERT INTO credit_transactions (
+                        id, user_id, type, amount, requested_units, reservation_id, job_id, module,
+                        idempotency_key, note, created_at
+                    )
+                    VALUES (?, ?, 'release', ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        user_id,
+                        refund_units,
+                        requested_units,
+                        reservation_id,
+                        row["job_id"],
+                        row["module"],
+                        idempotency_key,
+                        note,
+                        utc_now(),
+                    ),
+                )
+            self._sync_reservation_status(connection, user_id, reservation_id)
+        return self.get_reservation(user_id, reservation_id)
+
     def get_reservation(self, user_id: str, reservation_id: str) -> CreditReservationResponse:
         with connect(self.sqlite_path) as connection:
             row = self._get_reservation_row(connection, user_id, reservation_id)

@@ -44,6 +44,7 @@ import { SystemErrorAlert } from "./SystemErrorAlert";
 import type {
   AccountStatus,
   BrowserRuntimeStatus,
+  JobCompletionItem,
   JobStatusSnapshot,
   ModuleConfigStatus,
   ValidateExcelResponse,
@@ -135,6 +136,52 @@ function connectionLabel(state: ConnectionState) {
 
 function compactPath(path: string) {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
+function completionItemLabel(item: JobCompletionItem) {
+  return item.full_name ?? item.student_no ?? item.citizen_id ?? item.record_id ?? `row ${item.row_index ?? "-"}`;
+}
+
+function completionItemMeta(item: JobCompletionItem) {
+  return [
+    item.student_no ? `เลขประจำตัว ${item.student_no}` : null,
+    item.classroom ? `ห้อง ${item.classroom}` : null,
+    item.note ?? item.status,
+  ]
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function CompletionList({
+  title,
+  items,
+  emptyText,
+}: {
+  title: string;
+  items: JobCompletionItem[];
+  emptyText: string;
+}) {
+  const visibleItems = items.slice(0, 8);
+  return (
+    <div className="rounded-md border bg-muted/30 p-3">
+      <div className="font-semibold">{title}</div>
+      {visibleItems.length > 0 ? (
+        <ul className="mt-2 space-y-2">
+          {visibleItems.map((item, index) => (
+            <li key={`${item.record_id ?? item.student_no ?? item.row_index ?? index}-${index}`} className="min-w-0">
+              <div className="truncate font-medium">{completionItemLabel(item)}</div>
+              <div className="truncate text-xs text-muted-foreground">{completionItemMeta(item)}</div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="mt-2 text-sm text-muted-foreground">{emptyText}</div>
+      )}
+      {items.length > visibleItems.length ? (
+        <div className="mt-2 text-xs text-muted-foreground">และอีก {items.length - visibleItems.length} คนในไฟล์ Excel</div>
+      ) : null}
+    </div>
+  );
 }
 
 function StepBadge({ step }: { step: number }) {
@@ -263,17 +310,30 @@ export function GraduationWizard({
   const fileName = excelPath.trim() ? compactPath(excelPath.trim()) : "ยังไม่ได้เลือกไฟล์";
   const reportPath = currentJob?.report_path ?? null;
   const reviewReportPath = currentJob?.review_report_path ?? null;
-  const reportDirectory = reportPath?.replace(/[\\/][^\\/]+$/, "") ?? reviewReportPath?.replace(/[\\/][^\\/]+$/, "");
+  const summaryReportPath = currentJob?.summary_report_path ?? null;
+  const reportDirectory =
+    reportPath?.replace(/[\\/][^\\/]+$/, "") ??
+    reviewReportPath?.replace(/[\\/][^\\/]+$/, "") ??
+    summaryReportPath?.replace(/[\\/][^\\/]+$/, "");
   const latestReportJob = useMemo(
     () => existingJobs.find((job) => job.report_path || job.review_report_path) ?? null,
     [existingJobs],
   );
+  const latestSummaryReportJob = useMemo(
+    () => existingJobs.find((job) => job.summary_report_path) ?? null,
+    [existingJobs],
+  );
   const latestCsvPath = reportPath ?? latestReportJob?.report_path ?? reviewReportPath ?? latestReportJob?.review_report_path ?? null;
+  const latestSummaryReportPath = summaryReportPath ?? latestSummaryReportJob?.summary_report_path ?? null;
   const latestReportDirectory =
     reportDirectory ||
+    latestSummaryReportPath?.replace(/[\\/][^\\/]+$/, "") ||
     latestCsvPath?.replace(/[\\/][^\\/]+$/, "") ||
     null;
   const runSummary = currentJob?.run_summary ?? null;
+  const completionSummary = currentJob?.completion_summary ?? null;
+  const canResumeCurrentJob = Boolean(activeJobId && (currentJobNeedsAuth || currentJob?.status === "paused"));
+  const resumeLabel = currentJobNeedsAuth ? "ทำต่อหลังยืนยันตัวตน" : "ปิด dry run และเขียน report";
   const processedLabel =
     currentJob?.total !== null && currentJob?.total !== undefined && currentJob.processed > currentJob.total
       ? `${currentJob.processed} แถวบนเว็บ`
@@ -656,6 +716,33 @@ export function GraduationWizard({
                     <div>Excel ไม่พบใน DMC: {runSummary.excel_missing}</div>
                   </>
                 ) : null}
+                {completionSummary ? (
+                  <>
+                    <Separator />
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div className="rounded-md border bg-muted/30 p-3">
+                        <div className="text-xs text-muted-foreground">สำเร็จ</div>
+                        <div className="mt-1 text-xl font-semibold">{completionSummary.succeeded}</div>
+                      </div>
+                      <div className="rounded-md border bg-muted/30 p-3">
+                        <div className="text-xs text-muted-foreground">ล้มเหลว/ต้องตรวจ</div>
+                        <div className="mt-1 text-xl font-semibold">{completionSummary.failed}</div>
+                      </div>
+                    </div>
+                    <div className="grid gap-3 lg:grid-cols-2">
+                      <CompletionList
+                        title="รายชื่อที่สำเร็จ"
+                        items={completionSummary.success_items}
+                        emptyText="ยังไม่มีรายการสำเร็จ"
+                      />
+                      <CompletionList
+                        title="รายชื่อที่ล้มเหลว/ต้องตรวจ"
+                        items={completionSummary.failure_items}
+                        emptyText="ไม่มีรายการล้มเหลว"
+                      />
+                    </div>
+                  </>
+                ) : null}
               </div>
             ) : null}
 
@@ -668,9 +755,9 @@ export function GraduationWizard({
                 <Pause className="h-4 w-4" />
                 พักงาน
               </Button>
-              <Button size="sm" variant="secondary" disabled={!currentJobNeedsAuth} onClick={onResume}>
+              <Button size="sm" variant="secondary" disabled={!canResumeCurrentJob} onClick={onResume}>
                 <LogIn className="h-4 w-4" />
-                ทำต่อหลังยืนยันตัวตน
+                {resumeLabel}
               </Button>
               <Button variant="destructive" size="sm" disabled={!activeJobId} onClick={onCancel}>
                 <Square className="h-4 w-4" />
@@ -687,6 +774,15 @@ export function GraduationWizard({
                 <Button size="sm" disabled={!latestCsvPath} onClick={() => latestCsvPath && onRevealPath(latestCsvPath)}>
                   <FileSpreadsheet className="h-4 w-4" />
                   {reportTools.openLatestCsv}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!latestSummaryReportPath}
+                  onClick={() => latestSummaryReportPath && onRevealPath(latestSummaryReportPath)}
+                >
+                  <FileSpreadsheet className="h-4 w-4" />
+                  เปิดสรุป Excel
                 </Button>
                 {reviewReportPath ? (
                   <Button size="sm" variant="outline" onClick={() => onRevealPath(reviewReportPath)}>

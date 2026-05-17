@@ -60,6 +60,8 @@ function mergeJob(
     finished_at: partial.finished_at ?? base?.finished_at ?? null,
     level_label: partial.level_label ?? base?.level_label ?? null,
     run_summary: partial.run_summary ?? base?.run_summary ?? null,
+    summary_report_path: partial.summary_report_path ?? base?.summary_report_path ?? null,
+    completion_summary: partial.completion_summary ?? base?.completion_summary ?? null,
     credit_reservation_id: partial.credit_reservation_id ?? base?.credit_reservation_id ?? null,
     credits_reserved: partial.credits_reserved ?? base?.credits_reserved ?? 0,
     credits_captured: partial.credits_captured ?? base?.credits_captured ?? 0,
@@ -160,6 +162,8 @@ export const useJobStore = create<JobStoreState>((set) => ({
               report_path: event.report_path,
               review_report_path: event.review_report_path,
               run_summary: event.run_summary,
+              summary_report_path: event.summary_report_path,
+              completion_summary: event.completion_summary,
             })
           : null;
         return {

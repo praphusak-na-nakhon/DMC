@@ -19,6 +19,8 @@ const baseJob = {
   started_at: null,
   finished_at: null,
   level_label: null,
+  summary_report_path: null,
+  completion_summary: null,
   credit_reservation_id: null,
   credits_reserved: 0,
   credits_captured: 0,
@@ -53,6 +55,50 @@ describe("job status contracts", () => {
       applied_rows: 0,
       dry_run_rows: 0,
     });
+  });
+
+  it("parses completion summary items and report path", () => {
+    const parsed = parseJobStatusSnapshot({
+      ...baseJob,
+      summary_report_path: "C:\\dmc\\.dmc-assistant-data\\reports\\job-1\\job-completion-summary.xlsx",
+      completion_summary: {
+        total: 2,
+        succeeded: 1,
+        failed: 1,
+        success_items: [
+          {
+            row_index: 1,
+            record_id: "record-1",
+            student_no: "1001",
+            citizen_id: null,
+            full_name: "Student One",
+            classroom: "1",
+            status: "success",
+            note: "dry_run",
+            message: null,
+            applied: false,
+          },
+        ],
+        failure_items: [
+          {
+            row_index: 2,
+            record_id: "record-2",
+            student_no: "1002",
+            citizen_id: null,
+            full_name: "Student Two",
+            classroom: "1",
+            status: "review",
+            note: "dmc_validation_error",
+            message: "Needs review",
+            applied: false,
+          },
+        ],
+      },
+    });
+
+    expect(parsed.summary_report_path).toContain("job-completion-summary.xlsx");
+    expect(parsed.completion_summary?.succeeded).toBe(1);
+    expect(parsed.completion_summary?.failure_items[0].full_name).toBe("Student Two");
   });
 });
 
