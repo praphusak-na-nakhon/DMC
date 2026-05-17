@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 from .checkpoint import JobCheckpoint
+from .config import reports_dir
 from .db import connect, utc_now
+from .job_completion_summary import build_completion_summary, write_completion_summary_workbook
 
 
 SUMMARY_FALLBACK_STATUSES = {"done", "failed", "cancelled", "stopped_on_review"}
@@ -269,21 +272,13 @@ class JobStore:
 
     def list_results(self, job_id: str) -> list[dict[str, Any]]:
         with connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT result_json
-                FROM job_record
-                WHERE job_id = ?
-                ORDER BY page ASC, portal_row_index ASC
-                """,
-                (job_id,),
-            ).fetchall()
-        return [json.loads(row["result_json"]) for row in rows]
+            return self._list_results_from_connection(connection, job_id)
 
     def mark_done(self, job_id: str, checkpoint: JobCheckpoint, finished_at: str) -> None:
         with connect() as connection:
             total_records = self._total_records(connection, job_id)
             run_summary = self._run_summary(connection, job_id, total_records)
+            self._write_completion_summary_report(connection, job_id)
             connection.execute(
                 """
                 UPDATE job
@@ -333,6 +328,7 @@ class JobStore:
         failed = checkpoint.failed if checkpoint is not None else 0
         with connect() as connection:
             run_summary = self._run_summary(connection, job_id, self._total_records(connection, job_id))
+            self._write_completion_summary_report(connection, job_id)
             connection.execute(
                 """
                 UPDATE job
@@ -429,6 +425,7 @@ class JobStore:
 
     def _status_from_row(self, row: sqlite3.Row, connection: sqlite3.Connection) -> dict[str, Any]:
         stopped_item = json.loads(row["stopped_item_json"]) if row["stopped_item_json"] else None
+        completion_summary, summary_report_path = self._completion_status_fields(row, connection)
 
         return {
             "job_id": row["id"],
@@ -449,6 +446,8 @@ class JobStore:
             "finished_at": row["finished_at"],
             "level_label": row["level_label"],
             "run_summary": self._run_summary_from_row(row, connection),
+            "summary_report_path": summary_report_path,
+            "completion_summary": completion_summary,
             "credit_reservation_id": row["credit_reservation_id"],
             "credits_reserved": row["credits_reserved"],
             "credits_captured": row["credits_captured"],
@@ -543,6 +542,73 @@ class JobStore:
         if row["status"] not in SUMMARY_FALLBACK_STATUSES:
             return None
         return self._run_summary(connection, str(row["id"]), row["total_records"])
+
+    def _completion_status_fields(
+        self,
+        row: sqlite3.Row,
+        connection: sqlite3.Connection,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        if row["status"] not in SUMMARY_FALLBACK_STATUSES:
+            return None, None
+        job_id = str(row["id"])
+        results = self._list_results_from_connection(connection, job_id)
+        if not results:
+            return None, None
+
+        report_path = self._completion_report_path(job_id)
+        if not report_path.exists():
+            self._write_completion_summary_report(connection, job_id, results=results)
+        return build_completion_summary(results), str(report_path) if report_path.exists() else None
+
+    def _completion_report_path(self, job_id: str) -> Path:
+        return reports_dir() / job_id / "job-completion-summary.xlsx"
+
+    def _write_completion_summary_report(
+        self,
+        connection: sqlite3.Connection,
+        job_id: str,
+        *,
+        results: list[dict[str, Any]] | None = None,
+    ) -> str | None:
+        results = results if results is not None else self._list_results_from_connection(connection, job_id)
+        if not results:
+            return None
+
+        row = connection.execute(
+            """
+            SELECT module, source_file
+            FROM job
+            WHERE id = ?
+            """,
+            (job_id,),
+        ).fetchone()
+        if row is None:
+            return None
+
+        path = self._completion_report_path(job_id)
+        try:
+            write_completion_summary_workbook(
+                path,
+                job_id=job_id,
+                module=str(row["module"]),
+                source_file=str(row["source_file"]),
+                results=results,
+            )
+        except Exception:
+            return None
+        return str(path)
+
+    def _list_results_from_connection(self, connection: sqlite3.Connection, job_id: str) -> list[dict[str, Any]]:
+        rows = connection.execute(
+            """
+            SELECT result_json
+            FROM job_record
+            WHERE job_id = ?
+            ORDER BY page ASC, portal_row_index ASC
+            """,
+            (job_id,),
+        ).fetchall()
+        return [json.loads(row["result_json"]) for row in rows]
 
     def _list_job_rows(self, connection: sqlite3.Connection, *, limit: int) -> list[sqlite3.Row]:
         return connection.execute(

@@ -314,6 +314,7 @@ def test_current_students_submit_student_history_form_clicks_final_save(
 
     page = FakePage()
     monkeypatch.setattr(module, "_extract_error_text", lambda _page: "")
+    monkeypatch.setattr(module, "_extract_success_text", lambda _page: "")
     monkeypatch.setattr(module, "_is_history_form", lambda _page: False)
 
     result = module._submit_student_history_form(page)  # type: ignore[arg-type]
@@ -328,6 +329,57 @@ def test_current_students_submit_student_history_form_clicks_final_save(
     assert result["applied"] is True
     assert result["note"] == "submitted"
     assert result["status"] == "success"
+
+
+def test_current_students_submit_student_history_form_accepts_success_message_on_same_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = CurrentStudentsModule()
+    calls: list[str] = []
+
+    class FakeNavigation:
+        def __enter__(self) -> None:
+            calls.append("expect_navigation")
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    class FakeLocator:
+        def click(self, *, timeout: int) -> None:
+            calls.append(f"click:{timeout}")
+
+    class FakePage:
+        url = "https://portal.test/studentin/add"
+
+        def expect_navigation(self, *, wait_until: str, timeout: int) -> FakeNavigation:
+            calls.append(f"wait_until:{wait_until}:{timeout}")
+            return FakeNavigation()
+
+        def locator(self, selector: str) -> FakeLocator:
+            calls.append(f"locator:{selector}")
+            return FakeLocator()
+
+        def wait_for_timeout(self, ms: int) -> None:
+            calls.append(f"timeout:{ms}")
+
+    page = FakePage()
+    monkeypatch.setattr(module, "_extract_error_text", lambda _page: "")
+    monkeypatch.setattr(module, "_extract_success_text", lambda _page: "บันทึกข้อมูลเรียบร้อย")
+    monkeypatch.setattr(module, "_is_history_form", lambda _page: True)
+
+    result = module._submit_student_history_form(page)  # type: ignore[arg-type]
+
+    assert calls == [
+        "wait_until:domcontentloaded:15000",
+        "expect_navigation",
+        'locator:input[name="submit"]',
+        "click:10000",
+        "timeout:800",
+    ]
+    assert result["applied"] is True
+    assert result["note"] == "submitted"
+    assert result["status"] == "success"
+    assert result["message"] == "บันทึกข้อมูลเรียบร้อย"
 
 
 def test_current_students_address_chain_waits_before_selecting_children(monkeypatch: pytest.MonkeyPatch) -> None:

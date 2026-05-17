@@ -32,6 +32,16 @@ AUTH_ENTRY_URLS = (
 )
 DMC_HISTORY_FORM_URL_MARKER = "/studentin/add"
 DMC_HISTORY_REVIEW_NOTE = "history_filled_for_review"
+SUCCESS_MESSAGE_MARKERS = (
+    "success",
+    "saved",
+    "completed",
+    "บันทึกข้อมูลเรียบร้อย",
+    "บันทึกเรียบร้อย",
+    "ดำเนินการเรียบร้อย",
+    "สำเร็จ",
+    "เรียบร้อยแล้ว",
+)
 DMC_ADDRESS_CHAIN_FIELDS = {
     "psProvinceCode",
     "psAmphurCode",
@@ -664,6 +674,15 @@ class CurrentStudentsModule(AutomationModule):
                 "message": error_text,
             }
 
+        success_text = self._extract_success_text(page)
+        if success_text:
+            return {
+                "applied": True,
+                "note": "submitted",
+                "status": "success",
+                "message": success_text,
+            }
+
         if self._is_history_form(page):
             return {
                 "applied": False,
@@ -1011,6 +1030,36 @@ class CurrentStudentsModule(AutomationModule):
                 except PlaywrightError:
                     continue
                 if text and text not in messages:
+                    messages.append(text)
+        return " | ".join(messages)
+
+    def _extract_success_text(self, page: Page) -> str:
+        selectors = [
+            ".alert-success",
+            ".alert-info",
+            ".message-success",
+            ".flash-success",
+            ".success",
+            ".alert",
+        ]
+        messages: list[str] = []
+        for selector in selectors:
+            locator = page.locator(selector)
+            try:
+                count = min(locator.count(), 5)
+            except PlaywrightError:
+                continue
+            for index in range(count):
+                try:
+                    text = locator.nth(index).inner_text(timeout=1000).strip()
+                except PlaywrightError:
+                    continue
+                marker_text = text.lower()
+                if (
+                    text
+                    and text not in messages
+                    and any(marker in marker_text for marker in SUCCESS_MESSAGE_MARKERS)
+                ):
                     messages.append(text)
         return " | ".join(messages)
 
