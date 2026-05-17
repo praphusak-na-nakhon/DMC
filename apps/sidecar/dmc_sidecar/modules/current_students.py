@@ -216,7 +216,7 @@ class CurrentStudentsModule(AutomationModule):
                 reason="login_required" if attempt == 0 else "session_expired",
             )
             self._fill_transfer_form(page, record)
-            submitted = self._submit_transfer_form(page, record)
+            submitted = self._submit_transfer_form(page, record, dry_run=dry_run)
             if submitted["note"] == "session_expired" and attempt == 0:
                 self._pause_for_auth(
                     page=page,
@@ -580,15 +580,18 @@ class CurrentStudentsModule(AutomationModule):
         self._fill_admission_date(page, self._string_form_value(record.dmc_form_values.get("admissionDate")))
         self._fill_form_values(page, values)
 
-    def _submit_transfer_form(self, page: Page, record: DmcTransferInImportRecord) -> dict[str, object]:
+    def _submit_transfer_form(
+        self,
+        page: Page,
+        record: DmcTransferInImportRecord,
+        *,
+        dry_run: bool,
+    ) -> dict[str, object]:
         if self._is_history_form(page):
             self._fill_student_history_form(page, record)
-            return {
-                "applied": False,
-                "note": DMC_HISTORY_REVIEW_NOTE,
-                "status": "review",
-                "message": "DMC history form was filled for review. Final save was not clicked.",
-            }
+            if dry_run:
+                return self._history_review_result()
+            return self._submit_student_history_form(page)
 
         try:
             with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
@@ -623,11 +626,56 @@ class CurrentStudentsModule(AutomationModule):
             }
 
         self._fill_student_history_form(page, record)
+        if not dry_run:
+            return self._submit_student_history_form(page)
+        return self._history_review_result()
+
+    def _history_review_result(self) -> dict[str, object]:
         return {
             "applied": False,
             "note": DMC_HISTORY_REVIEW_NOTE,
             "status": "review",
             "message": "DMC history form was filled for review. Final save was not clicked.",
+        }
+
+    def _submit_student_history_form(self, page: Page) -> dict[str, object]:
+        try:
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+                page.locator('input[name="submit"]').click(timeout=10000)
+        except TimeoutError:
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=15000)
+            except TimeoutError:
+                pass
+        page.wait_for_timeout(800)
+
+        if "/auth/" in page.url:
+            return {
+                "applied": False,
+                "note": "session_expired",
+                "message": "DMC redirected to login while saving the student history form.",
+            }
+
+        error_text = self._extract_error_text(page)
+        if error_text:
+            return {
+                "applied": False,
+                "note": "dmc_validation_error",
+                "message": error_text,
+            }
+
+        if self._is_history_form(page):
+            return {
+                "applied": False,
+                "note": "dmc_history_form_still_open",
+                "message": "DMC kept the student history form open after save; no validation message was detected.",
+            }
+
+        return {
+            "applied": True,
+            "note": "submitted",
+            "status": "success",
+            "message": "DMC transfer-in history form was saved.",
         }
 
     def _fill_student_history_form(self, page: Page, record: DmcTransferInImportRecord) -> None:

@@ -108,8 +108,14 @@ def test_current_students_dry_run_opens_history_and_fills_it(monkeypatch: pytest
     def fake_fill_transfer_form(_page: SimpleNamespace, _record: DmcTransferInImportRecord) -> None:
         calls.append("fill_transfer_form")
 
-    def fake_submit_transfer_form(_page: SimpleNamespace, _record: DmcTransferInImportRecord) -> dict[str, object]:
+    def fake_submit_transfer_form(
+        _page: SimpleNamespace,
+        _record: DmcTransferInImportRecord,
+        *,
+        dry_run: bool,
+    ) -> dict[str, object]:
         calls.append("submit_transfer_form")
+        assert dry_run is True
         page.url = "https://portal.test/studentin/add"
         return {
             "applied": False,
@@ -136,6 +142,192 @@ def test_current_students_dry_run_opens_history_and_fills_it(monkeypatch: pytest
     assert result["note"] == "dry_run"
     assert "student history form" in result["message"]
     assert result["page_url"] == "https://portal.test/studentin/add"
+
+
+def test_current_students_real_import_submits_history_form(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = CurrentStudentsModule()
+    page = SimpleNamespace(url="https://portal.test/studentin/add_cif")
+    calls: list[str] = []
+    record = DmcTransferInImportRecord(
+        row_index=3,
+        record_id="record-1",
+        student_no="20018",
+        level_dtl_code="12",
+        classroom="3",
+        citizen_id="1810800164491",
+        full_name="Test Student",
+        dmc_form_values={"firstNameTh": "Test", "lastNameTh": "Student"},
+    )
+
+    def fake_open_transfer_form(**_kwargs: object) -> SimpleNamespace:
+        calls.append("open_transfer_form")
+        return page
+
+    def fake_fill_transfer_form(_page: SimpleNamespace, _record: DmcTransferInImportRecord) -> None:
+        calls.append("fill_transfer_form")
+
+    def fake_submit_transfer_form(
+        _page: SimpleNamespace,
+        _record: DmcTransferInImportRecord,
+        *,
+        dry_run: bool,
+    ) -> dict[str, object]:
+        calls.append("submit_transfer_form")
+        assert dry_run is False
+        page.url = "https://portal.test/studentin/"
+        return {
+            "applied": True,
+            "note": "submitted",
+            "status": "success",
+            "message": "DMC transfer-in history form was saved.",
+        }
+
+    monkeypatch.setattr(module, "_open_transfer_form", fake_open_transfer_form)
+    monkeypatch.setattr(module, "_fill_transfer_form", fake_fill_transfer_form)
+    monkeypatch.setattr(module, "_submit_transfer_form", fake_submit_transfer_form)
+
+    result = module._process_record(
+        page=page,  # type: ignore[arg-type]
+        record=record,
+        dry_run=False,
+        context=object(),  # type: ignore[arg-type]
+        checkpoint=JobCheckpoint.initial(level_label="DMC transfer-in", base_url="https://portal.test"),
+        record_number=1,
+    )
+
+    assert calls == ["open_transfer_form", "fill_transfer_form", "submit_transfer_form"]
+    assert result["status"] == "success"
+    assert result["note"] == "submitted"
+    assert result["applied"] is True
+    assert result["page_url"] == "https://portal.test/studentin/"
+
+
+def test_current_students_submit_transfer_form_saves_history_when_not_dry_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = CurrentStudentsModule()
+    page = SimpleNamespace(url="https://portal.test/studentin/add")
+    calls: list[str] = []
+    record = DmcTransferInImportRecord(
+        row_index=3,
+        record_id="record-1",
+        student_no="20018",
+        level_dtl_code="12",
+        classroom="3",
+        citizen_id="1810800164491",
+        full_name="Test Student",
+        dmc_form_values={"firstNameTh": "Test", "lastNameTh": "Student"},
+    )
+
+    monkeypatch.setattr(module, "_is_history_form", lambda _page: True)
+
+    def fake_fill_history(_page: SimpleNamespace, _record: DmcTransferInImportRecord) -> None:
+        calls.append("fill_history")
+
+    def fake_submit_history(_page: SimpleNamespace) -> dict[str, object]:
+        calls.append("submit_history")
+        return {
+            "applied": True,
+            "note": "submitted",
+            "status": "success",
+            "message": "DMC transfer-in history form was saved.",
+        }
+
+    monkeypatch.setattr(module, "_fill_student_history_form", fake_fill_history)
+    monkeypatch.setattr(module, "_submit_student_history_form", fake_submit_history)
+
+    result = module._submit_transfer_form(page, record, dry_run=False)  # type: ignore[arg-type]
+
+    assert calls == ["fill_history", "submit_history"]
+    assert result["applied"] is True
+    assert result["note"] == "submitted"
+    assert result["status"] == "success"
+
+
+def test_current_students_submit_transfer_form_dry_run_still_stops_before_history_save(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = CurrentStudentsModule()
+    page = SimpleNamespace(url="https://portal.test/studentin/add")
+    calls: list[str] = []
+    record = DmcTransferInImportRecord(
+        row_index=3,
+        record_id="record-1",
+        student_no="20018",
+        level_dtl_code="12",
+        classroom="3",
+        citizen_id="1810800164491",
+        full_name="Test Student",
+        dmc_form_values={"firstNameTh": "Test", "lastNameTh": "Student"},
+    )
+
+    monkeypatch.setattr(module, "_is_history_form", lambda _page: True)
+
+    def fake_fill_history(_page: SimpleNamespace, _record: DmcTransferInImportRecord) -> None:
+        calls.append("fill_history")
+
+    def fake_submit_history(_page: SimpleNamespace) -> dict[str, object]:
+        calls.append("submit_history")
+        return {"applied": True, "note": "submitted", "status": "success", "message": "saved"}
+
+    monkeypatch.setattr(module, "_fill_student_history_form", fake_fill_history)
+    monkeypatch.setattr(module, "_submit_student_history_form", fake_submit_history)
+
+    result = module._submit_transfer_form(page, record, dry_run=True)  # type: ignore[arg-type]
+
+    assert calls == ["fill_history"]
+    assert result["applied"] is False
+    assert result["note"] == "history_filled_for_review"
+    assert result["status"] == "review"
+
+
+def test_current_students_submit_student_history_form_clicks_final_save(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = CurrentStudentsModule()
+    calls: list[str] = []
+
+    class FakeNavigation:
+        def __enter__(self) -> None:
+            calls.append("expect_navigation")
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    class FakeLocator:
+        def click(self, *, timeout: int) -> None:
+            calls.append(f"click:{timeout}")
+
+    class FakePage:
+        url = "https://portal.test/studentin/"
+
+        def expect_navigation(self, *, wait_until: str, timeout: int) -> FakeNavigation:
+            calls.append(f"wait_until:{wait_until}:{timeout}")
+            return FakeNavigation()
+
+        def locator(self, selector: str) -> FakeLocator:
+            calls.append(f"locator:{selector}")
+            return FakeLocator()
+
+        def wait_for_timeout(self, ms: int) -> None:
+            calls.append(f"timeout:{ms}")
+
+    page = FakePage()
+    monkeypatch.setattr(module, "_extract_error_text", lambda _page: "")
+    monkeypatch.setattr(module, "_is_history_form", lambda _page: False)
+
+    result = module._submit_student_history_form(page)  # type: ignore[arg-type]
+
+    assert calls == [
+        "wait_until:domcontentloaded:15000",
+        "expect_navigation",
+        'locator:input[name="submit"]',
+        "click:10000",
+        "timeout:800",
+    ]
+    assert result["applied"] is True
+    assert result["note"] == "submitted"
+    assert result["status"] == "success"
 
 
 def test_current_students_address_chain_waits_before_selecting_children(monkeypatch: pytest.MonkeyPatch) -> None:
