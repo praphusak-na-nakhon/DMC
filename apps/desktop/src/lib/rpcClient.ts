@@ -3,7 +3,9 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AvailableUpdate,
   AccountStatus,
-  TyphoonOcrDmcFormResponse,
+  GeminiOcrDmcFormResponse,
+  GeminiOcrModel,
+  GeminiOcrProcessingMode,
   ArchiveJobsResponse,
   BackupCreateResponse,
   BrowserRuntimeStatus,
@@ -32,7 +34,7 @@ import type {
 } from "../types/contracts";
 import {
   parseAddPsarEvidenceResponse,
-  parseTyphoonOcrDmcFormResponse,
+  parseGeminiOcrDmcFormResponse,
   parseAvailableUpdate,
   parseAccountStatus,
   parseArchiveJobsResponse,
@@ -282,6 +284,7 @@ export async function previewDmcFormJson(input: {
   civilRegistrationMarkdownPaths?: string[];
   schoolYear: number;
   gradeLevels: number[] | null;
+  admissionDate?: string | null;
 }): Promise<PreviewDmcFormJsonResponse> {
   const result = await sidecarRequest<unknown>("preview_dmc_form_json", {
     roster_excel_path: input.rosterExcelPath,
@@ -290,6 +293,7 @@ export async function previewDmcFormJson(input: {
     civil_registration_markdown_paths: input.civilRegistrationMarkdownPaths ?? [],
     school_year: input.schoolYear,
     grade_levels: input.gradeLevels,
+    admission_date: input.admissionDate ?? null,
   });
   return parsePreviewDmcFormJsonResponse(result);
 }
@@ -301,6 +305,7 @@ export async function exportDmcFormJson(input: {
   civilRegistrationMarkdownPaths?: string[];
   schoolYear: number;
   gradeLevels: number[] | null;
+  admissionDate?: string | null;
   outputPath: string | null;
 }): Promise<ExportDmcFormJsonResponse> {
   const result = await sidecarRequest<unknown>("export_dmc_form_json", {
@@ -310,25 +315,29 @@ export async function exportDmcFormJson(input: {
     civil_registration_markdown_paths: input.civilRegistrationMarkdownPaths ?? [],
     school_year: input.schoolYear,
     grade_levels: input.gradeLevels,
+    admission_date: input.admissionDate ?? null,
     output_path: input.outputPath,
   });
   return parseExportDmcFormJsonResponse(result);
 }
 
-export async function ocrDmcFormWithTyphoon(input: {
+export async function ocrDmcFormWithGemini(input: {
   sourcePath: string;
   apiKey: string | null;
-  model?: "typhoon-ocr";
+  model?: GeminiOcrModel;
+  processingMode?: GeminiOcrProcessingMode;
   forceRefresh?: boolean;
-}): Promise<TyphoonOcrDmcFormResponse> {
-  const result = await sidecarRequest<unknown>("ocr_dmc_form_with_typhoon", {
+}): Promise<GeminiOcrDmcFormResponse> {
+  const result = await sidecarRequest<unknown>("ocr_dmc_form_with_gemini", {
     source_path: input.sourcePath,
     api_key: input.apiKey,
-    model: input.model ?? "typhoon-ocr",
+    model: input.model ?? "gemini-3.5-flash",
+    processing_mode: input.processingMode ?? "batch",
     force_refresh: input.forceRefresh ?? false,
   });
-  return parseTyphoonOcrDmcFormResponse(result);
+  return parseGeminiOcrDmcFormResponse(result);
 }
+
 
 export async function exportCurrentStudentBlankForm(
   outputPath: string,

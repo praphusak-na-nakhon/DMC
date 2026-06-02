@@ -22,6 +22,7 @@ from dmc_sidecar.current_students import (
     preview_dmc_form_json,
     read_civil_registration_markdown_records,
     read_ocr_markdown,
+    read_ocr_records,
     read_student_roster,
     reconcile_current_students,
     validate_current_students_import_form,
@@ -582,6 +583,186 @@ def _write_civil_registration_markdown(path: Path) -> None:
     )
 
 
+def _write_structured_ocr_json(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "dmc_ocr_structured.v1",
+                "document_type": "dmc_form",
+                "engine": "gemini",
+                "model": "gemini-3.5-flash",
+                "usage_metadata": {
+                    "prompt_token_count": 1200,
+                    "candidates_token_count": 300,
+                    "total_token_count": 1500,
+                    "input_tokens_per_page": 600.0,
+                    "output_tokens_per_page": 150.0,
+                    "total_tokens_per_page": 750.0,
+                },
+                "records": [
+                    {
+                        "record_type": "dmc_form",
+                        "page_start": 1,
+                        "page_end": 2,
+                        "fields": {
+                            "citizen_id": "1-8199-00905-15-7",
+                            "student_no": "19984",
+                            "weight_kg": "40",
+                            "height_cm": "150",
+                            "registered_address": {
+                                "house_id": "8101-004408-9",
+                                "postal_code": "81130",
+                            },
+                            "guardian": {
+                                "phone": "063-839-5699",
+                            },
+                            "unknown_field": "ignored",
+                        },
+                        "needs_review": [],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_structured_civil_registration_json(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "dmc_ocr_structured.v1",
+                "document_type": "civil_registration",
+                "records": [
+                    {
+                        "record_type": "civil_registration",
+                        "page_start": 1,
+                        "page_end": 1,
+                        "fields": {
+                            "citizen_id": "1-8199-00905-15-7",
+                            "registered_address": {
+                                "house_id": "8101-008408-9",
+                                "house_no": "28",
+                                "moo": "4",
+                                "postal_code": "81130",
+                            },
+                            "current_address": {
+                                "house_id": "8101-008408-9",
+                                "house_no": "28",
+                            },
+                            "father": {
+                                "citizen_id": "3-4101-00748-56-1",
+                                "first_name": "Father",
+                                "last_name": "Family",
+                            },
+                            "mother": {
+                                "citizen_id": "1-7603-00002-25-6",
+                                "first_name": "Mother",
+                                "last_name": "Family",
+                            },
+                        },
+                        "needs_review": [],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_read_ocr_records_accepts_structured_json_and_ignores_civil_records(tmp_path: Path) -> None:
+    ocr_path = tmp_path / "structured-ocr.json"
+    _write_structured_ocr_json(ocr_path)
+    payload = json.loads(ocr_path.read_text(encoding="utf-8"))
+    payload["records"].append(
+        {
+            "record_type": "civil_registration",
+            "fields": {
+                "citizen_id": "1-8199-00905-15-7",
+                "registered_address": {"house_id": "8101-008408-9"},
+            },
+        }
+    )
+    ocr_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    records, warnings = read_ocr_records(ocr_path)
+
+    assert warnings == []
+    assert len(records) == 1
+    record = records[0]
+    assert record.citizen_id == "1819900905157"
+    assert record.student_no == "19984"
+    assert record.row_index == 1
+    assert record.fields["registered_address.house_id"].value == "8101-004408-9"
+    assert record.fields["guardian.phone"].value == "063-839-5699"
+    assert "unknown_field" not in record.fields
+
+
+def test_preview_dmc_form_json_accepts_structured_json_ocr(tmp_path: Path) -> None:
+    roster_path = tmp_path / "studentListM1-M4 2569.xlsx"
+    thai_id_path = tmp_path / "ThaiID M1-2569.CSV"
+    ocr_path = tmp_path / "structured-ocr.json"
+    _write_roster(roster_path)
+    _write_thai_id_csv(thai_id_path)
+    _write_structured_ocr_json(ocr_path)
+
+    preview = preview_dmc_form_json(
+        PreviewDmcFormJsonRequest(
+            roster_excel_path=str(roster_path),
+            thai_id_csv_path=str(thai_id_path),
+            ocr_markdown_paths=[str(ocr_path)],
+            civil_registration_markdown_paths=[],
+            school_year=2569,
+            grade_levels=[1],
+        )
+    )
+
+    assert preview.summary.ocr_form_records == 1
+    assert preview.summary.ocr_attached_records == 1
+    record = preview.records[0]
+    assert record.fields["citizen_id"] == "1819900905157"
+    assert record.fields["weight_kg"] == "40"
+    assert record.fields["guardian.phone"] == "063-839-5699"
+    assert record.field_details["weight_kg"].source == "ocr_form"
+    assert record.field_details["registered_address.house_id"].source == "ocr_form"
+    assert record.dmc_form_values["weight"] == "40.0"
+
+
+def test_civil_registration_structured_json_supplements_dmc_form_payload(tmp_path: Path) -> None:
+    roster_path = tmp_path / "studentListM1-M4 2569.xlsx"
+    thai_id_path = tmp_path / "ThaiID M1-2569.CSV"
+    ocr_path = tmp_path / "structured-ocr.json"
+    civil_path = tmp_path / "structured-civil.json"
+    _write_roster(roster_path)
+    _write_thai_id_csv(thai_id_path)
+    _write_structured_ocr_json(ocr_path)
+    _write_structured_civil_registration_json(civil_path)
+
+    civil_records, civil_warnings = read_civil_registration_markdown_records(civil_path)
+    preview = preview_dmc_form_json(
+        PreviewDmcFormJsonRequest(
+            roster_excel_path=str(roster_path),
+            thai_id_csv_path=str(thai_id_path),
+            ocr_markdown_paths=[str(ocr_path)],
+            civil_registration_markdown_paths=[str(civil_path)],
+            school_year=2569,
+            grade_levels=[1],
+        )
+    )
+
+    assert civil_warnings == []
+    assert len(civil_records) == 1
+    assert civil_records[0].fields["father.first_name"].value == "Father"
+    record = preview.records[0]
+    assert preview.summary.civil_registration_records == 1
+    assert record.fields["current_address.house_id"] == "8101-008408-9"
+    assert record.fields["father.first_name"] == "Father"
+    assert record.field_details["current_address.house_id"].source == "civil_registration"
+    assert record.field_details["father.first_name"].source == "civil_registration"
+
+
 def test_read_ocr_markdown_accepts_typhoon_labels_without_asterisks(tmp_path: Path) -> None:
     ocr_path = tmp_path / "ocr-no-stars.md"
     ocr_path.write_text(
@@ -883,6 +1064,7 @@ def test_export_dmc_form_json_writes_operation_neutral_json(tmp_path: Path) -> N
             ocr_markdown_paths=[str(ocr_path)],
             school_year=2569,
             grade_levels=[1],
+            admission_date="2026-05-16",
             output_path=str(output_path),
         )
     )
@@ -896,6 +1078,7 @@ def test_export_dmc_form_json_writes_operation_neutral_json(tmp_path: Path) -> N
 
     form_values = result.records[0].dmc_form_values
     assert form_values["educationYear"] == "2569"
+    assert form_values["admissionDate"] == "16/05/2569"
     assert form_values["studentNo"] == "19984"
     assert form_values["levelDtlCode"] == "10"
     assert form_values["classroom"] == "1"
@@ -929,6 +1112,7 @@ def test_export_dmc_form_json_writes_operation_neutral_json(tmp_path: Path) -> N
     assert "operation_type" not in payload["records"][0]
     assert "operation_type" not in payload["records"][0]["fields"]
     assert payload["records"][0]["dmc_form_values"]["cifNo"] == "1819900905157"
+    assert payload["records"][0]["dmc_form_values"]["admissionDate"] == "16/05/2569"
     assert payload["records"][0]["dmc_form_values"]["parentFamilyRelationCode"] == "01"
     assert payload["records"][0]["fields"]["siblings_studying_count"] == "1"
     assert payload["records"][0]["fields"]["child_order"] == "2"

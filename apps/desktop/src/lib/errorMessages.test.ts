@@ -41,7 +41,8 @@ describe("error message mapping", () => {
   });
 
   it("does not classify domain messages that mention sidecar as runtime failures", () => {
-    const raw = "ระบบยังไม่มี dependency typhoon-ocr ใน sidecar";
+    const raw =
+      "GEMINIOCR_API_KEY_REQUIRED: Gemini API key is required. Enter one in the app or set GOOGLE_API_KEY or GEMINI_API_KEY.";
 
     expect(getRuntimeConnectionErrorKind(raw)).toBeNull();
     expect(describeUserFacingError(raw)).toBe(raw);

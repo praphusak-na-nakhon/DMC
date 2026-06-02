@@ -20,13 +20,13 @@ import {
   openExcelDialog,
   openMarkdownDialog,
   openOcrSourceDialog,
-  ocrDmcFormWithTyphoon,
+  ocrDmcFormWithGemini,
   previewDmcFormJson,
   copyOcrMarkdownFile,
   saveOcrMarkdownDialog,
 } from "../lib/rpcClient";
 import type {
-  TyphoonOcrDmcFormResponse,
+  GeminiOcrDmcFormResponse,
   DmcFormJsonRecord,
   CurrentStudentsFieldConflict,
   CurrentStudentsWarning,
@@ -134,27 +134,28 @@ const errorMessages: Record<string, string> = {
   CURRENT_STUDENTS_OCR_NO_RECORDS: "ไม่พบข้อมูลนักเรียนจากไฟล์ OCR จากแบบฟอร์ม DMC ที่เลือก",
   SIGN_IN_REQUIRED: "กรุณาเข้าสู่ระบบก่อนใช้ OCR แบบคิดเครดิต",
   INSUFFICIENT_CREDITS: "เครดิตไม่พอสำหรับ OCR จำนวนหน้านี้",
-  TYPHOONOCR_API_KEY_REQUIRED: "ยังไม่ได้ตั้งค่า Typhoon OCR API key ฝั่งระบบ",
-  TYPHOONOCR_DEPENDENCY_MISSING: "ระบบยังไม่มี dependency typhoon-ocr ใน sidecar",
-  TYPHOONOCR_PDF_UTILS_MISSING: "Typhoon OCR ต้องใช้ Poppler สำหรับ PDF (pdfinfo และ pdftoppm)",
-  TYPHOONOCR_INPUT_NOT_FOUND: "ไม่พบไฟล์ PDF/รูปภาพที่เลือกสำหรับ Typhoon OCR",
-  TYPHOONOCR_INPUT_NOT_FILE: "พาธที่เลือกสำหรับ Typhoon OCR ไม่ใช่ไฟล์",
-  TYPHOONOCR_INPUT_EMPTY: "ไฟล์ที่เลือกสำหรับ Typhoon OCR ไม่มีข้อมูล",
-  TYPHOONOCR_UNSUPPORTED_INPUT_TYPE: "Typhoon OCR รองรับเฉพาะไฟล์ .pdf, .png, .jpg, .jpeg",
-  TYPHOONOCR_FILE_TOO_LARGE: "ไฟล์ใหญ่เกินขีดจำกัด Typhoon OCR: PDF สูงสุด 100 MB, รูปภาพสูงสุด 10 MB",
-  TYPHOONOCR_PAGE_LIMIT_EXCEEDED: "ไฟล์ PDF เกิน 100 หน้า สำหรับ Typhoon OCR",
-  TYPHOONOCR_PAGE_TOO_LARGE: "หน้า PDF หลังแยกไฟล์ใหญ่เกิน 10 MB กรุณาสแกนใหม่หรือบีบอัดหน้านี้",
-  TYPHOONOCR_PDF_SPLIT_UNAVAILABLE: "ระบบยังไม่มี pypdf สำหรับแยก PDF ก่อนส่ง Typhoon OCR",
-  TYPHOONOCR_PDF_SPLIT_FAILED: "ไม่สามารถแยก PDF เป็นรายหน้าก่อนส่ง Typhoon OCR ได้",
-  TYPHOONOCR_PAGE_COUNT_UNKNOWN: "ไม่สามารถนับจำนวนหน้า PDF ก่อนทำ OCR ได้",
-  TYPHOONOCR_AUTH_FAILED: "Typhoon OCR API key ไม่ถูกต้องหรือไม่มีสิทธิ์ใช้งาน",
-  TYPHOONOCR_CREDITS_REQUIRED: "เครดิต Typhoon OCR ไม่เพียงพอ",
-  TYPHOONOCR_RATE_LIMITED: "Typhoon OCR จำกัดจำนวนคำขอชั่วคราว กรุณาลองใหม่อีกครั้ง",
-  TYPHOONOCR_NETWORK_ERROR: "เชื่อมต่อ Typhoon OCR ไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ต",
-  TYPHOONOCR_UPLOAD_REJECTED: "Typhoon OCR ปฏิเสธไฟล์หรือคำขอที่ส่งไป",
-  TYPHOONOCR_UPLOAD_FAILED: "ส่งไฟล์ไป Typhoon OCR ไม่สำเร็จ",
-  TYPHOONOCR_PROCESSING_FAILED: "Typhoon OCR ประมวลผลไฟล์ไม่สำเร็จ",
-  TYPHOONOCR_RESPONSE_INVALID: "Typhoon OCR ส่งผลลัพธ์กลับมาในรูปแบบที่ระบบอ่านไม่ได้",
+  GEMINIOCR_API_KEY_REQUIRED: "ยังไม่ได้ตั้งค่า Gemini API key ฝั่งระบบ",
+  GEMINIOCR_DEPENDENCY_MISSING: "ระบบยังไม่พร้อมเรียก Gemini ใน sidecar",
+  GEMINIOCR_MODEL_UNSUPPORTED: "โมเดล Gemini OCR นี้ยังไม่รองรับ",
+  GEMINIOCR_INPUT_NOT_FOUND: "ไม่พบไฟล์ PDF/รูปภาพที่เลือกสำหรับ Gemini",
+  GEMINIOCR_INPUT_NOT_FILE: "พาธที่เลือกสำหรับ Gemini ไม่ใช่ไฟล์",
+  GEMINIOCR_INPUT_EMPTY: "ไฟล์ที่เลือกสำหรับ Gemini ไม่มีข้อมูล",
+  GEMINIOCR_UNSUPPORTED_INPUT_TYPE: "Gemini รองรับเฉพาะไฟล์ .pdf, .png, .jpg, .jpeg, .webp",
+  GEMINIOCR_FILE_TOO_LARGE: "ไฟล์ใหญ่เกินขีดจำกัด Gemini: สูงสุด 200 MB ต่อครั้ง",
+  GEMINIOCR_PAGE_LIMIT_EXCEEDED: "ไฟล์ PDF เกิน 1000 หน้า สำหรับ Gemini",
+  GEMINIOCR_PAGE_COUNT_UNKNOWN: "ไม่สามารถนับจำนวนหน้า PDF ก่อนทำ OCR ได้",
+  GEMINIOCR_PDF_SPLIT_FAILED: "ไม่สามารถแยก PDF เป็นชุดละ 2 หน้าก่อนส่ง Gemini Batch OCR ได้",
+  GEMINIOCR_AUTH_FAILED: "Gemini API key ไม่ถูกต้องหรือไม่มีสิทธิ์ใช้งาน",
+  GEMINIOCR_RATE_LIMITED: "Gemini จำกัดจำนวนคำขอชั่วคราว กรุณาลองใหม่อีกครั้ง",
+  GEMINIOCR_NETWORK_ERROR: "เชื่อมต่อ Gemini ไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ต",
+  GEMINIOCR_UPLOAD_REJECTED: "Gemini ปฏิเสธไฟล์หรือคำขอที่ส่งไป",
+  GEMINIOCR_FILE_PROCESSING_FAILED: "Gemini ประมวลผลไฟล์ที่อัปโหลดไม่สำเร็จ",
+  GEMINIOCR_FILE_PROCESSING_TIMEOUT: "รอ Gemini ประมวลผลไฟล์นานเกินไป กรุณาลองใหม่อีกครั้ง",
+  GEMINIOCR_PROCESSING_FAILED: "Gemini ประมวลผลไฟล์ไม่สำเร็จ",
+  GEMINIOCR_RESPONSE_INVALID: "Gemini ส่งผลลัพธ์กลับมาในรูปแบบที่ระบบอ่านไม่ได้",
+  GEMINIOCR_BATCH_TIMEOUT: "Gemini Batch OCR ยังไม่เสร็จภายในเวลาที่กำหนด กรุณาลองไฟล์เล็กลงหรือตรวจสถานะใน Google AI Studio",
+  GEMINIOCR_BATCH_FAILED: "Gemini Batch OCR ทำงานไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
+  GEMINIOCR_BATCH_RESPONSE_MISSING: "Gemini Batch OCR เสร็จแล้วแต่ไม่มีผลลัพธ์ที่ระบบอ่านได้",
   OCR_MARKDOWN_SOURCE_NOT_FOUND: "ไม่พบไฟล์ OCR ต้นทางสำหรับบันทึกเป็นไฟล์ใหม่",
   OCR_MARKDOWN_SOURCE_NOT_FILE: "ตำแหน่งไฟล์ OCR ต้นทางไม่ใช่ไฟล์",
 };
@@ -304,22 +305,23 @@ export function FormConverterPage({
   const [ocrMarkdownPaths, setOcrMarkdownPaths] = useState("");
   const [civilRegistrationMarkdownPaths, setCivilRegistrationMarkdownPaths] = useState("");
   const [ocrInputMode, setOcrInputMode] = useState<OcrInputMode>("ocrFile");
-  const [typhoonSourcePath, setTyphoonSourcePath] = useState("");
-  const [typhoonOcrResult, setTyphoonOcrResult] = useState<TyphoonOcrDmcFormResponse | null>(null);
+  const [geminiSourcePath, setGeminiSourcePath] = useState("");
+  const [geminiOcrResult, setGeminiOcrResult] = useState<GeminiOcrDmcFormResponse | null>(null);
   const [civilRegistrationInputMode, setCivilRegistrationInputMode] = useState<OcrInputMode>("ocrFile");
-  const [civilRegistrationTyphoonSourcePath, setCivilRegistrationTyphoonSourcePath] = useState("");
-  const [civilRegistrationTyphoonOcrResult, setCivilRegistrationTyphoonOcrResult] =
-    useState<TyphoonOcrDmcFormResponse | null>(null);
+  const [civilRegistrationGeminiSourcePath, setCivilRegistrationGeminiSourcePath] = useState("");
+  const [civilRegistrationGeminiOcrResult, setCivilRegistrationGeminiOcrResult] =
+    useState<GeminiOcrDmcFormResponse | null>(null);
   const [schoolYear, setSchoolYear] = useState("2569");
   const [gradeLevels, setGradeLevels] = useState("1");
+  const [admissionDate, setAdmissionDate] = useState("");
   const [jsonPreview, setJsonPreview] = useState<PreviewDmcFormJsonResponse | null>(null);
   const [jsonExport, setJsonExport] = useState<ExportDmcFormJsonResponse | null>(null);
   const [showTablePreview, setShowTablePreview] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
-  const [isRunningTyphoonOcr, setIsRunningTyphoonOcr] = useState(false);
-  const [isRunningCivilRegistrationTyphoonOcr, setIsRunningCivilRegistrationTyphoonOcr] = useState(false);
+  const [isRunningGeminiOcr, setIsRunningGeminiOcr] = useState(false);
+  const [isRunningCivilRegistrationGeminiOcr, setIsRunningCivilRegistrationGeminiOcr] = useState(false);
   const activeResult = jsonExport ?? jsonPreview;
   const activeConflicts = activeResult?.conflicts ?? [];
   const activeWarnings = activeResult?.warnings ?? [];
@@ -368,12 +370,12 @@ export function FormConverterPage({
     }
   }
 
-  async function handleBrowseTyphoonSource() {
+  async function handleBrowseGeminiSource() {
     try {
       const selected = await openOcrSourceDialog();
       if (selected) {
-        setTyphoonSourcePath(selected);
-        setTyphoonOcrResult(null);
+        setGeminiSourcePath(selected);
+        setGeminiOcrResult(null);
         setErrorMessage(null);
       }
     } catch (error) {
@@ -381,46 +383,47 @@ export function FormConverterPage({
     }
   }
 
-  async function handleRunTyphoonOcr() {
-    const sourcePath = typhoonSourcePath.trim();
+  async function handleRunGeminiOcr() {
+    const sourcePath = geminiSourcePath.trim();
     if (!sourcePath) {
       setErrorMessage("กรุณาเลือกไฟล์ PDF หรือรูปภาพก่อนสร้างไฟล์ OCR");
       return;
     }
 
-    setIsRunningTyphoonOcr(true);
+    setIsRunningGeminiOcr(true);
     setErrorMessage(null);
     try {
-      const result = await ocrDmcFormWithTyphoon({
+      const result = await ocrDmcFormWithGemini({
         sourcePath,
         apiKey: null,
-        model: "typhoon-ocr",
+        model: "gemini-3.5-flash",
+        processingMode: "batch",
         forceRefresh: false,
       });
-      setTyphoonOcrResult(result);
+      setGeminiOcrResult(result);
       setOcrMarkdownPaths((current) => appendPathList(current, [result.markdown_path]));
       resetResult();
     } catch (error) {
       setErrorMessage(readableError(error));
     } finally {
-      setIsRunningTyphoonOcr(false);
+      setIsRunningGeminiOcr(false);
     }
   }
 
-  async function handleSaveTyphoonOcrAs() {
-    if (!typhoonOcrResult) {
+  async function handleSaveGeminiOcrAs() {
+    if (!geminiOcrResult) {
       return;
     }
 
     setErrorMessage(null);
     try {
-      const destinationPath = await saveOcrMarkdownDialog(fileNameFromPath(typhoonOcrResult.markdown_path));
+      const destinationPath = await saveOcrMarkdownDialog(fileNameFromPath(geminiOcrResult.markdown_path));
       if (!destinationPath) {
         return;
       }
-      const savedPath = await copyOcrMarkdownFile(typhoonOcrResult.markdown_path, destinationPath);
-      const originalPath = typhoonOcrResult.markdown_path;
-      setTyphoonOcrResult({ ...typhoonOcrResult, markdown_path: savedPath });
+      const savedPath = await copyOcrMarkdownFile(geminiOcrResult.markdown_path, destinationPath);
+      const originalPath = geminiOcrResult.markdown_path;
+      setGeminiOcrResult({ ...geminiOcrResult, markdown_path: savedPath });
       setOcrMarkdownPaths((current) => replacePathList(current, originalPath, savedPath));
       resetResult();
     } catch (error) {
@@ -440,12 +443,12 @@ export function FormConverterPage({
     }
   }
 
-  async function handleBrowseCivilRegistrationTyphoonSource() {
+  async function handleBrowseCivilRegistrationGeminiSource() {
     try {
       const selected = await openOcrSourceDialog();
       if (selected) {
-        setCivilRegistrationTyphoonSourcePath(selected);
-        setCivilRegistrationTyphoonOcrResult(null);
+        setCivilRegistrationGeminiSourcePath(selected);
+        setCivilRegistrationGeminiOcrResult(null);
         setErrorMessage(null);
       }
     } catch (error) {
@@ -453,48 +456,49 @@ export function FormConverterPage({
     }
   }
 
-  async function handleRunCivilRegistrationTyphoonOcr() {
-    const sourcePath = civilRegistrationTyphoonSourcePath.trim();
+  async function handleRunCivilRegistrationGeminiOcr() {
+    const sourcePath = civilRegistrationGeminiSourcePath.trim();
     if (!sourcePath) {
       setErrorMessage("กรุณาเลือกไฟล์ PDF หรือรูปภาพก่อนสร้างไฟล์ OCR");
       return;
     }
 
-    setIsRunningCivilRegistrationTyphoonOcr(true);
+    setIsRunningCivilRegistrationGeminiOcr(true);
     setErrorMessage(null);
     try {
-      const result = await ocrDmcFormWithTyphoon({
+      const result = await ocrDmcFormWithGemini({
         sourcePath,
         apiKey: null,
-        model: "typhoon-ocr",
+        model: "gemini-3.5-flash",
+        processingMode: "batch",
         forceRefresh: false,
       });
-      setCivilRegistrationTyphoonOcrResult(result);
+      setCivilRegistrationGeminiOcrResult(result);
       setCivilRegistrationMarkdownPaths((current) => appendPathList(current, [result.markdown_path]));
       resetResult();
     } catch (error) {
       setErrorMessage(readableError(error));
     } finally {
-      setIsRunningCivilRegistrationTyphoonOcr(false);
+      setIsRunningCivilRegistrationGeminiOcr(false);
     }
   }
 
-  async function handleSaveCivilRegistrationTyphoonOcrAs() {
-    if (!civilRegistrationTyphoonOcrResult) {
+  async function handleSaveCivilRegistrationGeminiOcrAs() {
+    if (!civilRegistrationGeminiOcrResult) {
       return;
     }
 
     setErrorMessage(null);
     try {
       const destinationPath = await saveOcrMarkdownDialog(
-        fileNameFromPath(civilRegistrationTyphoonOcrResult.markdown_path),
+        fileNameFromPath(civilRegistrationGeminiOcrResult.markdown_path),
       );
       if (!destinationPath) {
         return;
       }
-      const savedPath = await copyOcrMarkdownFile(civilRegistrationTyphoonOcrResult.markdown_path, destinationPath);
-      const originalPath = civilRegistrationTyphoonOcrResult.markdown_path;
-      setCivilRegistrationTyphoonOcrResult({ ...civilRegistrationTyphoonOcrResult, markdown_path: savedPath });
+      const savedPath = await copyOcrMarkdownFile(civilRegistrationGeminiOcrResult.markdown_path, destinationPath);
+      const originalPath = civilRegistrationGeminiOcrResult.markdown_path;
+      setCivilRegistrationGeminiOcrResult({ ...civilRegistrationGeminiOcrResult, markdown_path: savedPath });
       setCivilRegistrationMarkdownPaths((current) => replacePathList(current, originalPath, savedPath));
       resetResult();
     } catch (error) {
@@ -526,6 +530,7 @@ export function FormConverterPage({
       civilRegistrationMarkdownPaths: selectedCivilRegistrationPaths,
       schoolYear: parsedSchoolYear,
       gradeLevels: parseGradeLevels(gradeLevels),
+      admissionDate: admissionDate.trim() || null,
     };
   }
 
@@ -583,7 +588,14 @@ export function FormConverterPage({
   function readableError(error: unknown): string {
     const raw = error instanceof Error ? error.message : String(error);
     const code = raw.match(/[A-Z][A-Z0-9_]+/)?.[0] ?? raw;
-    return errorMessages[code] ?? describeUserFacingError(error);
+    const message = errorMessages[code];
+    if (message && code === "GEMINIOCR_BATCH_FAILED") {
+      const detail = raw.replace(/^.*GEMINIOCR_BATCH_FAILED[:\s-]*/s, "").trim();
+      if (detail && !detail.includes(message)) {
+        return `${message}\nรายละเอียดจาก Gemini: ${detail}`;
+      }
+    }
+    return message ?? describeUserFacingError(error);
   }
 
   return (
@@ -647,10 +659,10 @@ export function FormConverterPage({
               order={2}
               title="ไฟล์ OCR จากแบบฟอร์ม DMC"
               statusLabel="บังคับ"
-              description="เลือกใช้ไฟล์ OCR ที่มีอยู่ หรือสร้างไฟล์ OCR จาก PDF/รูปภาพด้วย Typhoon OCR"
+              description="เลือกใช้ไฟล์ OCR ที่มีอยู่ หรือสร้างไฟล์ OCR จาก PDF/รูปภาพด้วย Gemini"
               value={ocrMarkdownPaths}
               placeholder="C:\\dmc\\uploadTest\\1-3ex.md"
-              acceptedDescription="รองรับไฟล์ .txt, .md, .csv"
+              acceptedDescription="รองรับไฟล์ .json, .txt, .md, .csv"
               browseButtonLabel="เลือกไฟล์ OCR"
               browseButtonAriaLabel="เลือกไฟล์ OCR จากแบบฟอร์ม DMC"
               iconKind="file"
@@ -681,17 +693,17 @@ export function FormConverterPage({
               showPicker={ocrInputMode === "ocrFile"}
             >
               {ocrInputMode === "scanFile" ? (
-                <TyphoonOcrTool
-                  sourcePath={typhoonSourcePath}
-                  result={typhoonOcrResult}
-                  isRunning={isRunningTyphoonOcr}
+                <GeminiOcrTool
+                  sourcePath={geminiSourcePath}
+                  result={geminiOcrResult}
+                  isRunning={isRunningGeminiOcr}
                   onSourcePathChange={(value) => {
-                    setTyphoonSourcePath(value);
-                    setTyphoonOcrResult(null);
+                    setGeminiSourcePath(value);
+                    setGeminiOcrResult(null);
                   }}
-                  onBrowseSource={() => void handleBrowseTyphoonSource()}
-                  onRun={() => void handleRunTyphoonOcr()}
-                  onSaveAs={() => void handleSaveTyphoonOcrAs()}
+                  onBrowseSource={() => void handleBrowseGeminiSource()}
+                  onRun={() => void handleRunGeminiOcr()}
+                  onSaveAs={() => void handleSaveGeminiOcrAs()}
                   onRevealPath={onRevealPath}
                 />
               ) : null}
@@ -728,10 +740,10 @@ export function FormConverterPage({
               order={4}
               title="ไฟล์ OCR จากสำเนาทะเบียนบ้านนักเรียน"
               statusLabel="ตัวเลือก"
-              description="เลือกใช้ไฟล์ OCR ที่มีอยู่ หรือสร้างไฟล์ OCR จาก PDF/รูปภาพด้วย Typhoon OCR"
+              description="เลือกใช้ไฟล์ OCR ที่มีอยู่ หรือสร้างไฟล์ OCR จาก PDF/รูปภาพด้วย Gemini"
               value={civilRegistrationMarkdownPaths}
               placeholder="D:\\DMC\\2569\\CivilDoc.md"
-              acceptedDescription="รองรับไฟล์ .txt, .md, .csv"
+              acceptedDescription="รองรับไฟล์ .json, .txt, .md, .csv"
               browseButtonLabel="เลือกไฟล์ OCR"
               browseButtonAriaLabel="เลือกไฟล์ OCR จากสำเนาทะเบียนบ้านนักเรียน"
               iconKind="file"
@@ -763,17 +775,17 @@ export function FormConverterPage({
               showPicker={civilRegistrationInputMode === "ocrFile"}
             >
               {civilRegistrationInputMode === "scanFile" ? (
-                <TyphoonOcrTool
-                  sourcePath={civilRegistrationTyphoonSourcePath}
-                  result={civilRegistrationTyphoonOcrResult}
-                  isRunning={isRunningCivilRegistrationTyphoonOcr}
+                <GeminiOcrTool
+                  sourcePath={civilRegistrationGeminiSourcePath}
+                  result={civilRegistrationGeminiOcrResult}
+                  isRunning={isRunningCivilRegistrationGeminiOcr}
                   onSourcePathChange={(value) => {
-                    setCivilRegistrationTyphoonSourcePath(value);
-                    setCivilRegistrationTyphoonOcrResult(null);
+                    setCivilRegistrationGeminiSourcePath(value);
+                    setCivilRegistrationGeminiOcrResult(null);
                   }}
-                  onBrowseSource={() => void handleBrowseCivilRegistrationTyphoonSource()}
-                  onRun={() => void handleRunCivilRegistrationTyphoonOcr()}
-                  onSaveAs={() => void handleSaveCivilRegistrationTyphoonOcrAs()}
+                  onBrowseSource={() => void handleBrowseCivilRegistrationGeminiSource()}
+                  onRun={() => void handleRunCivilRegistrationGeminiOcr()}
+                  onSaveAs={() => void handleSaveCivilRegistrationGeminiOcrAs()}
                   onRevealPath={onRevealPath}
                 />
               ) : null}
@@ -809,6 +821,18 @@ export function FormConverterPage({
                     resetResult();
                   }}
                   placeholder="1 หรือ 1,2,3"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="dmc-admission-date">วันที่มอบตัว</Label>
+                <Input
+                  id="dmc-admission-date"
+                  type="date"
+                  value={admissionDate}
+                  onChange={(event) => {
+                    setAdmissionDate(event.target.value);
+                    resetResult();
+                  }}
                 />
               </div>
               <Button disabled={!canPreview} onClick={() => void handlePreviewDmcFormJson()}>
@@ -1048,7 +1072,7 @@ function OcrInputModeSelector({
   );
 }
 
-function TyphoonOcrTool({
+function GeminiOcrTool({
   sourcePath,
   result,
   isRunning,
@@ -1059,7 +1083,7 @@ function TyphoonOcrTool({
   onRevealPath,
 }: {
   sourcePath: string;
-  result: TyphoonOcrDmcFormResponse | null;
+  result: GeminiOcrDmcFormResponse | null;
   isRunning: boolean;
   onSourcePathChange: (value: string) => void;
   onBrowseSource: () => void;
@@ -1075,11 +1099,11 @@ function TyphoonOcrTool({
         <div className="min-w-0">
           <div className="text-sm font-semibold">สร้างไฟล์ OCR จาก PDF/รูปภาพ</div>
           <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
-            คิด 3 เครดิต/หน้า และไม่คิดซ้ำเมื่อใช้ไฟล์เดิมที่เคยสร้าง OCR แล้ว
+            สร้าง JSON เฉพาะฟิลด์ที่ต้องใช้และบันทึก token usage สำหรับคำนวณต้นทุนจริง
           </div>
         </div>
         <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700">
-          Typhoon OCR
+          Gemini Flash Batch
         </span>
       </div>
 
@@ -1087,7 +1111,7 @@ function TyphoonOcrTool({
         <div className="relative min-w-0">
           <FileIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
           <Input
-            aria-label="ไฟล์ PDF หรือรูปภาพสำหรับ Typhoon OCR"
+            aria-label="ไฟล์ PDF หรือรูปภาพสำหรับ Gemini"
             className="h-9 pl-9"
             value={sourcePath}
             onChange={(event) => onSourcePathChange(event.target.value)}
@@ -1098,7 +1122,7 @@ function TyphoonOcrTool({
           type="button"
           variant="outline"
           className="border-blue-300 text-blue-700 hover:bg-blue-50 hover:text-blue-800"
-          aria-label="เลือกไฟล์ PDF หรือรูปภาพสำหรับ Typhoon OCR"
+          aria-label="เลือกไฟล์ PDF หรือรูปภาพสำหรับ Gemini"
           onClick={onBrowseSource}
         >
           <FolderOpen className="h-4 w-4" />
@@ -1120,10 +1144,14 @@ function TyphoonOcrTool({
             <span className="mx-1 text-muted-foreground">·</span>
             <span className="text-muted-foreground">
               {result.pages_processed} หน้า
+              {formatGeminiMode(result)}
               {result.average_confidence === null ? "" : ` · confidence ${formatConfidence(result.average_confidence)}`}
+              {formatGeminiUsage(result)}
               {result.cached
                 ? " · ไม่คิดเครดิตซ้ำ"
-                : ` · ใช้ ${result.credits_charged} เครดิต (${result.credits_per_page} เครดิต/หน้า)`}
+                : result.charged
+                  ? ` · ใช้ ${result.credits_charged} เครดิต (${result.credits_per_page} เครดิต/หน้า)`
+                  : " · ไม่คิดเครดิตระบบ"}
             </span>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-1">
@@ -1359,6 +1387,25 @@ function fileNameFromPath(path: string): string {
 
 function formatConfidence(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function formatGeminiMode(result: GeminiOcrDmcFormResponse): string {
+  const modelLabel = result.model === "gemini-3-pro-preview" ? "Gemini 3 Pro Preview" : "Gemini 3.5 Flash";
+  const modeLabel = result.processing_mode === "batch" ? "Batch" : "Standard";
+  return ` · ${modelLabel} ${modeLabel}`;
+}
+
+function formatGeminiUsage(result: GeminiOcrDmcFormResponse): string {
+  const usage = result.usage_metadata;
+  if (!usage?.total_token_count) {
+    return "";
+  }
+  const total = usage.total_token_count.toLocaleString("en-US");
+  const perPage = usage.total_tokens_per_page;
+  if (typeof perPage !== "number" || Number.isNaN(perPage)) {
+    return ` · ${total} tokens`;
+  }
+  return ` · ${total} tokens (${Math.round(perPage).toLocaleString("en-US")}/หน้า)`;
 }
 
 function FieldConflictRow({ conflict }: { conflict: CurrentStudentsFieldConflict }) {

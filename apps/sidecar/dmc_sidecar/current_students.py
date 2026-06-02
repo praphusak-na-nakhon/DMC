@@ -585,6 +585,24 @@ class CivilRegistrationRecord(BaseModel):
     source_path: str
 
 
+class _StructuredOcrRecordPayload(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    record_type: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+    fields: dict[str, Any] = Field(default_factory=dict)
+    needs_review: list[str] = Field(default_factory=list)
+
+
+class _StructuredOcrPayload(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    schema_version: str | None = None
+    document_type: str | None = None
+    records: list[_StructuredOcrRecordPayload] = Field(default_factory=list)
+
+
 class CanonicalStudentRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -732,6 +750,7 @@ class PreviewDmcFormJsonRequest(BaseModel):
     civil_registration_markdown_paths: list[str] = Field(default_factory=list)
     school_year: int
     grade_levels: list[int] | None = None
+    admission_date: str | None = None
 
 
 class PreviewDmcFormJsonResponse(BaseModel):
@@ -759,6 +778,7 @@ class ExportDmcFormJsonRequest(BaseModel):
     civil_registration_markdown_paths: list[str] = Field(default_factory=list)
     school_year: int
     grade_levels: list[int] | None = None
+    admission_date: str | None = None
     output_path: str | None = None
 
 
@@ -856,15 +876,15 @@ def reconcile_current_students(request: ReconcileCurrentStudentsRequest) -> Curr
         warnings.extend(scan_warnings)
 
     ocr_records: list[OcrFormRecord] = []
-    for index, markdown_path in enumerate(request.ocr_markdown_paths, start=1):
-        path = _validated_file(Path(markdown_path), suffixes={".md", ".txt", ".csv"})
-        ocr_record, ocr_warnings = read_ocr_markdown(path, record_index=index)
-        ocr_records.append(ocr_record)
+    for markdown_path in request.ocr_markdown_paths:
+        path = _validated_file(Path(markdown_path), suffixes={".md", ".txt", ".csv", ".json"})
+        parsed_ocr_records, ocr_warnings = read_ocr_records(path, record_index_start=len(ocr_records) + 1)
+        ocr_records.extend(parsed_ocr_records)
         warnings.extend(ocr_warnings)
 
     civil_records: list[CivilRegistrationRecord] = []
     for markdown_path in request.civil_registration_markdown_paths:
-        path = _validated_file(Path(markdown_path), suffixes={".md", ".txt", ".csv"})
+        path = _validated_file(Path(markdown_path), suffixes={".md", ".txt", ".csv", ".json"})
         parsed_civil_records, civil_warnings = read_civil_registration_markdown_records(
             path,
             record_index_start=len(civil_records) + 1,
@@ -972,6 +992,7 @@ def preview_dmc_form_json(request: PreviewDmcFormJsonRequest) -> PreviewDmcFormJ
         civil_registration_markdown_paths=request.civil_registration_markdown_paths,
         school_year=request.school_year,
         grade_levels=request.grade_levels,
+        admission_date=request.admission_date,
     )
     return PreviewDmcFormJsonResponse(
         module="formConverter",
@@ -996,6 +1017,7 @@ def export_dmc_form_json(request: ExportDmcFormJsonRequest) -> ExportDmcFormJson
         civil_registration_markdown_paths=request.civil_registration_markdown_paths,
         school_year=request.school_year,
         grade_levels=request.grade_levels,
+        admission_date=request.admission_date,
     )
     output_path = Path(request.output_path) if request.output_path else _default_form_json_output_path(request.school_year)
     if output_path.suffix.lower() != ".json":
@@ -1041,6 +1063,7 @@ def _build_dmc_form_json_payload(
     civil_registration_markdown_paths: list[str],
     school_year: int,
     grade_levels: list[int] | None,
+    admission_date: str | None,
 ) -> _DmcFormJsonPayload:
     if not ocr_markdown_paths:
         raise DomainError(
@@ -1070,7 +1093,10 @@ def _build_dmc_form_json_payload(
         summary=_export_summary(reconciliation.summary, export_records, warnings=reconciliation.warnings),
         warnings=reconciliation.warnings,
         conflicts=_export_missing_blockers(export_records, default_school_year=school_year),
-        records=[_json_record(record, default_school_year=school_year) for record in export_records],
+        records=[
+            _json_record(record, default_school_year=school_year, default_admission_date=admission_date)
+            for record in export_records
+        ],
     )
 
 
@@ -1468,7 +1494,45 @@ def _read_header_roster_sheet(
     return records, warnings
 
 
+def read_ocr_records(
+    path: Path,
+    *,
+    record_index_start: int = 1,
+) -> tuple[list[OcrFormRecord], list[CurrentStudentsWarning]]:
+    if path.suffix.lower() == ".json":
+        return read_ocr_structured_json_records(path, record_index_start=record_index_start)
+    record, warnings = read_ocr_markdown(path, record_index=record_index_start)
+    return [record], warnings
+
+
+def read_ocr_structured_json_records(
+    path: Path,
+    *,
+    record_index_start: int = 1,
+) -> tuple[list[OcrFormRecord], list[CurrentStudentsWarning]]:
+    payload = _read_structured_ocr_payload(path)
+    warnings: list[CurrentStudentsWarning] = []
+    records: list[OcrFormRecord] = []
+    for record_payload in payload.records:
+        if _structured_record_kind(record_payload, payload.document_type) == "civil_registration":
+            continue
+        record, record_warnings = _structured_payload_to_ocr_form_record(
+            path,
+            record_payload,
+            record_index=record_index_start + len(records),
+        )
+        records.append(record)
+        warnings.extend(record_warnings)
+    return records, warnings
+
+
 def read_ocr_markdown(path: Path, *, record_index: int = 1) -> tuple[OcrFormRecord, list[CurrentStudentsWarning]]:
+    if path.suffix.lower() == ".json":
+        records, structured_warnings = read_ocr_structured_json_records(path, record_index_start=record_index)
+        if not records:
+            raise DomainError("OCR_STRUCTURED_JSON_NO_DMC_RECORDS", "Structured OCR JSON contains no DMC form records.")
+        return records[0], structured_warnings
+
     text, _encoding = _decode_text(path)
     warnings: list[CurrentStudentsWarning] = []
     fields: dict[str, CurrentStudentField] = {}
@@ -1549,6 +1613,9 @@ def read_civil_registration_markdown_records(
     *,
     record_index_start: int = 1,
 ) -> tuple[list[CivilRegistrationRecord], list[CurrentStudentsWarning]]:
+    if path.suffix.lower() == ".json":
+        return read_civil_registration_structured_json_records(path, record_index_start=record_index_start)
+
     text, _encoding = _decode_text(path)
     page_texts = _split_ocr_markdown_pages(text)
     records: list[CivilRegistrationRecord] = []
@@ -1577,6 +1644,187 @@ def read_civil_registration_markdown(
 ) -> tuple[CivilRegistrationRecord, list[CurrentStudentsWarning]]:
     records, warnings = read_civil_registration_markdown_records(path, record_index_start=record_index)
     return records[0], warnings
+
+
+def read_civil_registration_structured_json_records(
+    path: Path,
+    *,
+    record_index_start: int = 1,
+) -> tuple[list[CivilRegistrationRecord], list[CurrentStudentsWarning]]:
+    payload = _read_structured_ocr_payload(path)
+    warnings: list[CurrentStudentsWarning] = []
+    records: list[CivilRegistrationRecord] = []
+    for record_payload in payload.records:
+        if _structured_record_kind(record_payload, payload.document_type) == "dmc_form":
+            continue
+        record, record_warnings = _structured_payload_to_civil_registration_record(
+            path,
+            record_payload,
+            record_index=record_index_start + len(records),
+        )
+        records.append(record)
+        warnings.extend(record_warnings)
+    return records, warnings
+
+
+def _read_structured_ocr_payload(path: Path) -> _StructuredOcrPayload:
+    try:
+        raw_payload = json.loads(path.read_text(encoding="utf-8"))
+        return _StructuredOcrPayload.model_validate(raw_payload)
+    except (OSError, json.JSONDecodeError, ValidationError) as exc:
+        raise DomainError("OCR_STRUCTURED_JSON_INVALID", "Structured OCR JSON could not be read.") from exc
+
+
+def _structured_record_kind(record_payload: _StructuredOcrRecordPayload, document_type: str | None) -> str:
+    value = _clean_text(record_payload.record_type or document_type).lower().replace("-", "_").replace(" ", "_")
+    if value in {"civil_registration", "house_registration", "thai_house_registration", "tabien_baan"}:
+        return "civil_registration"
+    if value in {"dmc_form", "dmc_student_form", "student_history_form"}:
+        return "dmc_form"
+    return "unknown"
+
+
+def _structured_payload_to_ocr_form_record(
+    path: Path,
+    record_payload: _StructuredOcrRecordPayload,
+    *,
+    record_index: int,
+) -> tuple[OcrFormRecord, list[CurrentStudentsWarning]]:
+    structured_fields = _flatten_structured_fields(record_payload.fields)
+    fields: dict[str, CurrentStudentField] = {}
+    for field_name, value in structured_fields.items():
+        if field_name in FORM_JSON_FIELD_NAMES:
+            _put_field(fields, field_name, value, "ocr_form", "review")
+
+    citizen_id = _clean_citizen_id(_structured_text(structured_fields.get("citizen_id")))
+    citizen_id_valid = citizen_id is not None and is_valid_thai_citizen_id(citizen_id)
+    warnings = _structured_identity_warnings(
+        path,
+        citizen_id=citizen_id,
+        citizen_id_valid=citizen_id_valid,
+        source="ocr_form",
+    )
+    student_no = _structured_text(structured_fields.get("student_no"))
+    prefix = _structured_text(structured_fields.get("prefix"))
+    first_name = _structured_text(structured_fields.get("first_name"))
+    last_name = _structured_text(structured_fields.get("last_name"))
+    full_name = _full_name(prefix or "", first_name or "", last_name or "") if first_name or last_name else None
+    name_key = normalized_name(first_name or "", last_name or "") if first_name or last_name else None
+
+    return (
+        OcrFormRecord(
+            record_id=f"ocr-{record_index}",
+            citizen_id=citizen_id,
+            citizen_id_valid=citizen_id_valid,
+            student_no=student_no,
+            prefix=prefix,
+            first_name=first_name,
+            last_name=last_name,
+            full_name=full_name,
+            name_key=name_key,
+            fields=fields,
+            source_path=str(path),
+            row_index=record_payload.page_start,
+        ),
+        warnings,
+    )
+
+
+def _structured_payload_to_civil_registration_record(
+    path: Path,
+    record_payload: _StructuredOcrRecordPayload,
+    *,
+    record_index: int,
+) -> tuple[CivilRegistrationRecord, list[CurrentStudentsWarning]]:
+    structured_fields = _flatten_structured_fields(record_payload.fields)
+    fields: dict[str, CurrentStudentField] = {}
+    for field_name, value in structured_fields.items():
+        if field_name in FORM_JSON_FIELD_NAMES:
+            _put_field(fields, field_name, value, "civil_registration", "high")
+
+    citizen_id = _clean_citizen_id(_structured_text(structured_fields.get("citizen_id")))
+    citizen_id_valid = citizen_id is not None and is_valid_thai_citizen_id(citizen_id)
+    warnings = _structured_identity_warnings(
+        path,
+        citizen_id=citizen_id,
+        citizen_id_valid=citizen_id_valid,
+        source="civil_registration",
+    )
+    prefix = _structured_text(structured_fields.get("prefix"))
+    first_name = _structured_text(structured_fields.get("first_name"))
+    last_name = _structured_text(structured_fields.get("last_name"))
+    full_name = _full_name(prefix or "", first_name or "", last_name or "") if first_name or last_name else None
+    name_key = normalized_name(first_name or "", last_name or "") if first_name or last_name else None
+
+    return (
+        CivilRegistrationRecord(
+            record_id=f"civil-{record_index}",
+            citizen_id=citizen_id,
+            citizen_id_valid=citizen_id_valid,
+            prefix=prefix,
+            first_name=first_name,
+            last_name=last_name,
+            full_name=full_name,
+            name_key=name_key,
+            fields=fields,
+            source_path=str(path),
+        ),
+        warnings,
+    )
+
+
+def _structured_identity_warnings(
+    path: Path,
+    *,
+    citizen_id: str | None,
+    citizen_id_valid: bool,
+    source: SourceType,
+) -> list[CurrentStudentsWarning]:
+    if citizen_id_valid:
+        return []
+    code = "OCR_CITIZEN_ID_INVALID_OR_MISSING" if source == "ocr_form" else "CIVIL_REGISTRATION_CITIZEN_ID_INVALID_OR_MISSING"
+    return [
+        CurrentStudentsWarning(
+            code=code,
+            message="Structured OCR citizen ID is missing or failed checksum validation.",
+            source=source,
+            source_path=str(path),
+        )
+    ]
+
+
+def _flatten_structured_fields(fields: dict[str, Any]) -> dict[str, str | int | float | bool | None]:
+    flattened: dict[str, str | int | float | bool | None] = {}
+
+    def visit(prefix: str, value: Any) -> None:
+        if isinstance(value, dict):
+            for child_key, child_value in value.items():
+                child_name = str(child_key).strip()
+                if child_name:
+                    visit(f"{prefix}.{child_name}" if prefix else child_name, child_value)
+            return
+        flattened[prefix] = _structured_scalar(value)
+
+    for key, value in fields.items():
+        name = str(key).strip()
+        if name:
+            visit(name, value)
+    return flattened
+
+
+def _structured_scalar(value: Any) -> str | int | float | bool | None:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, list):
+        parts = [_clean_text(item) for item in value if _clean_text(item)]
+        return ", ".join(parts) if parts else None
+    return _clean_text(value)
+
+
+def _structured_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    return _none_if_empty(value)
 
 
 def _parse_civil_registration_text(
@@ -1872,7 +2120,12 @@ def _record_import_value(
     return field.value
 
 
-def _json_record(record: CanonicalStudentRecord, *, default_school_year: int | None) -> DmcFormJsonRecord:
+def _json_record(
+    record: CanonicalStudentRecord,
+    *,
+    default_school_year: int | None,
+    default_admission_date: str | None = None,
+) -> DmcFormJsonRecord:
     fields = {
         field_name: _record_import_value(record, field_name, default_school_year)
         for field_name in FORM_JSON_FIELD_NAMES
@@ -1894,7 +2147,11 @@ def _json_record(record: CanonicalStudentRecord, *, default_school_year: int | N
         suggestions=record.suggestions,
         sources=record.sources,
         fields=fields,
-        dmc_form_values=_dmc_form_values(record, default_school_year=default_school_year),
+        dmc_form_values=_dmc_form_values(
+            record,
+            default_school_year=default_school_year,
+            default_admission_date=default_admission_date,
+        ),
         field_details={
             field_name: _json_field_detail(record, field_name, default_school_year=default_school_year)
             for field_name in FORM_JSON_FIELD_NAMES
@@ -1902,11 +2159,17 @@ def _json_record(record: CanonicalStudentRecord, *, default_school_year: int | N
     )
 
 
-def _dmc_form_values(record: CanonicalStudentRecord, *, default_school_year: int | None) -> dict[str, DmcFormValue]:
+def _dmc_form_values(
+    record: CanonicalStudentRecord,
+    *,
+    default_school_year: int | None,
+    default_admission_date: str | None = None,
+) -> dict[str, DmcFormValue]:
     values: dict[str, DmcFormValue] = {}
 
     school_year = _dmc_field_text(record, "school_year", default_school_year)
     _dmc_put_value(values, "educationYear", school_year)
+    _dmc_put_value(values, "admissionDate", _dmc_admission_date_text(default_admission_date))
     _dmc_put_value(values, "studentNo", _dmc_field_text(record, "student_no", default_school_year))
     _dmc_put_value(values, "levelDtlCode", _dmc_level_code(record, default_school_year=default_school_year))
     _dmc_put_value(values, "classroom", _dmc_field_text(record, "room", default_school_year))
@@ -2274,6 +2537,19 @@ def _dmc_date_text(value: str | None) -> str | None:
     if month is None:
         return None
     return f"{int(day):02d}/{month}/{year}"
+
+
+def _dmc_admission_date_text(value: str | None) -> str | None:
+    text = _clean_text(value)
+    if not text:
+        return None
+    iso_match = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", text)
+    if iso_match:
+        year, month, day = (int(part) for part in iso_match.groups())
+        if year < 2400:
+            year += 543
+        return f"{day:02d}/{month:02d}/{year}"
+    return _dmc_date_text(text)
 
 
 def _dmc_integer_text(record: CanonicalStudentRecord, field_name: str, default_school_year: int | None) -> str | None:

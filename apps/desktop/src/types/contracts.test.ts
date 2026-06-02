@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseJobStatusSnapshot, parseTyphoonOcrDmcFormResponse } from "./contracts";
+import { parseJobStatusSnapshot, parseGeminiOcrDmcFormResponse } from "./contracts";
 
 const baseJob = {
   job_id: "job-empty-summary",
@@ -102,14 +102,17 @@ describe("job status contracts", () => {
   });
 });
 
-describe("Typhoon OCR contracts", () => {
-  it("parses the generated OCR markdown response", () => {
-    const parsed = parseTyphoonOcrDmcFormResponse({
+describe("Gemini contracts", () => {
+  it("parses the generated structured OCR response with usage metadata", () => {
+    const parsed = parseGeminiOcrDmcFormResponse({
       module: "formConverter",
-      engine: "typhoonocr",
-      model: "typhoon-ocr",
+      engine: "gemini",
+      model: "gemini-3.5-flash",
+      processing_mode: "batch",
       source_path: "C:\\dmc\\uploadTest\\dmc-form.pdf",
-      markdown_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\typhoonocr\\dmc-form.md",
+      markdown_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\dmc-form.json",
+      structured_json_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\dmc-form.json",
+      output_format: "structured_json",
       cached: false,
       pages_processed: 2,
       pages_estimated: 2,
@@ -118,17 +121,33 @@ describe("Typhoon OCR contracts", () => {
       charged: true,
       credit_reservation_id: "reservation-1",
       average_confidence: null,
+      usage_metadata: {
+        prompt_token_count: 1300,
+        candidates_token_count: 700,
+        total_token_count: 2000,
+        input_tokens_per_page: 650,
+        output_tokens_per_page: 350,
+        total_tokens_per_page: 1000,
+      },
+      batch_job_name: "batches/test",
+      batch_state: "JOB_STATE_SUCCEEDED",
       file_sha256: "abc123",
       created_at: "2026-05-11T00:00:00+00:00",
     });
 
     expect(parsed).toMatchObject({
-      engine: "typhoonocr",
-      model: "typhoon-ocr",
+      engine: "gemini",
+      model: "gemini-3.5-flash",
+      processing_mode: "batch",
       pages_processed: 2,
+      structured_json_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\dmc-form.json",
       credits_charged: 6,
       charged: true,
       average_confidence: null,
+      batch_job_name: "batches/test",
+      batch_state: "JOB_STATE_SUCCEEDED",
     });
+    expect(parsed.usage_metadata?.total_token_count).toBe(2000);
+    expect(parsed.usage_metadata?.total_tokens_per_page).toBe(1000);
   });
 });

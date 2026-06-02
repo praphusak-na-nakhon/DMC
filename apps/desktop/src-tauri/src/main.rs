@@ -18,7 +18,7 @@ use url::Url;
 
 type PendingMap = Arc<StdMutex<HashMap<String, oneshot::Sender<Result<Value, String>>>>>;
 const RPC_TIMEOUT_STANDARD_SECS: u64 = 30;
-const RPC_TIMEOUT_LONG_SECS: u64 = 600;
+const RPC_TIMEOUT_LONG_SECS: u64 = 7200;
 const MAX_SIDECAR_STDOUT_LINE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_SIDECAR_STDERR_LINE_BYTES: usize = 1024 * 1024;
 const SIDECAR_SHUTDOWN_TIMEOUT_SECS: u64 = 5;
@@ -708,6 +708,8 @@ fn rpc_timeout_secs(method: &str) -> u64 {
         | "export_current_student_import_excel"
         | "preview_dmc_form_json"
         | "export_dmc_form_json"
+        | "ocr_dmc_form_with_gemini"
+        | "ocr_dmc_form_with_akson"
         | "ocr_dmc_form_with_typhoon" => RPC_TIMEOUT_LONG_SECS,
         _ => RPC_TIMEOUT_STANDARD_SECS,
     }
@@ -724,6 +726,8 @@ mod rpc_timeout_tests {
             "export_current_student_import_excel",
             "preview_dmc_form_json",
             "export_dmc_form_json",
+            "ocr_dmc_form_with_gemini",
+            "ocr_dmc_form_with_akson",
             "ocr_dmc_form_with_typhoon",
         ] {
             assert_eq!(rpc_timeout_secs(method), RPC_TIMEOUT_LONG_SECS);
@@ -927,7 +931,7 @@ fn open_csv_dialog() -> Option<String> {
 #[tauri::command]
 fn open_markdown_dialog() -> Option<String> {
     rfd::FileDialog::new()
-        .add_filter("Markdown/Text/CSV", &["md", "txt", "csv"])
+        .add_filter("OCR Data", &["json", "md", "txt", "csv"])
         .pick_file()
         .map(|path| path.to_string_lossy().to_string())
 }
@@ -983,7 +987,7 @@ fn save_diagnostics_dialog(default_name: Option<String>) -> Option<String> {
 
 #[tauri::command]
 fn save_ocr_markdown_dialog(default_name: Option<String>) -> Option<String> {
-    let mut dialog = rfd::FileDialog::new().add_filter("Markdown", &["md"]);
+    let mut dialog = rfd::FileDialog::new().add_filter("OCR Data", &["json", "md"]);
     if let Some(name) = default_name.as_deref() {
         dialog = dialog.set_file_name(name);
     }
@@ -1004,7 +1008,11 @@ fn copy_ocr_markdown_file(source_path: String, destination_path: String) -> Resu
 
     let mut target = PathBuf::from(destination_path);
     if target.extension().is_none() {
-        target.set_extension("md");
+        let extension = source
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("json");
+        target.set_extension(extension);
     }
 
     if source == target {

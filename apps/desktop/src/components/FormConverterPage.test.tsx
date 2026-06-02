@@ -9,7 +9,7 @@ const mockRpc = vi.hoisted(() => ({
   openCsvDialog: vi.fn(),
   openMarkdownDialog: vi.fn(),
   openOcrSourceDialog: vi.fn(),
-  ocrDmcFormWithTyphoon: vi.fn(),
+  ocrDmcFormWithGemini: vi.fn(),
   saveOcrMarkdownDialog: vi.fn(),
   copyOcrMarkdownFile: vi.fn(),
 }));
@@ -283,6 +283,7 @@ describe("FormConverterPage", () => {
       expect(screen.getByDisplayValue("C:\\dmc\\uploadTest\\studentListM1-M4 2569.xlsx")).toBeInTheDocument(),
     );
     expect(screen.getByDisplayValue("D:\\DMC\\2569\\CivilDoc.md")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("วันที่มอบตัว"), { target: { value: "2026-05-16" } });
 
     expect(screen.queryByText("ประเภทงาน")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /ตรวจและแสดงตัวอย่าง/ }));
@@ -402,6 +403,7 @@ describe("FormConverterPage", () => {
       civilRegistrationMarkdownPaths: ["D:\\DMC\\2569\\CivilDoc.md"],
       schoolYear: 2569,
       gradeLevels: [1],
+      admissionDate: "2026-05-16",
     });
     expect(mockRpc.exportDmcFormJson).toHaveBeenCalledWith({
       rosterExcelPath: "C:\\dmc\\uploadTest\\studentListM1-M4 2569.xlsx",
@@ -410,6 +412,7 @@ describe("FormConverterPage", () => {
       civilRegistrationMarkdownPaths: ["D:\\DMC\\2569\\CivilDoc.md"],
       schoolYear: 2569,
       gradeLevels: [1],
+      admissionDate: "2026-05-16",
       outputPath: null,
     });
 
@@ -467,21 +470,24 @@ describe("FormConverterPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /เลือกไฟล์ Excel/ }));
 
-    expect(await screen.findByText("Desktop runtime ยังไม่พร้อม")).toBeInTheDocument();
+    expect((await screen.findAllByText(/Desktop runtime/)).length).toBeGreaterThan(0);
     expect(screen.getByText(/browser preview\/localhost/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /ลองเชื่อมต่อใหม่/ }));
+    fireEvent.click(screen.getByRole("button", { name: "ลองเชื่อมต่อใหม่" }));
     expect(onRetryRuntime).toHaveBeenCalled();
   });
 
-  it("creates Typhoon OCR markdown and adds it to the DMC OCR file list", async () => {
+  it("creates Gemini structured JSON and adds it to the DMC OCR file list", async () => {
     const onRevealPath = vi.fn();
     mockRpc.openOcrSourceDialog.mockResolvedValue("C:\\dmc\\uploadTest\\dmc-form.pdf");
-    mockRpc.ocrDmcFormWithTyphoon.mockResolvedValue({
+    mockRpc.ocrDmcFormWithGemini.mockResolvedValue({
       module: "formConverter",
-      engine: "typhoonocr",
-      model: "typhoon-ocr",
+      engine: "gemini",
+      model: "gemini-3.5-flash",
+      processing_mode: "batch",
       source_path: "C:\\dmc\\uploadTest\\dmc-form.pdf",
-      markdown_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\typhoonocr\\dmc-form-typhoon-ocr.md",
+      markdown_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\dmc-form-gemini-3-5-flash-batch.json",
+      structured_json_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\dmc-form-gemini-3-5-flash-batch.json",
+      output_format: "structured_json",
       cached: false,
       pages_processed: 2,
       pages_estimated: 2,
@@ -490,6 +496,18 @@ describe("FormConverterPage", () => {
       charged: true,
       credit_reservation_id: "reservation-dmc",
       average_confidence: 91.5,
+      usage_metadata: {
+        prompt_token_count: 1400,
+        candidates_token_count: 500,
+        total_token_count: 1900,
+        cached_content_token_count: null,
+        thoughts_token_count: null,
+        input_tokens_per_page: 700,
+        output_tokens_per_page: 250,
+        total_tokens_per_page: 950,
+      },
+      batch_job_name: "batches/dmc",
+      batch_state: "JOB_STATE_SUCCEEDED",
       file_sha256: "abc123",
       created_at: "2026-05-11T00:00:00+00:00",
     });
@@ -499,47 +517,55 @@ describe("FormConverterPage", () => {
     const dmcOcrCard = screen.getByText("ไฟล์ OCR จากแบบฟอร์ม DMC").closest("section") as HTMLElement;
     fireEvent.click(within(dmcOcrCard).getByRole("tab", { name: "มีไฟล์สแกน PDF/รูปภาพ" }));
     expect(within(dmcOcrCard).queryByRole("button", { name: /เลือกไฟล์ OCR จากแบบฟอร์ม DMC/ })).not.toBeInTheDocument();
-    fireEvent.click(within(dmcOcrCard).getByRole("button", { name: /เลือกไฟล์ PDF หรือรูปภาพสำหรับ Typhoon OCR/ }));
+    fireEvent.click(within(dmcOcrCard).getByRole("button", { name: /เลือกไฟล์ PDF หรือรูปภาพสำหรับ Gemini/ }));
     await waitFor(() => {
       expect(screen.getByDisplayValue("C:\\dmc\\uploadTest\\dmc-form.pdf")).toBeInTheDocument();
     });
     fireEvent.click(within(dmcOcrCard).getByRole("button", { name: /สร้างไฟล์ OCR/ }));
 
-    await waitFor(() => expect(mockRpc.ocrDmcFormWithTyphoon).toHaveBeenCalled());
-    expect(mockRpc.ocrDmcFormWithTyphoon).toHaveBeenCalledWith({
+    await waitFor(() => expect(mockRpc.ocrDmcFormWithGemini).toHaveBeenCalled());
+    expect(mockRpc.ocrDmcFormWithGemini).toHaveBeenCalledWith({
       sourcePath: "C:\\dmc\\uploadTest\\dmc-form.pdf",
       apiKey: null,
-      model: "typhoon-ocr",
+      model: "gemini-3.5-flash",
+      processingMode: "batch",
       forceRefresh: false,
     });
     expect(within(dmcOcrCard).getByText("สร้างไฟล์ OCR แล้ว")).toBeInTheDocument();
-    expect(within(dmcOcrCard).getByText("2 หน้า · confidence 91.5 · ใช้ 6 เครดิต (3 เครดิต/หน้า)")).toBeInTheDocument();
+    expect(
+      within(dmcOcrCard).getByText(
+        "2 หน้า · Gemini 3.5 Flash Batch · confidence 91.5 · 1,900 tokens (950/หน้า) · ใช้ 6 เครดิต (3 เครดิต/หน้า)",
+      ),
+    ).toBeInTheDocument();
 
     fireEvent.click(within(dmcOcrCard).getByRole("button", { name: "เปิดไฟล์" }));
-    expect(onRevealPath).toHaveBeenCalledWith("C:\\dmc\\.dmc-assistant-data\\ocr\\typhoonocr\\dmc-form-typhoon-ocr.md");
+    expect(onRevealPath).toHaveBeenCalledWith("C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\dmc-form-gemini-3-5-flash-batch.json");
 
-    mockRpc.saveOcrMarkdownDialog.mockResolvedValue("D:\\DMC\\OCR\\dmc-form-ocr.md");
-    mockRpc.copyOcrMarkdownFile.mockResolvedValue("D:\\DMC\\OCR\\dmc-form-ocr.md");
+    mockRpc.saveOcrMarkdownDialog.mockResolvedValue("D:\\DMC\\OCR\\dmc-form-ocr.json");
+    mockRpc.copyOcrMarkdownFile.mockResolvedValue("D:\\DMC\\OCR\\dmc-form-ocr.json");
     fireEvent.click(within(dmcOcrCard).getByRole("button", { name: /บันทึกเป็น/ }));
     await waitFor(() => expect(mockRpc.copyOcrMarkdownFile).toHaveBeenCalled());
-    expect(mockRpc.saveOcrMarkdownDialog).toHaveBeenCalledWith("dmc-form-typhoon-ocr.md");
+    expect(mockRpc.saveOcrMarkdownDialog).toHaveBeenCalledWith("dmc-form-gemini-3-5-flash-batch.json");
     expect(mockRpc.copyOcrMarkdownFile).toHaveBeenCalledWith(
-      "C:\\dmc\\.dmc-assistant-data\\ocr\\typhoonocr\\dmc-form-typhoon-ocr.md",
-      "D:\\DMC\\OCR\\dmc-form-ocr.md",
+      "C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\dmc-form-gemini-3-5-flash-batch.json",
+      "D:\\DMC\\OCR\\dmc-form-ocr.json",
     );
 
     fireEvent.click(within(dmcOcrCard).getByRole("tab", { name: "มีไฟล์ OCR แล้ว" }));
-    expect(within(dmcOcrCard).getByDisplayValue("D:\\DMC\\OCR\\dmc-form-ocr.md")).toBeInTheDocument();
+    expect(within(dmcOcrCard).getByDisplayValue("D:\\DMC\\OCR\\dmc-form-ocr.json")).toBeInTheDocument();
   });
 
-  it("creates Typhoon OCR markdown and adds it to the civil registration OCR file list", async () => {
+  it("creates Gemini structured JSON and adds it to the civil registration OCR file list", async () => {
     mockRpc.openOcrSourceDialog.mockResolvedValue("C:\\dmc\\uploadTest\\civil-registration.pdf");
-    mockRpc.ocrDmcFormWithTyphoon.mockResolvedValue({
+    mockRpc.ocrDmcFormWithGemini.mockResolvedValue({
       module: "formConverter",
-      engine: "typhoonocr",
-      model: "typhoon-ocr",
+      engine: "gemini",
+      model: "gemini-3.5-flash",
+      processing_mode: "batch",
       source_path: "C:\\dmc\\uploadTest\\civil-registration.pdf",
-      markdown_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\typhoonocr\\civil-registration-typhoon-ocr.md",
+      markdown_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\civil-registration-gemini-3-5-flash-batch.json",
+      structured_json_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\civil-registration-gemini-3-5-flash-batch.json",
+      output_format: "structured_json",
       cached: false,
       pages_processed: 1,
       pages_estimated: 1,
@@ -548,6 +574,18 @@ describe("FormConverterPage", () => {
       charged: true,
       credit_reservation_id: "reservation-civil",
       average_confidence: 94,
+      usage_metadata: {
+        prompt_token_count: 800,
+        candidates_token_count: 300,
+        total_token_count: 1100,
+        cached_content_token_count: null,
+        thoughts_token_count: null,
+        input_tokens_per_page: 800,
+        output_tokens_per_page: 300,
+        total_tokens_per_page: 1100,
+      },
+      batch_job_name: "batches/civil",
+      batch_state: "JOB_STATE_SUCCEEDED",
       file_sha256: "civil123",
       created_at: "2026-05-12T00:00:00+00:00",
     });
@@ -559,33 +597,38 @@ describe("FormConverterPage", () => {
     expect(
       within(civilCard).queryByRole("button", { name: /เลือกไฟล์ OCR จากสำเนาทะเบียนบ้านนักเรียน/ }),
     ).not.toBeInTheDocument();
-    fireEvent.click(within(civilCard).getByRole("button", { name: /เลือกไฟล์ PDF หรือรูปภาพสำหรับ Typhoon OCR/ }));
+    fireEvent.click(within(civilCard).getByRole("button", { name: /เลือกไฟล์ PDF หรือรูปภาพสำหรับ Gemini/ }));
     await waitFor(() => {
       expect(screen.getByDisplayValue("C:\\dmc\\uploadTest\\civil-registration.pdf")).toBeInTheDocument();
     });
     fireEvent.click(within(civilCard).getByRole("button", { name: /สร้างไฟล์ OCR/ }));
 
-    await waitFor(() => expect(mockRpc.ocrDmcFormWithTyphoon).toHaveBeenCalled());
-    expect(mockRpc.ocrDmcFormWithTyphoon).toHaveBeenCalledWith({
+    await waitFor(() => expect(mockRpc.ocrDmcFormWithGemini).toHaveBeenCalled());
+    expect(mockRpc.ocrDmcFormWithGemini).toHaveBeenCalledWith({
       sourcePath: "C:\\dmc\\uploadTest\\civil-registration.pdf",
       apiKey: null,
-      model: "typhoon-ocr",
+      model: "gemini-3.5-flash",
+      processingMode: "batch",
       forceRefresh: false,
     });
     expect(within(civilCard).getByText("สร้างไฟล์ OCR แล้ว")).toBeInTheDocument();
-    expect(within(civilCard).getByText("1 หน้า · confidence 94 · ใช้ 3 เครดิต (3 เครดิต/หน้า)")).toBeInTheDocument();
+    expect(
+      within(civilCard).getByText(
+        "1 หน้า · Gemini 3.5 Flash Batch · confidence 94 · 1,100 tokens (1,100/หน้า) · ใช้ 3 เครดิต (3 เครดิต/หน้า)",
+      ),
+    ).toBeInTheDocument();
 
-    mockRpc.saveOcrMarkdownDialog.mockResolvedValue("D:\\DMC\\OCR\\civil-registration-ocr.md");
-    mockRpc.copyOcrMarkdownFile.mockResolvedValue("D:\\DMC\\OCR\\civil-registration-ocr.md");
+    mockRpc.saveOcrMarkdownDialog.mockResolvedValue("D:\\DMC\\OCR\\civil-registration-ocr.json");
+    mockRpc.copyOcrMarkdownFile.mockResolvedValue("D:\\DMC\\OCR\\civil-registration-ocr.json");
     fireEvent.click(within(civilCard).getByRole("button", { name: /บันทึกเป็น/ }));
     await waitFor(() => expect(mockRpc.copyOcrMarkdownFile).toHaveBeenCalled());
-    expect(mockRpc.saveOcrMarkdownDialog).toHaveBeenCalledWith("civil-registration-typhoon-ocr.md");
+    expect(mockRpc.saveOcrMarkdownDialog).toHaveBeenCalledWith("civil-registration-gemini-3-5-flash-batch.json");
     expect(mockRpc.copyOcrMarkdownFile).toHaveBeenCalledWith(
-      "C:\\dmc\\.dmc-assistant-data\\ocr\\typhoonocr\\civil-registration-typhoon-ocr.md",
-      "D:\\DMC\\OCR\\civil-registration-ocr.md",
+      "C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\civil-registration-gemini-3-5-flash-batch.json",
+      "D:\\DMC\\OCR\\civil-registration-ocr.json",
     );
 
     fireEvent.click(within(civilCard).getByRole("tab", { name: "มีไฟล์ OCR แล้ว" }));
-    expect(within(civilCard).getByDisplayValue("D:\\DMC\\OCR\\civil-registration-ocr.md")).toBeInTheDocument();
+    expect(within(civilCard).getByDisplayValue("D:\\DMC\\OCR\\civil-registration-ocr.json")).toBeInTheDocument();
   });
 });

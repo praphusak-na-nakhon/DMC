@@ -51,7 +51,11 @@ if (Test-Path $pyInstallerExe) {
         --workpath $sidecarBuild `
         --specpath $sidecarBuild `
         --hidden-import playwright.sync_api `
-        --hidden-import typhoon_ocr `
+        --hidden-import dmc_sidecar.gemini_ocr `
+        --hidden-import dmc_sidecar.akson_ocr `
+        --hidden-import dmc_sidecar.typhoon_ocr `
+        --hidden-import google.genai `
+        --hidden-import google.genai.types `
         --collect-data playwright `
         --paths $sidecarRoot `
         $sidecarEntry
@@ -65,7 +69,11 @@ if (Test-Path $pyInstallerExe) {
         --workpath $sidecarBuild `
         --specpath $sidecarBuild `
         --hidden-import playwright.sync_api `
-        --hidden-import typhoon_ocr `
+        --hidden-import dmc_sidecar.gemini_ocr `
+        --hidden-import dmc_sidecar.akson_ocr `
+        --hidden-import dmc_sidecar.typhoon_ocr `
+        --hidden-import google.genai `
+        --hidden-import google.genai.types `
         --collect-data playwright `
         --paths $sidecarRoot `
         $sidecarEntry
