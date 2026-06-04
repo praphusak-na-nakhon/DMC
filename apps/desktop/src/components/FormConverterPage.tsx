@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  Check,
   File as FileIcon,
   FileOutput,
   FileSpreadsheet,
@@ -28,6 +29,8 @@ import {
 import type {
   GeminiOcrDmcFormResponse,
   DmcFormJsonRecord,
+  DmcFormMatchConfirmation,
+  CurrentStudentMatchSuggestion,
   CurrentStudentsFieldConflict,
   CurrentStudentsWarning,
   ExportDmcFormJsonResponse,
@@ -317,6 +320,8 @@ export function FormConverterPage({
   const [jsonPreview, setJsonPreview] = useState<PreviewDmcFormJsonResponse | null>(null);
   const [jsonExport, setJsonExport] = useState<ExportDmcFormJsonResponse | null>(null);
   const [showTablePreview, setShowTablePreview] = useState(false);
+  const [confirmedMatches, setConfirmedMatches] = useState<Record<string, string>>({});
+  const [excludedRecordIds, setExcludedRecordIds] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -326,6 +331,9 @@ export function FormConverterPage({
   const activeConflicts = activeResult?.conflicts ?? [];
   const activeWarnings = activeResult?.warnings ?? [];
   const blockingMissingWarnings = filterWarningsForMissingNoFallback(activeWarnings, activeConflicts);
+  const pendingMatchRecords = activeResult ? pendingMatchConfirmationRecords(activeResult.records, confirmedMatches) : [];
+  const unresolvedMatchRecords = pendingMatchRecords.filter((record) => !excludedRecordIds.includes(record.record_id));
+  const confirmedMatchCount = Object.keys(confirmedMatches).length;
   const selectedOcrCount = markdownPaths(ocrMarkdownPaths).length;
   const canPreview = !isPreviewing && rosterPath.trim().length > 0 && selectedOcrCount > 0;
   const previewHint = !rosterPath.trim()
@@ -531,10 +539,15 @@ export function FormConverterPage({
       schoolYear: parsedSchoolYear,
       gradeLevels: parseGradeLevels(gradeLevels),
       admissionDate: admissionDate.trim() || null,
+      confirmedMatches: confirmedMatchPayload(confirmedMatches),
     };
   }
 
   async function handlePreviewDmcFormJson() {
+    await runDmcFormJsonPreview(confirmedMatches);
+  }
+
+  async function runDmcFormJsonPreview(matches: Record<string, string>) {
     const input = readFormInput();
     if (!input) {
       return;
@@ -547,6 +560,7 @@ export function FormConverterPage({
     try {
       const result = await previewDmcFormJson({
         ...input,
+        confirmedMatches: confirmedMatchPayload(matches),
       });
       setJsonPreview(result);
       setShowTablePreview(false);
@@ -569,6 +583,8 @@ export function FormConverterPage({
       const result = await exportDmcFormJson({
         ...input,
         outputPath: null,
+        confirmedMatches: confirmedMatchPayload(confirmedMatches),
+        excludedRecordIds,
       });
       setJsonExport(result);
     } catch (error) {
@@ -578,10 +594,33 @@ export function FormConverterPage({
     }
   }
 
+  async function handleConfirmMatch(record: DmcFormJsonRecord, suggestion: CurrentStudentMatchSuggestion) {
+    const nextMatches = { ...confirmedMatches, [record.record_id]: suggestion.student_no };
+    setExcludedRecordIds((current) => current.filter((item) => item !== record.record_id));
+    setConfirmedMatches(nextMatches);
+    await runDmcFormJsonPreview(nextMatches);
+  }
+
+  async function handleClearConfirmedMatches() {
+    setConfirmedMatches({});
+    if (jsonPreview || jsonExport) {
+      await runDmcFormJsonPreview({});
+    }
+  }
+
+  function handleToggleExcludedRecord(recordId: string) {
+    setExcludedRecordIds((current) =>
+      current.includes(recordId) ? current.filter((item) => item !== recordId) : [...current, recordId],
+    );
+    setJsonExport(null);
+  }
+
   function resetResult() {
     setJsonPreview(null);
     setJsonExport(null);
     setShowTablePreview(false);
+    setConfirmedMatches({});
+    setExcludedRecordIds([]);
     setErrorMessage(null);
   }
 
@@ -858,7 +897,10 @@ export function FormConverterPage({
                   <FileText className="h-4 w-4" />
                   {showTablePreview ? "ซ่อนตัวอย่างข้อมูล" : "แสดงตัวอย่างข้อมูล"}
                 </Button>
-                <Button disabled={isExporting} onClick={() => void handleExportDmcFormJson()}>
+                <Button
+                  disabled={isExporting || unresolvedMatchRecords.length > 0}
+                  onClick={() => void handleExportDmcFormJson()}
+                >
                   {isExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileOutput className="h-4 w-4" />}
                   สร้าง JSON
                 </Button>
@@ -870,6 +912,15 @@ export function FormConverterPage({
                 ) : null}
               </div>
               <div className="lg:col-span-2">
+                <MatchConfirmationPanel
+                  records={pendingMatchRecords}
+                  confirmedCount={confirmedMatchCount}
+                  excludedRecordIds={excludedRecordIds}
+                  isPreviewing={isPreviewing}
+                  onConfirm={(record, suggestion) => void handleConfirmMatch(record, suggestion)}
+                  onToggleExcluded={handleToggleExcludedRecord}
+                  onClearConfirmed={() => void handleClearConfirmedMatches()}
+                />
                 <WarningAudit warnings={blockingMissingWarnings} />
                 <ConflictAudit conflicts={activeConflicts} />
                 {showTablePreview ? (
@@ -877,6 +928,7 @@ export function FormConverterPage({
                     records={activeResult.records}
                     fieldLabels={activeResult.field_labels}
                     conflicts={activeConflicts}
+                    excludedRecordIds={excludedRecordIds}
                   />
                 ) : null}
               </div>
@@ -1268,6 +1320,118 @@ function parseSourceRecordId(recordId: string, prefix: string): { fileName: stri
   return { fileName: parts[1], rowIndex };
 }
 
+function MatchConfirmationPanel({
+  records,
+  confirmedCount,
+  excludedRecordIds,
+  isPreviewing,
+  onConfirm,
+  onToggleExcluded,
+  onClearConfirmed,
+}: {
+  records: DmcFormJsonRecord[];
+  confirmedCount: number;
+  excludedRecordIds: string[];
+  isPreviewing: boolean;
+  onConfirm: (record: DmcFormJsonRecord, suggestion: CurrentStudentMatchSuggestion) => void;
+  onToggleExcluded: (recordId: string) => void;
+  onClearConfirmed: () => void;
+}) {
+  if (records.length === 0 && confirmedCount === 0) {
+    return null;
+  }
+  const excludedRecordIdSet = new Set(excludedRecordIds);
+  const excludedCount = records.filter((record) => excludedRecordIdSet.has(record.record_id)).length;
+  const unresolvedCount = records.length - excludedCount;
+
+  return (
+    <section className="mb-4 grid gap-3 rounded-md border border-amber-200 bg-amber-50/70 p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-700" />
+          <div>
+            <div className="font-medium text-amber-950">ตรวจรายการ OCR ที่ยังจับคู่กับบัญชีรายชื่อไม่ได้</div>
+            <div className="text-sm text-amber-900">
+              ให้ยืนยันเฉพาะรายชื่อที่เป็นคนเดียวกัน หรือกดข้ามรายการที่ไม่ต้องการนำเข้า
+              ต้องตัดสินใจให้ครบทุกรายการก่อนสร้าง JSON
+            </div>
+            {records.length > 0 ? (
+              <div className="mt-1 text-xs font-medium text-amber-900">
+                รอตัดสินใจ {unresolvedCount} รายการ · ข้ามแล้ว {excludedCount} รายการ
+              </div>
+            ) : null}
+          </div>
+        </div>
+        {confirmedCount > 0 ? (
+          <Button size="sm" variant="outline" disabled={isPreviewing} onClick={onClearConfirmed}>
+            <X className="h-4 w-4" />
+            ล้างการยืนยัน {confirmedCount} รายการ
+          </Button>
+        ) : null}
+      </div>
+
+      {records.length > 0 ? (
+        <div className="grid gap-3">
+          {records.map((record) => {
+            const bestSuggestion = record.suggestions[0];
+            const isExcluded = excludedRecordIdSet.has(record.record_id);
+            return (
+              <div
+                key={record.record_id}
+                className="grid gap-3 rounded-md border bg-background p-3 text-sm lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-center"
+              >
+                <div className="min-w-0">
+                  <div className="text-xs font-medium text-muted-foreground">OCR</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="truncate font-semibold">{record.full_name ?? "-"}</div>
+                    {isExcluded ? <Badge variant="destructive">ข้ามจาก JSON</Badge> : null}
+                  </div>
+                  <div className="text-muted-foreground">เลขบัตร {record.citizen_id ?? "-"}</div>
+                </div>
+                <div className="min-w-0">
+                  {bestSuggestion ? (
+                    <>
+                      <div className="text-xs font-medium text-muted-foreground">บัญชีรายชื่อที่แนะนำ</div>
+                      <div className="truncate font-semibold">{bestSuggestion.full_name}</div>
+                      <div className="text-muted-foreground">
+                        เลขนักเรียน {bestSuggestion.student_no} · ม.{bestSuggestion.grade}/{bestSuggestion.room} · คะแนน{" "}
+                        {formatConfidence(bestSuggestion.score)}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-muted-foreground">ไม่มีรายชื่อในบัญชีที่ใกล้เคียง</div>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2 lg:justify-end">
+                  {bestSuggestion && !isExcluded ? (
+                    <Button size="sm" disabled={isPreviewing} onClick={() => onConfirm(record, bestSuggestion)}>
+                      {isPreviewing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                      ยืนยันว่าเป็นคนเดียวกัน
+                    </Button>
+                  ) : null}
+                  <Button
+                    size="sm"
+                    variant={isExcluded ? "outline" : "destructive"}
+                    disabled={isPreviewing}
+                    onClick={() => onToggleExcluded(record.record_id)}
+                  >
+                    {isExcluded ? <Check className="h-4 w-4" /> : <X className="h-4 w-4" />}
+                    {isExcluded ? "ยกเลิกการข้าม" : "ข้าม ไม่นำเข้า JSON"}
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="rounded-md border bg-background px-3 py-2 text-sm text-amber-900">
+          ยืนยันรายการแล้ว {confirmedCount} รายการ กดสร้าง JSON เพื่อใช้ข้อมูลที่ยืนยันแล้ว
+        </div>
+      )}
+    </section>
+  );
+}
+
 function WarningAudit({ warnings }: { warnings: CurrentStudentsWarning[] }) {
   if (!warnings.length) {
     return null;
@@ -1429,13 +1593,16 @@ function DmcFormTablePreview({
   records,
   fieldLabels,
   conflicts,
+  excludedRecordIds,
 }: {
   records: DmcFormJsonRecord[];
   fieldLabels: Record<string, string>;
   conflicts: CurrentStudentsFieldConflict[];
+  excludedRecordIds: string[];
 }) {
   const columns = previewColumnsFromRecords(records, fieldLabels);
   const columnGroups = previewColumnGroupsFromColumns(columns);
+  const excludedRecordIdSet = new Set(excludedRecordIds);
   const tableMinWidth = Math.max(1280, columns.length * 160 + 140);
   const [scrollTop, setScrollTop] = useState(0);
   const shouldVirtualize = records.length > 50;
@@ -1489,6 +1656,7 @@ function DmcFormTablePreview({
           ) : null}
           {visibleRecords.map((record) => {
             const missingCount = unresolvedConflictCount(record.record_id, conflicts);
+            const isExcluded = excludedRecordIdSet.has(record.record_id);
             return (
               <tr
                 key={record.record_id}
@@ -1501,8 +1669,16 @@ function DmcFormTablePreview({
                   </td>
                 ))}
                 <td className="border-b border-l px-3 py-2">
-                  <span className={missingCount ? "font-medium text-amber-800" : "font-medium text-emerald-700"}>
-                    {missingCount ? `ขาด ${missingCount} ช่อง` : "พร้อม"}
+                  <span
+                    className={
+                      isExcluded
+                        ? "font-medium text-destructive"
+                        : missingCount
+                          ? "font-medium text-amber-800"
+                          : "font-medium text-emerald-700"
+                    }
+                  >
+                    {isExcluded ? "ข้ามจาก JSON" : missingCount ? `ขาด ${missingCount} ช่อง` : "พร้อม"}
                   </span>
                 </td>
               </tr>
@@ -1590,6 +1766,23 @@ function parseGradeLevels(value: string): number[] | null {
     .map((item) => Number.parseInt(item.trim(), 10))
     .filter((item) => Number.isInteger(item));
   return levels.length ? levels : null;
+}
+
+function pendingMatchConfirmationRecords(
+  records: DmcFormJsonRecord[],
+  confirmedMatches: Record<string, string>,
+): DmcFormJsonRecord[] {
+  return records.filter(
+    (record) =>
+      record.record_id.startsWith("ocr:") &&
+      confirmedMatches[record.record_id] === undefined &&
+      record.sources.some((source) => source.source === "ocr_form") &&
+      !record.sources.some((source) => source.source === "roster"),
+  );
+}
+
+function confirmedMatchPayload(matches: Record<string, string>): DmcFormMatchConfirmation[] {
+  return Object.entries(matches).map(([record_id, student_no]) => ({ record_id, student_no }));
 }
 
 function pathInputValue(value: string): string {

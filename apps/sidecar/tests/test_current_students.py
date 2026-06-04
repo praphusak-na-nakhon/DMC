@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,6 +9,9 @@ import pytest
 from openpyxl import Workbook, load_workbook  # type: ignore[import-untyped]
 
 from dmc_sidecar.current_students import (
+    CanonicalStudentRecord,
+    CurrentStudentField,
+    DmcFormMatchConfirmation,
     DmcTransferInImportRecord,
     ExportDmcFormJsonRequest,
     ExportCurrentStudentsBlankFormRequest,
@@ -26,10 +30,15 @@ from dmc_sidecar.current_students import (
     read_student_roster,
     reconcile_current_students,
     validate_current_students_import_form,
+    _dmc_form_values,
 )
 from dmc_sidecar.checkpoint import JobCheckpoint
-from dmc_sidecar.modules.current_students import CurrentStudentsModule
+from dmc_sidecar.modules.current_students import CurrentStudentsModule, _today_buddhist_date_text
 from dmc_sidecar.rpc import RpcServer
+
+
+def _ocr_field(value: str | None) -> CurrentStudentField:
+    return CurrentStudentField(value=value, source="ocr_form", confidence="review", raw_value=value)
 
 
 def _write_roster(path: Path) -> None:
@@ -280,6 +289,354 @@ def test_current_students_submit_transfer_form_dry_run_still_stops_before_histor
     assert result["applied"] is False
     assert result["note"] == "history_filled_for_review"
     assert result["status"] == "review"
+
+
+def test_current_students_submit_transfer_form_falls_back_to_new_student_when_citizen_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = CurrentStudentsModule()
+    calls: list[str] = []
+
+    class FakeNavigation:
+        def __enter__(self) -> None:
+            calls.append("expect_navigation")
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    class FakeLocator:
+        def click(self, *, timeout: int) -> None:
+            calls.append(f"click:{timeout}")
+
+    class FakePage:
+        url = "https://portal.test/studentin/add_cif"
+
+        def expect_navigation(self, *, wait_until: str, timeout: int) -> FakeNavigation:
+            calls.append(f"wait_until:{wait_until}:{timeout}")
+            return FakeNavigation()
+
+        def locator(self, selector: str) -> FakeLocator:
+            calls.append(f"locator:{selector}")
+            return FakeLocator()
+
+        def wait_for_timeout(self, ms: int) -> None:
+            calls.append(f"timeout:{ms}")
+
+        def wait_for_load_state(self, *, timeout: int) -> None:
+            calls.append(f"load_state:{timeout}")
+
+    page = FakePage()
+    transfer_error = (
+        "ไม่สามารถบันทึกได้เนื่องจากข้อมูลยังไม่ครบ | เลขประจำตัวประชาชน* "
+        "ไม่พบเลขประจำตัวประชาชน ให้กรอกข้อมูลใหม่ในหน้าเพิ่มนักเรียน (2.7.3)"
+    )
+    record = DmcTransferInImportRecord(
+        row_index=3,
+        record_id="record-1",
+        student_no="20018",
+        level_dtl_code="12",
+        classroom="3",
+        citizen_id="1810800164491",
+        full_name="Test Student",
+        dmc_form_values={"firstNameTh": "Test", "lastNameTh": "Student"},
+    )
+
+    monkeypatch.setattr(module, "_is_history_form", lambda _page: False)
+    monkeypatch.setattr(module, "_extract_error_text", lambda _page: transfer_error)
+
+    def fake_new_student_form(
+        _page: FakePage,
+        _record: DmcTransferInImportRecord,
+        *,
+        dry_run: bool,
+        transfer_error_text: str,
+    ) -> dict[str, object]:
+        calls.append("new_student_form")
+        assert dry_run is False
+        assert transfer_error_text == transfer_error
+        return {
+            "applied": True,
+            "note": "submitted",
+            "status": "success",
+            "message": "saved from studentnew/add",
+            "fallback": "studentnew_add",
+            "transfer_error": transfer_error_text,
+        }
+
+    monkeypatch.setattr(module, "_submit_new_student_form", fake_new_student_form)
+
+    result = module._submit_transfer_form(page, record, dry_run=False)  # type: ignore[arg-type]
+
+    assert "new_student_form" in calls
+    assert result["applied"] is True
+    assert result["status"] == "success"
+    assert result["fallback"] == "studentnew_add"
+    assert result["transfer_error"] == transfer_error
+
+
+def test_current_students_submit_new_student_form_fills_history_form(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = CurrentStudentsModule()
+    calls: list[str] = []
+
+    class FakePage:
+        url = "https://portal.test/studentin/add_cif"
+
+        def goto(self, url: str, *, wait_until: str, timeout: int) -> None:
+            calls.append(f"goto:{url}:{wait_until}:{timeout}")
+            self.url = url
+
+        def wait_for_timeout(self, ms: int) -> None:
+            calls.append(f"timeout:{ms}")
+
+    page = FakePage()
+    transfer_error = "ไม่พบเลขประจำตัวประชาชน ให้กรอกข้อมูลใหม่ในหน้าเพิ่มนักเรียน (2.7.3)"
+    field_actions = [{"field_name": "fatherFirstNameTh", "action": "filled_blank", "existing_value": None, "incoming_value": "Father"}]
+    record = DmcTransferInImportRecord(
+        row_index=3,
+        record_id="record-1",
+        student_no="20018",
+        level_dtl_code="12",
+        classroom="3",
+        citizen_id="1810800164491",
+        full_name="Test Student",
+        dmc_form_values={"firstNameTh": "Test", "lastNameTh": "Student"},
+    )
+
+    monkeypatch.setattr(module, "_is_history_form", lambda _page: True)
+    monkeypatch.setattr(module, "_fill_student_history_form", lambda _page, _record: field_actions)
+    monkeypatch.setattr(
+        module,
+        "_submit_student_history_form",
+        lambda _page: {
+            "applied": True,
+            "note": "submitted",
+            "status": "success",
+            "message": "DMC new-student form was saved.",
+        },
+    )
+
+    result = module._submit_new_student_form(
+        page,  # type: ignore[arg-type]
+        record,
+        dry_run=False,
+        transfer_error_text=transfer_error,
+    )
+
+    assert calls == [
+        "goto:https://portal.bopp-obec.info/obec69/studentnew/add:domcontentloaded:90000",
+        "timeout:700",
+    ]
+    assert result["applied"] is True
+    assert result["note"] == "submitted"
+    assert result["fallback"] == "studentnew_add"
+    assert result["transfer_error"] == transfer_error
+    assert result["field_actions"] == field_actions
+
+
+def test_current_students_new_student_defaults_fill_missing_parent_and_postal_fields() -> None:
+    module = CurrentStudentsModule()
+    record = DmcTransferInImportRecord(
+        row_index=3,
+        record_id="record-1",
+        student_no="20000",
+        level_dtl_code="12",
+        classroom="3",
+        citizen_id="1819900918968",
+        full_name="Test Student",
+        dmc_form_values={
+            "firstNameTh": "Test",
+            "lastNameTh": "Student",
+            "fatherFirstNameTh": "",
+            "motherFirstNameTh": "Existing Mother",
+            "motherLastNameTh": "Existing Last",
+        },
+    )
+
+    next_record = module._with_new_student_defaults(record)
+    values = next_record.dmc_form_values
+
+    assert values["psPostalCode"] == "-"
+    assert values["psHomeIdNo"] == "-"
+    assert values["homeIdNo"] == "-"
+    assert values["postalCode"] == "-"
+    assert values["rubberDt"] == "10000.0"
+    assert values["childIndex"] == "1"
+    assert values["fatherCifNo"] == "-"
+    assert values["fatherCifType"] == "O"
+    assert values["fatherTitleCode"] == "003"
+    assert values["fatherFirstNameTh"] == "-"
+    assert values["fatherLastNameTh"] == "-"
+    assert values["fatherOccupationCode"] == "5"
+    assert values["motherTitleCode"] == "004"
+    assert values["motherFirstNameTh"] == "Existing Mother"
+    assert values["motherLastNameTh"] == "Existing Last"
+    assert values["motherOccupationCode"] == "5"
+    assert values["parentFamilyRelationCode"] == "02"
+    assert values["parentTitleCode"] == "004"
+    assert values["parentFirstNameTh"] == "Existing Mother"
+    assert values["parentLastNameTh"] == "Existing Last"
+    assert values["parentOccupationCode"] == "5"
+    assert values["journeyTypeCode"] == "02"
+    assert values["timeDt"] == "10.0"
+    assert "psPostalCode" not in record.dmc_form_values
+
+
+def test_current_students_new_student_defaults_mirror_partial_house_and_postal_values() -> None:
+    module = CurrentStudentsModule()
+    record = DmcTransferInImportRecord(
+        row_index=3,
+        record_id="record-1",
+        student_no="20005",
+        level_dtl_code="10",
+        classroom="3",
+        citizen_id="1819900924402",
+        full_name="เด็กหญิง พิรุฬกานต์ เพชรลูก",
+        dmc_form_values={
+            "firstNameTh": "พิรุฬกานต์",
+            "lastNameTh": "เพชรลูก",
+            "psHomeIdNo": "81010044089",
+            "postalCode": "81130",
+        },
+    )
+
+    values = module._with_new_student_defaults(record).dmc_form_values
+
+    assert values["psHomeIdNo"] == "81010044089"
+    assert values["homeIdNo"] == "81010044089"
+    assert values["psPostalCode"] == "81130"
+    assert values["postalCode"] == "81130"
+
+
+def test_current_students_new_student_defaults_copy_parent_from_declared_relation() -> None:
+    module = CurrentStudentsModule()
+    record = DmcTransferInImportRecord(
+        row_index=3,
+        record_id="record-1",
+        student_no="20002",
+        level_dtl_code="10",
+        classroom="3",
+        citizen_id="1819900923473",
+        full_name="เด็กหญิง ปาริศา ไกรนรา",
+        dmc_form_values={
+            "parentFamilyRelationCode": "01",
+            "fatherCifNo": "1234567890123",
+            "fatherCifType": "I",
+            "fatherTitleCode": "003",
+            "fatherFirstNameTh": "สุริน",
+            "fatherLastNameTh": "ไกรนรา",
+            "fatherOccupationCode": "5",
+            "fatherSalary": "0.0",
+            "fatherTelNo": "-",
+            "motherTitleCode": "004",
+            "motherFirstNameTh": "ศิรากาด",
+            "motherLastNameTh": "แป้นด้วง",
+        },
+    )
+
+    values = module._with_new_student_defaults(record).dmc_form_values
+
+    assert values["parentFamilyRelationCode"] == "01"
+    assert values["parentCifNo"] == "1234567890123"
+    assert values["parentCifType"] == "I"
+    assert values["parentTitleCode"] == "003"
+    assert values["parentFirstNameTh"] == "สุริน"
+    assert values["parentLastNameTh"] == "ไกรนรา"
+    assert values["parentOccupationCode"] == "5"
+
+
+def test_current_students_new_student_defaults_fill_required_parent_when_all_parent_sources_missing() -> None:
+    module = CurrentStudentsModule()
+    record = DmcTransferInImportRecord(
+        row_index=3,
+        record_id="record-1",
+        student_no="20000",
+        level_dtl_code="10",
+        classroom="3",
+        citizen_id="1819900918968",
+        full_name="เด็กชาย นฤคณากร เกตุทอง",
+        dmc_form_values={"firstNameTh": "นฤคณากร", "lastNameTh": "เกตุทอง"},
+    )
+
+    values = module._with_new_student_defaults(record).dmc_form_values
+
+    assert values["parentFamilyRelationCode"] == "20"
+    assert values["parentCifNo"] == "-"
+    assert values["parentCifType"] == "O"
+    assert values["parentTitleCode"] == "003"
+    assert values["parentFirstNameTh"] == "-"
+    assert values["parentLastNameTh"] == "-"
+    assert values["parentOccupationCode"] == "5"
+
+
+def test_current_students_new_student_defaults_normalize_title_by_level_and_gender() -> None:
+    module = CurrentStudentsModule()
+    m1_record = DmcTransferInImportRecord(
+        row_index=3,
+        record_id="record-1",
+        student_no="20000",
+        level_dtl_code="10",
+        classroom="3",
+        citizen_id="1819900918968",
+        full_name="Test Student",
+        dmc_form_values={"genderCode": "F", "titleCode": "004"},
+    )
+
+    m1_values = module._with_new_student_defaults(m1_record).dmc_form_values
+
+    assert m1_values["titleCode"] == "002"
+    assert m1_values["genderCode"] == "F"
+
+    m4_record = m1_record.model_copy(
+        update={
+            "level_dtl_code": "13",
+            "dmc_form_values": {"genderCode": "M", "titleCode": "001"},
+        }
+    )
+
+    m4_values = module._with_new_student_defaults(m4_record).dmc_form_values
+
+    assert m4_values["titleCode"] == "003"
+    assert m4_values["genderCode"] == "M"
+
+
+def test_current_students_new_student_form_fills_title_after_generic_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = CurrentStudentsModule()
+    page = SimpleNamespace(
+        url="https://portal.bopp-obec.info/obec69/studentnew/add",
+        wait_for_timeout=lambda _ms: None,
+    )
+    filled_values: dict[str, object] = {}
+    title_codes: list[str] = []
+    record = DmcTransferInImportRecord(
+        row_index=3,
+        record_id="record-1",
+        student_no="20000",
+        level_dtl_code="10",
+        classroom="3",
+        citizen_id="1819900918968",
+        full_name="Test Student",
+        dmc_form_values={"firstNameTh": "Test", "lastNameTh": "Student", "genderCode": "F", "titleCode": "004"},
+    )
+
+    monkeypatch.setattr(module, "_wait_for_history_form", lambda _page: None)
+    monkeypatch.setattr(module, "_fill_post_date", lambda _page, _value: None)
+    monkeypatch.setattr(module, "_fill_admission_date", lambda _page, _value: None)
+    monkeypatch.setattr(module, "_fill_address_chain", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "_preserve_existing_parent_name_fields", lambda _page, _values: [])
+    monkeypatch.setattr(module, "_fill_form_values", lambda _page, values: filled_values.update(values))
+    monkeypatch.setattr(module, "_fill_title_code", lambda _page, title_code: title_codes.append(title_code))
+
+    module._fill_student_history_form(page, record)  # type: ignore[arg-type]
+
+    assert "titleCode" not in filled_values
+    assert filled_values["journeyTypeCode"] == "02"
+    assert filled_values["timeDt"] == "10.0"
+    assert filled_values["genderCode"] == "F"
+    assert title_codes == ["002"]
 
 
 def test_current_students_submit_student_history_form_clicks_final_save(
@@ -540,6 +897,133 @@ def test_current_students_address_chain_uses_existing_options_when_direct_load_f
     ]
 
 
+def test_current_students_today_buddhist_date_text_uses_buddhist_year() -> None:
+    assert _today_buddhist_date_text(date(2026, 6, 3)) == "03/06/2569"
+
+
+def test_current_students_fill_post_date_sets_post_date_field() -> None:
+    module = CurrentStudentsModule()
+    calls: list[tuple[str, str]] = []
+
+    class FakePage:
+        def evaluate(self, script: str, value: str) -> None:
+            calls.append((script, value))
+
+    module._fill_post_date(FakePage(), "03/06/2569")  # type: ignore[arg-type]
+
+    assert len(calls) == 1
+    assert '[name="postDate"]' in calls[0][0]
+    assert calls[0][1] == "03/06/2569"
+
+
+def test_current_students_history_form_preserves_existing_parent_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = CurrentStudentsModule()
+    page = SimpleNamespace(wait_for_timeout=lambda _ms: None)
+    filled_values: dict[str, object] = {}
+    post_date_values: list[str] = []
+    record = DmcTransferInImportRecord(
+        row_index=3,
+        record_id="record-1",
+        student_no="20018",
+        level_dtl_code="12",
+        classroom="3",
+        citizen_id="1810800164491",
+        full_name="Test Student",
+        dmc_form_values={
+            "firstNameTh": "Test",
+            "lastNameTh": "Student",
+            "fatherFirstNameTh": "OCR Father",
+            "fatherLastNameTh": "Existing Father Last",
+            "motherFirstNameTh": "OCR Mother",
+            "motherLastNameTh": "Existing Mother Last",
+            "postDate": "01/01/2500",
+        },
+    )
+
+    monkeypatch.setattr(module, "_wait_for_history_form", lambda _page: None)
+    monkeypatch.setattr(module, "_fill_post_date", lambda _page, value: post_date_values.append(value))
+    monkeypatch.setattr(module, "_fill_admission_date", lambda _page, _value: None)
+    monkeypatch.setattr(module, "_fill_address_chain", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        module,
+        "_read_named_field_values",
+        lambda _page, _names: {
+            "fatherFirstNameTh": "Existing Father",
+            "fatherLastNameTh": "Existing Father Last",
+            "motherFirstNameTh": "",
+            "motherLastNameTh": "Existing Mother Last",
+        },
+    )
+
+    def fake_fill_form_values(_page: SimpleNamespace, values: dict[str, object]) -> None:
+        filled_values.update(values)
+
+    monkeypatch.setattr(module, "_fill_form_values", fake_fill_form_values)
+
+    actions = module._fill_student_history_form(page, record)  # type: ignore[arg-type]
+
+    assert "fatherFirstNameTh" not in filled_values
+    assert "fatherLastNameTh" not in filled_values
+    assert filled_values["motherFirstNameTh"] == "OCR Mother"
+    assert "motherLastNameTh" not in filled_values
+    assert "postDate" not in filled_values
+    assert len(post_date_values) == 1
+    actions_by_field = {action["field_name"]: action for action in actions}
+    assert actions_by_field["fatherFirstNameTh"]["action"] == "skipped_existing_conflict"
+    assert actions_by_field["fatherFirstNameTh"]["existing_value"] == "Existing Father"
+    assert actions_by_field["fatherFirstNameTh"]["incoming_value"] == "OCR Father"
+    assert actions_by_field["fatherLastNameTh"]["action"] == "skipped_existing_same"
+    assert actions_by_field["motherFirstNameTh"]["action"] == "filled_blank"
+    assert actions_by_field["motherLastNameTh"]["action"] == "skipped_existing_same"
+
+
+def test_current_students_submit_transfer_form_reports_existing_parent_name_conflicts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = CurrentStudentsModule()
+    page = SimpleNamespace(url="https://portal.test/studentin/add")
+    field_actions = [
+        {
+            "field_name": "fatherFirstNameTh",
+            "action": "skipped_existing_conflict",
+            "existing_value": "Existing Father",
+            "incoming_value": "OCR Father",
+        }
+    ]
+    record = DmcTransferInImportRecord(
+        row_index=3,
+        record_id="record-1",
+        student_no="20018",
+        level_dtl_code="12",
+        classroom="3",
+        citizen_id="1810800164491",
+        full_name="Test Student",
+        dmc_form_values={"firstNameTh": "Test", "lastNameTh": "Student"},
+    )
+
+    monkeypatch.setattr(module, "_is_history_form", lambda _page: True)
+    monkeypatch.setattr(module, "_fill_student_history_form", lambda _page, _record: field_actions)
+    monkeypatch.setattr(
+        module,
+        "_submit_student_history_form",
+        lambda _page: {
+            "applied": True,
+            "note": "submitted",
+            "status": "success",
+            "message": "DMC transfer-in history form was saved.",
+        },
+    )
+
+    result = module._submit_transfer_form(page, record, dry_run=False)  # type: ignore[arg-type]
+
+    assert result["applied"] is True
+    assert result["status"] == "success"
+    assert result["field_actions"] == field_actions
+    assert result["field_conflicts"] == field_actions
+
+
 def _write_ocr_markdown(path: Path) -> None:
     path.write_text(
         "\n".join(
@@ -698,6 +1182,20 @@ def test_read_ocr_records_accepts_structured_json_and_ignores_civil_records(tmp_
     assert record.fields["registered_address.house_id"].value == "8101-004408-9"
     assert record.fields["guardian.phone"].value == "063-839-5699"
     assert "unknown_field" not in record.fields
+
+
+def test_read_structured_json_accepts_null_needs_review(tmp_path: Path) -> None:
+    civil_path = tmp_path / "structured-civil.json"
+    _write_structured_civil_registration_json(civil_path)
+    payload = json.loads(civil_path.read_text(encoding="utf-8"))
+    payload["records"][0]["needs_review"] = None
+    civil_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    records, warnings = read_civil_registration_markdown_records(civil_path)
+
+    assert warnings == []
+    assert len(records) == 1
+    assert records[0].citizen_id == "1819900905157"
 
 
 def test_preview_dmc_form_json_accepts_structured_json_ocr(tmp_path: Path) -> None:
@@ -878,6 +1376,229 @@ def test_dmc_form_json_uses_header_roster_citizen_id_to_attach_ocr(tmp_path: Pat
     assert record.dmc_form_values["titleCode"] == "002"
 
 
+def test_dmc_form_json_suggests_and_confirms_fuzzy_ocr_roster_match(tmp_path: Path) -> None:
+    roster_path = tmp_path / "studentlist-M1.xlsx"
+    ocr_path = tmp_path / "structured-ocr.json"
+    output_path = tmp_path / "dmc-form-data-2569.json"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Worksheet"
+    sheet.append(["ลำดับ", "รหัสนักเรียน", "ชื่อ - นามสกุล", "วันเกิด", "เลขบัตรประชาชน", "ชั้น", "ห้อง"])
+    sheet.append([6, 19988, "Mr Jirawat Wongwutikorn", "1 April 2557", 1819900965150, "M.1", 3])
+    workbook.save(roster_path)
+    ocr_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "dmc_ocr_structured.v1",
+                "document_type": "dmc_form",
+                "records": [
+                    {
+                        "record_type": "dmc_form",
+                        "page_start": 1,
+                        "page_end": 2,
+                        "fields": {
+                            "citizen_id": "1819900405150",
+                            "prefix": "Mr",
+                            "first_name": "Jirawat",
+                            "last_name": "Wongwuthikorn",
+                            "birth_date": "1 April 2557",
+                            "weight_kg": "37.5",
+                            "height_cm": "154.3",
+                        },
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    preview = preview_dmc_form_json(
+        PreviewDmcFormJsonRequest(
+            roster_excel_path=str(roster_path),
+            thai_id_csv_path=None,
+            ocr_markdown_paths=[str(ocr_path)],
+            civil_registration_markdown_paths=[],
+            school_year=2569,
+            grade_levels=[1],
+        )
+    )
+
+    assert preview.summary.ocr_attached_records == 0
+    assert preview.summary.ocr_unmatched_records == 1
+    assert preview.summary.needs_review == 1
+    unconfirmed = preview.records[0]
+    assert unconfirmed.record_id == "ocr:structured-ocr.json:ocr-1"
+    assert unconfirmed.student_no is None
+    assert unconfirmed.citizen_id == "1819900405150"
+    assert unconfirmed.suggestions[0].student_no == "19988"
+    assert unconfirmed.suggestions[0].score >= 0.9
+
+    skipped = export_dmc_form_json(
+        ExportDmcFormJsonRequest(
+            roster_excel_path=str(roster_path),
+            thai_id_csv_path=None,
+            ocr_markdown_paths=[str(ocr_path)],
+            civil_registration_markdown_paths=[],
+            school_year=2569,
+            grade_levels=[1],
+            confirmed_matches=[],
+            output_path=str(output_path),
+        )
+    )
+
+    assert skipped.records_exported == 0
+    assert skipped.records == []
+
+    confirmed = export_dmc_form_json(
+        ExportDmcFormJsonRequest(
+            roster_excel_path=str(roster_path),
+            thai_id_csv_path=None,
+            ocr_markdown_paths=[str(ocr_path)],
+            civil_registration_markdown_paths=[],
+            school_year=2569,
+            grade_levels=[1],
+            confirmed_matches=[
+                DmcFormMatchConfirmation(record_id=unconfirmed.record_id, student_no="19988")
+            ],
+            output_path=str(output_path),
+        )
+    )
+
+    assert confirmed.summary.ocr_attached_records == 1
+    assert confirmed.summary.ocr_unmatched_records == 0
+    record = confirmed.records[0]
+    assert record.record_id == "roster:Worksheet:2:19988"
+    assert record.student_no == "19988"
+    assert record.citizen_id == "1819900965150"
+    assert record.grade == 1
+    assert record.room == 3
+    assert record.dmc_form_values["studentNo"] == "19988"
+    assert record.dmc_form_values["cifNo"] == "1819900965150"
+    assert "ocr_conflicts_with_citizen_id" in record.review_reasons
+    validation = validate_current_students_import_form(
+        ValidateCurrentStudentsImportFormRequest(excel_path=str(output_path))
+    )
+    assert validation.summary.ready_rows == 1
+    assert validation.summary.invalid_rows == 0
+    import_records = load_dmc_transfer_in_import_records(output_path)
+    assert import_records[0].student_no == "19988"
+    assert import_records[0].citizen_id == "1819900965150"
+
+
+def test_dmc_form_json_export_skips_all_unconfirmed_ocr_records_and_accepts_low_score_confirmation(tmp_path: Path) -> None:
+    roster_path = tmp_path / "studentlist-M1.xlsx"
+    ocr_path = tmp_path / "structured-ocr.json"
+    output_path = tmp_path / "dmc-form-data-2569.json"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Worksheet"
+    sheet.append(["ลำดับ", "รหัสนักเรียน", "ชื่อ - นามสกุล", "วันเกิด", "เลขบัตรประชาชน", "ชั้น", "ห้อง"])
+    sheet.append([1, 20001, "Miss Nicha Mamat", "1 May 2556", 1819900800380, "M.1", 3])
+    sheet.append([2, 19988, "Mr Jirawat Wongwutikorn", "1 April 2557", 1819900965150, "M.1", 3])
+    sheet.append([3, 20223, "Mr Songkran Panniam", "13 April 2556", 1819900905157, "M.1", 8])
+    workbook.save(roster_path)
+    ocr_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "dmc_ocr_structured.v1",
+                "document_type": "dmc_form",
+                "records": [
+                    {
+                        "record_type": "dmc_form",
+                        "page_start": 1,
+                        "page_end": 2,
+                        "fields": {
+                            "citizen_id": "1819900800380",
+                            "prefix": "Miss",
+                            "first_name": "Nicha",
+                            "last_name": "Mamat",
+                        },
+                    },
+                    {
+                        "record_type": "dmc_form",
+                        "page_start": 3,
+                        "page_end": 4,
+                        "fields": {
+                            "citizen_id": "1819900405150",
+                            "prefix": "Mr",
+                            "first_name": "Jirawat",
+                            "last_name": "Wongwuthikorn",
+                        },
+                    },
+                    {
+                        "record_type": "dmc_form",
+                        "page_start": 5,
+                        "page_end": 6,
+                        "fields": {
+                            "prefix": "Mr",
+                            "first_name": "Songkran",
+                            "last_name": "Munchi",
+                        },
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    preview = preview_dmc_form_json(
+        PreviewDmcFormJsonRequest(
+            roster_excel_path=str(roster_path),
+            thai_id_csv_path=None,
+            ocr_markdown_paths=[str(ocr_path)],
+            civil_registration_markdown_paths=[],
+            school_year=2569,
+            grade_levels=[1],
+        )
+    )
+
+    assert preview.records_previewed == 3
+    assert any("ocr_fuzzy_roster_match_candidate" in record.review_reasons for record in preview.records)
+    low_score_record = next(record for record in preview.records if record.first_name == "Songkran")
+    assert low_score_record.suggestions[0].student_no == "20223"
+    assert low_score_record.suggestions[0].score < 0.9
+    assert "ocr_fuzzy_roster_match_candidate" not in low_score_record.review_reasons
+
+    exported = export_dmc_form_json(
+        ExportDmcFormJsonRequest(
+            roster_excel_path=str(roster_path),
+            thai_id_csv_path=None,
+            ocr_markdown_paths=[str(ocr_path)],
+            civil_registration_markdown_paths=[],
+            school_year=2569,
+            grade_levels=[1],
+            confirmed_matches=[],
+            output_path=str(output_path),
+        )
+    )
+
+    assert exported.records_exported == 1
+    assert exported.records[0].student_no == "20001"
+    assert all("ocr_fuzzy_roster_match_candidate" not in record.review_reasons for record in exported.records)
+    written = json.loads(output_path.read_text(encoding="utf-8"))
+    assert [record["student_no"] for record in written["records"]] == ["20001"]
+
+    confirmed_low_score = export_dmc_form_json(
+        ExportDmcFormJsonRequest(
+            roster_excel_path=str(roster_path),
+            thai_id_csv_path=None,
+            ocr_markdown_paths=[str(ocr_path)],
+            civil_registration_markdown_paths=[],
+            school_year=2569,
+            grade_levels=[1],
+            confirmed_matches=[
+                DmcFormMatchConfirmation(record_id=low_score_record.record_id, student_no="20223")
+            ],
+            output_path=str(output_path),
+        )
+    )
+
+    assert confirmed_low_score.records_exported == 2
+    assert {record.student_no for record in confirmed_low_score.records} == {"20001", "20223"}
+
+
 def test_reconcile_current_students_builds_canonical_records_and_review_queue(tmp_path: Path) -> None:
     roster_path = tmp_path / "studentListM1-M4 2569.xlsx"
     thai_id_path = tmp_path / "ThaiID M1-2569.CSV"
@@ -1046,6 +1767,156 @@ def test_export_current_student_import_excel_writes_workbook(tmp_path: Path) -> 
     ]
     assert "1819900905157" in citizen_values
     assert data_rows[0][field_columns["mother.last_name"] - 1] == "ตุ้มดำ"
+
+
+def test_dmc_form_values_apply_safe_defaults_for_missing_required_family_fields() -> None:
+    record = CanonicalStudentRecord(
+        record_id="record-1",
+        operation_type="transfer_in",
+        match_status="auto_matched",
+        student_no="20001",
+        citizen_id="1819900800380",
+        grade=1,
+        room=3,
+        seat_no=1,
+        prefix="เด็กหญิง",
+        first_name="นิชา",
+        last_name="มามาตย์",
+        full_name="เด็กหญิง นิชา มามาตย์",
+        dmc_fields={
+            "father.first_name": _ocr_field("นายทดสอบ"),
+            "father.last_name": _ocr_field("พ่อ"),
+            "mother.first_name": _ocr_field("นางทดสอบ"),
+            "mother.last_name": _ocr_field("แม่"),
+            "guardian.first_name": _ocr_field("นายทดสอบ"),
+            "guardian.last_name": _ocr_field("พ่อ"),
+        },
+    )
+
+    values = _dmc_form_values(record, default_school_year=2569)
+
+    assert values["marriageStatusCode"] == "01"
+    assert values["numOfOlderBrothers"] == "0"
+    assert values["numOfYoungerBrothers"] == "0"
+    assert values["numOfOlderSisters"] == "0"
+    assert values["numOfYoungerSisters"] == "0"
+    assert values["numOfStudyingSiblings"] == "0"
+    assert values["fatherOccupationCode"] == "5"
+    assert values["motherOccupationCode"] == "5"
+    assert values["parentOccupationCode"] == "5"
+    assert values["journeyTypeCode"] == "02"
+    assert values["timeDt"] == "10.0"
+    assert values["raceCode"] == "099"
+
+
+def test_dmc_form_values_map_common_family_status_and_occupations() -> None:
+    record = CanonicalStudentRecord(
+        record_id="record-1",
+        operation_type="transfer_in",
+        match_status="auto_matched",
+        student_no="20002",
+        citizen_id="1819900923473",
+        grade=1,
+        room=3,
+        seat_no=2,
+        prefix="เด็กหญิง",
+        first_name="ปาริศา",
+        last_name="ไกรนรา",
+        full_name="เด็กหญิง ปาริศา ไกรนรา",
+        dmc_fields={
+            "parents_marital_status": _ocr_field("สมรส"),
+            "older_brothers": _ocr_field(""),
+            "father.first_name": _ocr_field("นายทดสอบ"),
+            "father.last_name": _ocr_field("พ่อ"),
+            "father.occupation": _ocr_field("ทำสวน"),
+            "mother.first_name": _ocr_field("นางทดสอบ"),
+            "mother.last_name": _ocr_field("แม่"),
+            "mother.occupation": _ocr_field("พยาบาล"),
+            "guardian.first_name": _ocr_field("นางทดสอบ"),
+            "guardian.last_name": _ocr_field("แม่"),
+            "guardian.occupation": _ocr_field("ช่างสัก"),
+        },
+    )
+
+    values = _dmc_form_values(record, default_school_year=2569)
+
+    assert values["marriageStatusCode"] == "01"
+    assert values["numOfOlderBrothers"] == "0"
+    assert values["fatherOccupationCode"] == "4"
+    assert values["motherOccupationCode"] == "6"
+    assert values["parentOccupationCode"] == "5"
+
+    widow_record = record.model_copy(
+        update={"dmc_fields": {**record.dmc_fields, "parents_marital_status": _ocr_field("หม้าย")}}
+    )
+    assert _dmc_form_values(widow_record, default_school_year=2569)["marriageStatusCode"] == "04"
+
+
+def test_dmc_form_values_map_unmatched_nonblank_occupation_to_other() -> None:
+    record = CanonicalStudentRecord(
+        record_id="record-1",
+        operation_type="transfer_in",
+        match_status="auto_matched",
+        student_no="20003",
+        citizen_id="1907500206283",
+        grade=1,
+        room=3,
+        seat_no=3,
+        prefix="เด็กหญิง",
+        first_name="พิมชนก",
+        last_name="เห้งลิ่ม",
+        full_name="เด็กหญิง พิมชนก เห้งลิ่ม",
+        dmc_fields={
+            "father.first_name": _ocr_field("นายทดสอบ"),
+            "father.last_name": _ocr_field("พ่อ"),
+            "father.occupation": _ocr_field("YouTuber"),
+        },
+    )
+
+    values = _dmc_form_values(record, default_school_year=2569)
+
+    assert values["fatherOccupationCode"] == "99"
+
+
+def test_dmc_form_values_align_district_to_resolved_subdistrict_code() -> None:
+    record = CanonicalStudentRecord(
+        record_id="record-1",
+        operation_type="transfer_in",
+        match_status="auto_matched",
+        student_no="20002",
+        citizen_id="1819900923473",
+        grade=1,
+        room=3,
+        seat_no=2,
+        prefix="เด็กหญิง",
+        first_name="ปาริศา",
+        last_name="ไกรนรา",
+        full_name="เด็กหญิง ปาริศา ไกรนรา",
+        dmc_fields={
+            "current_address.province": _ocr_field("กระบี่"),
+            "current_address.district": _ocr_field("เหนือคลอง"),
+            "current_address.subdistrict": _ocr_field("คลองหิน"),
+        },
+    )
+
+    values = _dmc_form_values(record, default_school_year=2569)
+
+    assert values["provinceCode"] == "81000000"
+    assert values["amphurCode"] == "81050000"
+    assert values["tumbolCode"] == "81050400"
+
+    typo_record = record.model_copy(
+        update={
+            "dmc_fields": {
+                "current_address.province": _ocr_field("กระบี่"),
+                "current_address.district": _ocr_field("เหนือคลอง"),
+                "current_address.subdistrict": _ocr_field("ปกาไส"),
+            }
+        }
+    )
+    typo_values = _dmc_form_values(typo_record, default_school_year=2569)
+    assert typo_values["amphurCode"] == "81080000"
+    assert typo_values["tumbolCode"] == "81080700"
 
 
 def test_export_dmc_form_json_writes_operation_neutral_json(tmp_path: Path) -> None:

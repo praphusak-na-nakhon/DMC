@@ -404,6 +404,7 @@ describe("FormConverterPage", () => {
       schoolYear: 2569,
       gradeLevels: [1],
       admissionDate: "2026-05-16",
+      confirmedMatches: [],
     });
     expect(mockRpc.exportDmcFormJson).toHaveBeenCalledWith({
       rosterExcelPath: "C:\\dmc\\uploadTest\\studentListM1-M4 2569.xlsx",
@@ -413,6 +414,8 @@ describe("FormConverterPage", () => {
       schoolYear: 2569,
       gradeLevels: [1],
       admissionDate: "2026-05-16",
+      confirmedMatches: [],
+      excludedRecordIds: [],
       outputPath: null,
     });
 
@@ -456,6 +459,229 @@ describe("FormConverterPage", () => {
     expect(await screen.findByText("คำเตือนจากไฟล์ที่เลือก")).toBeInTheDocument();
     expect(screen.getByText("OCR_CITIZEN_ID_INVALID_OR_MISSING")).toBeInTheDocument();
     expect(screen.queryByText("THAI_ID_INVALID_OR_MASKED")).not.toBeInTheDocument();
+  });
+
+  it("confirms a fuzzy OCR roster candidate and re-previews with the confirmed match", async () => {
+    const suggestedRecord = {
+      ...previewRecord,
+      record_id: "ocr:structured-ocr.json:ocr-1",
+      match_status: "needs_review",
+      student_no: null,
+      citizen_id: "1819900405150",
+      grade: null,
+      room: null,
+      full_name: "Mr Jirawat Wongwuthikorn",
+      match_score: 0.96,
+      review_reasons: ["ocr_fuzzy_roster_match_candidate", "invalid_or_missing_ocr_citizen_id"],
+      suggestions: [
+        {
+          student_no: "19988",
+          full_name: "Mr Jirawat Wongwutikorn",
+          grade: 1,
+          room: 3,
+          score: 0.96,
+          source_path: "C:\\dmc\\uploadTest\\NEW-studentlist-M1.xlsx",
+          sheet_name: "Worksheet",
+          row_index: 49,
+        },
+      ],
+      sources: [
+        {
+          source: "ocr_form",
+          source_path: "D:\\DMC\\2569\\dmc m1\\m1 DMCform\\dmc103.json",
+          row_index: null,
+          sheet_name: null,
+        },
+      ],
+      fields: {
+        ...previewRecord.fields,
+        student_no: null,
+        citizen_id: "1819900405150",
+        grade: null,
+        room: null,
+      },
+    };
+    const confirmedRecord = {
+      ...previewRecord,
+      record_id: "roster:Worksheet:49:19988",
+      student_no: "19988",
+      citizen_id: "1819900965150",
+      grade: 1,
+      room: 3,
+      full_name: "Mr Jirawat Wongwutikorn",
+      sources: [
+        {
+          source: "roster",
+          source_path: "C:\\dmc\\uploadTest\\NEW-studentlist-M1.xlsx",
+          row_index: 49,
+          sheet_name: "Worksheet",
+        },
+        {
+          source: "ocr_form",
+          source_path: "D:\\DMC\\2569\\dmc m1\\m1 DMCform\\dmc103.json",
+          row_index: null,
+          sheet_name: null,
+        },
+      ],
+      fields: {
+        ...previewRecord.fields,
+        student_no: "19988",
+        citizen_id: "1819900965150",
+        grade: 1,
+        room: 3,
+      },
+    };
+
+    mockRpc.openExcelDialog.mockResolvedValue("C:\\dmc\\uploadTest\\NEW-studentlist-M1.xlsx");
+    mockRpc.openMarkdownDialog.mockResolvedValue("D:\\DMC\\2569\\dmc m1\\m1 DMCform\\dmc103.json");
+    mockRpc.previewDmcFormJson
+      .mockResolvedValueOnce({
+        module: "formConverter",
+        schema_version: "dmc_form_json.v1",
+        generated_at: "2026-05-07T00:00:00+00:00",
+        school_year: 2569,
+        grade_levels: [1],
+        records_previewed: 1,
+        field_labels: fieldLabels,
+        summary: { ...summary, auto_matched: 0, needs_review: 1, ocr_attached_records: 0, ocr_unmatched_records: 1, review_queue_records: 1 },
+        warnings: [],
+        conflicts: [],
+        records: [suggestedRecord],
+      })
+      .mockResolvedValueOnce({
+        module: "formConverter",
+        schema_version: "dmc_form_json.v1",
+        generated_at: "2026-05-07T00:00:00+00:00",
+        school_year: 2569,
+        grade_levels: [1],
+        records_previewed: 1,
+        field_labels: fieldLabels,
+        summary: { ...summary, auto_matched: 0, needs_review: 1, ocr_attached_records: 1, ocr_unmatched_records: 0, review_queue_records: 1 },
+        warnings: [],
+        conflicts: [],
+        records: [confirmedRecord],
+      });
+
+    render(<FormConverterPage onBackHome={vi.fn()} onRevealPath={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /เลือกไฟล์ Excel/ }));
+    fireEvent.click(screen.getByRole("button", { name: /เลือกไฟล์ OCR จากแบบฟอร์ม DMC/ }));
+    await waitFor(() => expect(screen.getByDisplayValue("C:\\dmc\\uploadTest\\NEW-studentlist-M1.xlsx")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: /ตรวจและแสดงตัวอย่าง/ }));
+    expect(await screen.findByText("ตรวจรายการ OCR ที่ยังจับคู่กับบัญชีรายชื่อไม่ได้")).toBeInTheDocument();
+    expect(screen.getByText(/ต้องตัดสินใจให้ครบทุกรายการก่อนสร้าง JSON/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /ยืนยันว่าเป็นคนเดียวกัน/ }));
+
+    await waitFor(() => expect(mockRpc.previewDmcFormJson).toHaveBeenCalledTimes(2));
+    expect(mockRpc.previewDmcFormJson).toHaveBeenLastCalledWith({
+      rosterExcelPath: "C:\\dmc\\uploadTest\\NEW-studentlist-M1.xlsx",
+      thaiIdCsvPath: null,
+      ocrMarkdownPaths: ["D:\\DMC\\2569\\dmc m1\\m1 DMCform\\dmc103.json"],
+      civilRegistrationMarkdownPaths: [],
+      schoolYear: 2569,
+      gradeLevels: [1],
+      admissionDate: null,
+      confirmedMatches: [{ record_id: "ocr:structured-ocr.json:ocr-1", student_no: "19988" }],
+    });
+    expect(await screen.findByText(/ยืนยันรายการแล้ว 1 รายการ/)).toBeInTheDocument();
+  });
+
+  it("allows an unmatched OCR record to be excluded from the exported JSON", async () => {
+    const unmatchedRecord = {
+      ...previewRecord,
+      record_id: "ocr:dmc108.json:ocr-14",
+      match_status: "invalid_id",
+      student_no: null,
+      citizen_id: null,
+      grade: null,
+      room: null,
+      full_name: "ด.ช. สงกรานต์ มุนชี้",
+      match_score: 0.6,
+      review_reasons: ["ocr_form_not_linked_to_roster_or_thai_id_scan", "invalid_or_missing_ocr_citizen_id"],
+      suggestions: [
+        {
+          student_no: "20223",
+          full_name: "เด็กชาย สงกรานต์ ปานเนียม",
+          grade: 1,
+          room: 8,
+          score: 0.6,
+          source_path: "C:\\dmc\\upload\\NEW-studentlist-M1.xlsx",
+          sheet_name: "Worksheet",
+          row_index: 289,
+        },
+      ],
+      sources: [
+        {
+          source: "ocr_form",
+          source_path: "C:\\dmc\\upload\\form\\dmc108.json",
+          row_index: null,
+          sheet_name: null,
+        },
+      ],
+      fields: {
+        ...previewRecord.fields,
+        student_no: null,
+        citizen_id: null,
+        grade: null,
+        room: null,
+        first_name: "สงกรานต์",
+        last_name: "มุนชี้",
+      },
+    };
+
+    mockRpc.openExcelDialog.mockResolvedValue("C:\\dmc\\upload\\NEW-studentlist-M1.xlsx");
+    mockRpc.openMarkdownDialog.mockResolvedValue("C:\\dmc\\upload\\form\\dmc108.json");
+    mockRpc.previewDmcFormJson.mockResolvedValue({
+      module: "formConverter",
+      schema_version: "dmc_form_json.v1",
+      generated_at: "2026-06-04T15:18:44+00:00",
+      school_year: 2569,
+      grade_levels: [1],
+      records_previewed: 1,
+      field_labels: fieldLabels,
+      summary: { ...summary, auto_matched: 0, invalid_id_records: 1, ocr_attached_records: 0, ocr_unmatched_records: 1 },
+      warnings: [],
+      conflicts: [],
+      records: [unmatchedRecord],
+    });
+    mockRpc.exportDmcFormJson.mockResolvedValue({
+      module: "formConverter",
+      schema_version: "dmc_form_json.v1",
+      generated_at: "2026-06-04T15:20:00+00:00",
+      output_path: "C:\\dmc\\reports\\dmc-form-data-2569.json",
+      school_year: 2569,
+      grade_levels: [1],
+      records_exported: 0,
+      field_labels: fieldLabels,
+      summary: { ...summary, records_total: 0, auto_matched: 0, invalid_id_records: 0, ocr_attached_records: 0, ocr_unmatched_records: 1 },
+      warnings: [],
+      conflicts: [],
+      records: [],
+    });
+
+    render(<FormConverterPage onBackHome={vi.fn()} onRevealPath={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /เลือกไฟล์ Excel/ }));
+    fireEvent.click(screen.getByRole("button", { name: /เลือกไฟล์ OCR จากแบบฟอร์ม DMC/ }));
+    await waitFor(() => expect(screen.getByDisplayValue("C:\\dmc\\upload\\NEW-studentlist-M1.xlsx")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /ตรวจและแสดงตัวอย่าง/ }));
+
+    expect(await screen.findByText("ตรวจรายการ OCR ที่ยังจับคู่กับบัญชีรายชื่อไม่ได้")).toBeInTheDocument();
+    expect(screen.getByText("ด.ช. สงกรานต์ มุนชี้")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ยืนยันว่าเป็นคนเดียวกัน" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^สร้าง JSON$/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "ข้าม ไม่นำเข้า JSON" }));
+    expect(screen.getByText("ข้ามจาก JSON")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^สร้าง JSON$/ })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: /^สร้าง JSON$/ }));
+
+    await waitFor(() => expect(mockRpc.exportDmcFormJson).toHaveBeenCalled());
+    expect(mockRpc.exportDmcFormJson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        excludedRecordIds: ["ocr:dmc108.json:ocr-14"],
+      }),
+    );
   });
 
   it("shows a retryable desktop runtime error when a file dialog is opened from browser preview", async () => {

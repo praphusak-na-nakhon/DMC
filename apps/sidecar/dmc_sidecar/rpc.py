@@ -81,6 +81,8 @@ from .telemetry import TelemetryClient
 
 
 GEMINI_OCR_CREDIT_BYPASS_CODES = {"ACCOUNT_CLOUD_UNAVAILABLE", "ACCOUNT_CLOUD_REQUIRED"}
+LIVE_JOB_CREDIT_BYPASS_MODULES = {"currentStudents"}
+LIVE_JOB_CREDIT_BYPASS_CODES = {"ACCOUNT_CLOUD_UNAVAILABLE"}
 
 
 class RpcServer:
@@ -520,26 +522,46 @@ class RpcServer:
         try:
             if not bool(start_params.options.get("dry_run", False)):
                 credits_reserved = self._estimate_credit_units(start_params)
-                reservation = reserve_credits(
-                    self.account_store,
-                    job_id=start_params.job_id,
-                    module=start_params.module,
-                    units=credits_reserved,
-                    idempotency_key=f"{start_params.job_id}:reserve",
-                )
-                credit_reservation_id = reservation.reservation_id
-                self.job_store.update_credit_status(
-                    start_params.job_id,
-                    credit_reservation_id=credit_reservation_id,
-                    credits_reserved=credits_reserved,
-                    credit_status="reserved",
-                )
-                self._emit_background_notification(
-                    {
-                        "type": "sidecar_stderr",
-                        "message": f"credits reserved for job {start_params.job_id}: {credits_reserved}",
-                    }
-                )
+                try:
+                    reservation = reserve_credits(
+                        self.account_store,
+                        job_id=start_params.job_id,
+                        module=start_params.module,
+                        units=credits_reserved,
+                        idempotency_key=f"{start_params.job_id}:reserve",
+                    )
+                except DomainError as exc:
+                    if not self._can_bypass_live_job_credit_reservation(start_params, exc):
+                        raise
+                    self.job_store.update_credit_status(
+                        start_params.job_id,
+                        credits_reserved=0,
+                        credit_status=f"bypassed:{exc.code}",
+                    )
+                    credits_reserved = 0
+                    self._emit_background_notification(
+                        {
+                            "type": "sidecar_stderr",
+                            "message": (
+                                f"credit reservation bypassed for job {start_params.job_id}: "
+                                f"{start_params.module} {exc.code}"
+                            ),
+                        }
+                    )
+                else:
+                    credit_reservation_id = reservation.reservation_id
+                    self.job_store.update_credit_status(
+                        start_params.job_id,
+                        credit_reservation_id=credit_reservation_id,
+                        credits_reserved=credits_reserved,
+                        credit_status="reserved",
+                    )
+                    self._emit_background_notification(
+                        {
+                            "type": "sidecar_stderr",
+                            "message": f"credits reserved for job {start_params.job_id}: {credits_reserved}",
+                        }
+                    )
 
             self.job_manager.start_job(
                 job_id=start_params.job_id,
@@ -562,6 +584,13 @@ class RpcServer:
                     "message": exc.user_message if isinstance(exc, DomainError) else "Job failed before it started.",
                 }
             )
+
+    def _can_bypass_live_job_credit_reservation(
+        self,
+        start_params: StartJobRequest,
+        exc: DomainError,
+    ) -> bool:
+        return start_params.module in LIVE_JOB_CREDIT_BYPASS_MODULES and exc.code in LIVE_JOB_CREDIT_BYPASS_CODES
 
     def _emit_background_notification(self, payload: dict[str, Any]) -> None:
         try:

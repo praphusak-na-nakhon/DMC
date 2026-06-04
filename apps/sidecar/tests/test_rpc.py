@@ -515,6 +515,44 @@ def test_live_start_reports_account_cloud_failure_from_background(monkeypatch, t
     assert status["credit_status"] == "start_failed:ACCOUNT_CLOUD_UNAVAILABLE"
 
 
+def test_current_students_live_start_bypasses_cloud_unavailable_and_starts_job(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
+    monkeypatch.setattr(
+        "dmc_sidecar.rpc.reserve_credits",
+        lambda *args, **kwargs: (_ for _ in ()).throw(DomainError("ACCOUNT_CLOUD_UNAVAILABLE")),
+    )
+    server = RpcServer(emit_notification=lambda payload: None)
+    monkeypatch.setattr(server.account_store, "get_session", lambda: SimpleNamespace(token="token"))
+    started: dict[str, object] = {}
+    monkeypatch.setattr(server.job_manager, "start_job", lambda **kwargs: started.update(kwargs))
+
+    response = _rpc_call(
+        server,
+        "start_job",
+        {
+            "job_id": "job-current-cloud-down",
+            "module": "currentStudents",
+            "excel_path": "C:\\data\\dmc-form-data.json",
+            "options": {"dry_run": False, "estimated_credits": 3},
+        },
+    )
+
+    assert response["result"]["accepted"] is True
+    _wait_until(lambda: started.get("job_id") == "job-current-cloud-down")
+    assert started["module_name"] == "currentStudents"
+    assert started["credit_reservation_id"] is None
+    assert started["credits_reserved"] == 0
+    status = server.job_store.get_status("job-current-cloud-down")
+    assert status is not None
+    assert status["status"] == "pending"
+    assert status["credit_status"] == "bypassed:ACCOUNT_CLOUD_UNAVAILABLE"
+    assert status["credits_reserved"] == 0
+
+
 def test_rpc_server_reaps_reserving_jobs_from_previous_process(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
     store = JobStore()

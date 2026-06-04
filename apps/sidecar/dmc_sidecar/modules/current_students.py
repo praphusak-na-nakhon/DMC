@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -24,14 +25,20 @@ from .dry_run_review import pause_for_dry_run_review, should_pause_for_dry_run_r
 
 DMC_PORTAL_HOME_URL = "https://portal.bopp-obec.info/obec69/"
 DMC_TRANSFER_IN_LIST_URL = "https://portal.bopp-obec.info/obec69/studentin/"
+DMC_NEW_STUDENT_ADD_URL = "https://portal.bopp-obec.info/obec69/studentnew/add"
 DMC_THAID_AUTH_URL = "https://portal.bopp-obec.info/obec69/auth/OSBSAuth"
 DMC_LOGIN_URL = "https://portal.bopp-obec.info/obec69/auth/login?login_error=1"
+BANGKOK_TIMEZONE = timezone(timedelta(hours=7))
 AUTH_ENTRY_URLS = (
     DMC_THAID_AUTH_URL,
     DMC_LOGIN_URL,
 )
 DMC_HISTORY_FORM_URL_MARKER = "/studentin/add"
 DMC_HISTORY_REVIEW_NOTE = "history_filled_for_review"
+DMC_TRANSFER_CITIZEN_NOT_FOUND_MARKERS = (
+    "ไม่พบเลขประจำตัวประชาชน",
+    "หน้าเพิ่มนักเรียน (2.7.3)",
+)
 SUCCESS_MESSAGE_MARKERS = (
     "success",
     "saved",
@@ -49,6 +56,73 @@ DMC_ADDRESS_CHAIN_FIELDS = {
     "provinceCode",
     "amphurCode",
     "tumbolCode",
+}
+DMC_PRESERVE_EXISTING_PARENT_NAME_FIELDS = (
+    "fatherFirstNameTh",
+    "fatherLastNameTh",
+    "motherFirstNameTh",
+    "motherLastNameTh",
+)
+DEFAULT_COMMUTE_MINUTES = "10.0"
+DEFAULT_JOURNEY_TYPE_CODE = "02"
+NEW_STUDENT_TITLE_BY_LEVEL_AND_GENDER = {
+    "10": {"M": "001", "F": "002"},
+    "13": {"M": "003", "F": "004"},
+}
+NEW_STUDENT_GENDER_BY_TITLE_CODE = {
+    "001": "M",
+    "002": "F",
+    "003": "M",
+    "004": "F",
+    "005": "F",
+}
+NEW_STUDENT_TITLE_LABEL_BY_CODE = {
+    "001": "เด็กชาย",
+    "002": "เด็กหญิง",
+    "003": "นาย",
+    "004": "นางสาว",
+}
+NEW_STUDENT_PARENT_SOURCE_BY_RELATION = {
+    "01": "father",
+    "02": "mother",
+}
+NEW_STUDENT_PARENT_FIELD_SUFFIXES = (
+    "CifNo",
+    "CifType",
+    "TitleCode",
+    "FirstNameTh",
+    "LastNameTh",
+    "OccupationCode",
+    "Salary",
+    "TelNo",
+)
+NEW_STUDENT_MIRRORED_ADDRESS_FIELDS = (
+    ("psHomeIdNo", "homeIdNo"),
+    ("psPostalCode", "postalCode"),
+)
+NEW_STUDENT_DEFAULT_VALUES: dict[str, str] = {
+    "psHomeIdNo": "-",
+    "psPostalCode": "-",
+    "homeIdNo": "-",
+    "postalCode": "-",
+    "rubberDt": "10000.0",
+    "childIndex": "1",
+    "fatherCifNo": "-",
+    "fatherCifType": "O",
+    "fatherTitleCode": "003",
+    "fatherFirstNameTh": "-",
+    "fatherLastNameTh": "-",
+    "fatherOccupationCode": "5",
+    "fatherSalary": "0.0",
+    "fatherTelNo": "-",
+    "motherCifNo": "-",
+    "motherCifType": "O",
+    "motherTitleCode": "004",
+    "motherFirstNameTh": "-",
+    "motherLastNameTh": "-",
+    "motherOccupationCode": "5",
+    "motherSalary": "0.0",
+    "motherTelNo": "-",
 }
 
 
@@ -253,6 +327,10 @@ class CurrentStudentsModule(AutomationModule):
                 status=str(submitted.get("status") or ("success" if bool(submitted["applied"]) else "review")),
                 message=str(submitted["message"]),
                 page_url=page.url,
+                field_actions=submitted.get("field_actions"),
+                field_conflicts=submitted.get("field_conflicts"),
+                fallback=submitted.get("fallback"),
+                transfer_error=submitted.get("transfer_error"),
             )
 
         return self._result(
@@ -543,6 +621,8 @@ class CurrentStudentsModule(AutomationModule):
         try:
             if page.locator('form[action$="/studentin/add"]').count() > 0:
                 return True
+            if page.locator('form[action$="/studentnew/add"]').count() > 0:
+                return True
             return page.locator('input[name="firstNameTh"]').count() > 0 and page.locator(
                 'input[name="psHomeIdNo"]'
             ).count() > 0
@@ -598,10 +678,10 @@ class CurrentStudentsModule(AutomationModule):
         dry_run: bool,
     ) -> dict[str, object]:
         if self._is_history_form(page):
-            self._fill_student_history_form(page, record)
+            field_actions = self._fill_student_history_form(page, record) or []
             if dry_run:
-                return self._history_review_result()
-            return self._submit_student_history_form(page)
+                return self._with_field_actions(self._history_review_result(), field_actions)
+            return self._with_field_actions(self._submit_student_history_form(page), field_actions)
 
         try:
             with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
@@ -622,6 +702,13 @@ class CurrentStudentsModule(AutomationModule):
 
         error_text = self._extract_error_text(page)
         if error_text:
+            if self._is_transfer_citizen_not_found_error(error_text):
+                return self._submit_new_student_form(
+                    page,
+                    record,
+                    dry_run=dry_run,
+                    transfer_error_text=error_text,
+                )
             return {
                 "applied": False,
                 "note": "dmc_validation_error",
@@ -635,10 +722,185 @@ class CurrentStudentsModule(AutomationModule):
                 "message": "DMC accepted the add_cif form but did not open the full history form.",
             }
 
-        self._fill_student_history_form(page, record)
+        field_actions = self._fill_student_history_form(page, record) or []
         if not dry_run:
-            return self._submit_student_history_form(page)
-        return self._history_review_result()
+            return self._with_field_actions(self._submit_student_history_form(page), field_actions)
+        return self._with_field_actions(self._history_review_result(), field_actions)
+
+    def _is_transfer_citizen_not_found_error(self, error_text: str) -> bool:
+        return all(marker in error_text for marker in DMC_TRANSFER_CITIZEN_NOT_FOUND_MARKERS)
+
+    def _submit_new_student_form(
+        self,
+        page: Page,
+        record: DmcTransferInImportRecord,
+        *,
+        dry_run: bool,
+        transfer_error_text: str,
+    ) -> dict[str, object]:
+        try:
+            page.goto(DMC_NEW_STUDENT_ADD_URL, wait_until="domcontentloaded", timeout=90000)
+            page.wait_for_timeout(700)
+        except PlaywrightError as exc:
+            return {
+                "applied": False,
+                "note": "dmc_validation_error",
+                "message": (
+                    "DMC transfer-in could not find this citizen ID, and the new-student form "
+                    f"could not be opened: {exc.__class__.__name__}: {exc}"
+                ),
+                "transfer_error": transfer_error_text,
+                "fallback": "studentnew_add",
+            }
+
+        if "/auth/" in page.url:
+            return {
+                "applied": False,
+                "note": "session_expired",
+                "message": "DMC redirected to login while opening the new-student form.",
+                "transfer_error": transfer_error_text,
+                "fallback": "studentnew_add",
+            }
+
+        if not self._is_history_form(page):
+            return {
+                "applied": False,
+                "note": "dmc_new_student_form_not_opened",
+                "message": "DMC transfer-in could not find this citizen ID, but the new-student form was not reachable.",
+                "transfer_error": transfer_error_text,
+                "fallback": "studentnew_add",
+            }
+
+        new_student_record = self._with_new_student_defaults(record)
+        field_actions = self._fill_student_history_form(page, new_student_record) or []
+        if dry_run:
+            return self._with_fallback_metadata(
+                self._with_field_actions(self._history_review_result(), field_actions),
+                transfer_error_text=transfer_error_text,
+            )
+        return self._with_fallback_metadata(
+            self._with_field_actions(self._submit_student_history_form(page), field_actions),
+            transfer_error_text=transfer_error_text,
+        )
+
+    def _with_new_student_defaults(self, record: DmcTransferInImportRecord) -> DmcTransferInImportRecord:
+        values = dict(record.dmc_form_values)
+        self._mirror_new_student_address_values(values)
+        for name, value in NEW_STUDENT_DEFAULT_VALUES.items():
+            if not self._string_form_value(values.get(name)):
+                values[name] = value
+        self._apply_new_student_parent_defaults(values)
+        if not self._string_form_value(values.get("journeyTypeCode")):
+            values["journeyTypeCode"] = DEFAULT_JOURNEY_TYPE_CODE
+        if not self._string_form_value(values.get("timeDt")):
+            values["timeDt"] = DEFAULT_COMMUTE_MINUTES
+        title_code = self._new_student_title_code(record, values)
+        if title_code:
+            values["titleCode"] = title_code
+            gender_code = NEW_STUDENT_GENDER_BY_TITLE_CODE.get(title_code)
+            if gender_code:
+                values["genderCode"] = gender_code
+        return record.model_copy(update={"dmc_form_values": values})
+
+    def _mirror_new_student_address_values(self, values: dict[str, Any]) -> None:
+        for left_name, right_name in NEW_STUDENT_MIRRORED_ADDRESS_FIELDS:
+            left_value = self._string_form_value(values.get(left_name))
+            right_value = self._string_form_value(values.get(right_name))
+            if not left_value and right_value:
+                values[left_name] = values[right_name]
+            elif not right_value and left_value:
+                values[right_name] = values[left_name]
+
+    def _apply_new_student_parent_defaults(self, values: dict[str, Any]) -> None:
+        relation_code = self._field_text(values.get("parentFamilyRelationCode"))
+        preferred_source = NEW_STUDENT_PARENT_SOURCE_BY_RELATION.get(relation_code)
+        source_prefix = preferred_source or self._best_parent_source(values)
+        if source_prefix:
+            if not relation_code:
+                values["parentFamilyRelationCode"] = "01" if source_prefix == "father" else "02"
+            for suffix in NEW_STUDENT_PARENT_FIELD_SUFFIXES:
+                parent_name = f"parent{suffix}"
+                source_name = f"{source_prefix}{suffix}"
+                if not self._string_form_value(values.get(parent_name)) and self._string_form_value(values.get(source_name)):
+                    values[parent_name] = values[source_name]
+
+        if not self._string_form_value(values.get("parentFamilyRelationCode")):
+            values["parentFamilyRelationCode"] = "20"
+        if not self._string_form_value(values.get("parentCifNo")):
+            values["parentCifNo"] = "-"
+        if not self._string_form_value(values.get("parentCifType")):
+            values["parentCifType"] = "O"
+        if not self._string_form_value(values.get("parentTitleCode")):
+            values["parentTitleCode"] = "004" if self._field_text(values.get("parentFamilyRelationCode")) == "02" else "003"
+        if not self._string_form_value(values.get("parentFirstNameTh")):
+            values["parentFirstNameTh"] = "-"
+        if not self._string_form_value(values.get("parentLastNameTh")):
+            values["parentLastNameTh"] = "-"
+        if not self._string_form_value(values.get("parentOccupationCode")):
+            values["parentOccupationCode"] = "5"
+        if not self._string_form_value(values.get("parentSalary")):
+            values["parentSalary"] = "0.0"
+        if not self._string_form_value(values.get("parentTelNo")):
+            values["parentTelNo"] = "-"
+
+    def _best_parent_source(self, values: dict[str, Any]) -> str | None:
+        if self._has_meaningful_parent_source_value(values.get("fatherFirstNameTh")) or self._has_meaningful_parent_source_value(
+            values.get("fatherLastNameTh")
+        ):
+            return "father"
+        if self._has_meaningful_parent_source_value(values.get("motherFirstNameTh")) or self._has_meaningful_parent_source_value(
+            values.get("motherLastNameTh")
+        ):
+            return "mother"
+        return None
+
+    def _has_meaningful_parent_source_value(self, value: Any) -> bool:
+        text = self._string_form_value(value)
+        return bool(text and text != "-")
+
+    def _is_new_student_add_page(self, page: Page) -> bool:
+        return "/studentnew/add" in str(getattr(page, "url", ""))
+
+    def _new_student_title_code(self, record: DmcTransferInImportRecord, values: dict[str, Any]) -> str | None:
+        level_code = self._field_text(values.get("levelDtlCode")) or record.level_dtl_code
+        title_by_gender = NEW_STUDENT_TITLE_BY_LEVEL_AND_GENDER.get(level_code)
+        if not title_by_gender:
+            return None
+        gender_code = self._field_text(values.get("genderCode")).upper()
+        if gender_code not in title_by_gender:
+            gender_code = NEW_STUDENT_GENDER_BY_TITLE_CODE.get(self._field_text(values.get("titleCode")), "")
+        if gender_code not in title_by_gender:
+            full_name = self._field_text(record.full_name)
+            for title_code, label in NEW_STUDENT_TITLE_LABEL_BY_CODE.items():
+                if full_name.startswith(label):
+                    gender_code = NEW_STUDENT_GENDER_BY_TITLE_CODE.get(title_code, "")
+                    break
+        return title_by_gender.get(gender_code)
+
+    def _with_fallback_metadata(
+        self,
+        result: dict[str, object],
+        *,
+        transfer_error_text: str,
+    ) -> dict[str, object]:
+        next_result = dict(result)
+        next_result["fallback"] = "studentnew_add"
+        next_result["transfer_error"] = transfer_error_text
+        return next_result
+
+    def _with_field_actions(
+        self,
+        result: dict[str, object],
+        field_actions: list[dict[str, str | None]],
+    ) -> dict[str, object]:
+        if not field_actions:
+            return result
+        next_result = dict(result)
+        next_result["field_actions"] = field_actions
+        conflicts = [action for action in field_actions if action.get("action") == "skipped_existing_conflict"]
+        if conflicts:
+            next_result["field_conflicts"] = conflicts
+        return next_result
 
     def _history_review_result(self) -> dict[str, object]:
         return {
@@ -697,7 +959,7 @@ class CurrentStudentsModule(AutomationModule):
             "message": "DMC transfer-in history form was saved.",
         }
 
-    def _fill_student_history_form(self, page: Page, record: DmcTransferInImportRecord) -> None:
+    def _fill_student_history_form(self, page: Page, record: DmcTransferInImportRecord) -> list[dict[str, str | None]]:
         self._wait_for_history_form(page)
         values = dict(record.dmc_form_values)
         values.setdefault("studentNo", record.student_no)
@@ -706,13 +968,27 @@ class CurrentStudentsModule(AutomationModule):
         values.setdefault("cifNo", record.citizen_id)
         values.setdefault("cifNoChk", record.citizen_id)
         values.setdefault("cifType", "I")
+        if not self._string_form_value(values.get("journeyTypeCode")):
+            values["journeyTypeCode"] = DEFAULT_JOURNEY_TYPE_CODE
+        if not self._string_form_value(values.get("timeDt")):
+            values["timeDt"] = DEFAULT_COMMUTE_MINUTES
+        new_student_title_code = self._new_student_title_code(record, values) if self._is_new_student_add_page(page) else None
+        if new_student_title_code:
+            values["titleCode"] = new_student_title_code
+            gender_code_for_title = NEW_STUDENT_GENDER_BY_TITLE_CODE.get(new_student_title_code)
+            if gender_code_for_title:
+                values["genderCode"] = gender_code_for_title
 
+        self._fill_post_date(page, _today_buddhist_date_text())
         self._fill_admission_date(page, self._string_form_value(values.get("admissionDate")))
         non_chained_values = {
             name: value
             for name, value in values.items()
-            if name not in DMC_ADDRESS_CHAIN_FIELDS and name != "admissionDate"
+            if name not in DMC_ADDRESS_CHAIN_FIELDS and name not in {"admissionDate", "postDate"}
         }
+        if new_student_title_code:
+            non_chained_values.pop("titleCode", None)
+        field_actions = self._preserve_existing_parent_name_fields(page, non_chained_values)
         self._fill_form_values(page, non_chained_values)
         self._fill_address_chain(
             page,
@@ -731,7 +1007,116 @@ class CurrentStudentsModule(AutomationModule):
         gender_code = self._string_form_value(values.get("genderCode"))
         if gender_code:
             self._fill_form_values(page, {"genderCode": gender_code})
+        if new_student_title_code:
+            self._fill_title_code(page, new_student_title_code)
         page.wait_for_timeout(300)
+        return field_actions
+
+    def _preserve_existing_parent_name_fields(
+        self,
+        page: Page,
+        values: dict[str, Any],
+    ) -> list[dict[str, str | None]]:
+        target_names = [name for name in DMC_PRESERVE_EXISTING_PARENT_NAME_FIELDS if name in values]
+        if not target_names:
+            return []
+
+        existing_values = self._read_named_field_values(page, target_names)
+        actions: list[dict[str, str | None]] = []
+        for name in target_names:
+            incoming_value = self._field_text(values.get(name))
+            existing_value = self._field_text(existing_values.get(name))
+            if not incoming_value:
+                values.pop(name, None)
+                actions.append(
+                    {
+                        "field_name": name,
+                        "action": "skipped_blank_source",
+                        "existing_value": existing_value or None,
+                        "incoming_value": None,
+                    }
+                )
+                continue
+            if not existing_value:
+                actions.append(
+                    {
+                        "field_name": name,
+                        "action": "filled_blank",
+                        "existing_value": None,
+                        "incoming_value": incoming_value,
+                    }
+                )
+                continue
+
+            values.pop(name, None)
+            action = "skipped_existing_same" if self._same_field_text(existing_value, incoming_value) else "skipped_existing_conflict"
+            actions.append(
+                {
+                    "field_name": name,
+                    "action": action,
+                    "existing_value": existing_value,
+                    "incoming_value": incoming_value,
+                }
+            )
+        return actions
+
+    def _read_named_field_values(self, page: Page, field_names: list[str]) -> dict[str, str]:
+        try:
+            result = page.evaluate(
+                """
+                (fieldNames) => {
+                  const values = {};
+                  for (const name of fieldNames) {
+                    const fields = Array.from(document.getElementsByName(name));
+                    if (fields.length === 0) continue;
+                    const first = fields[0];
+                    const type = (first.getAttribute('type') || '').toLowerCase();
+                    if (type === 'radio') {
+                      const checked = fields.find((field) => field.checked);
+                      values[name] = checked ? checked.value : "";
+                      continue;
+                    }
+                    if (type === 'checkbox') {
+                      values[name] = fields
+                        .filter((field) => field.checked)
+                        .map((field) => field.value)
+                        .join(",");
+                      continue;
+                    }
+                    values[name] = "value" in first ? first.value : "";
+                  }
+                  return values;
+                }
+                """,
+                field_names,
+            )
+        except PlaywrightError:
+            return {}
+        if not isinstance(result, dict):
+            return {}
+        return {str(key): self._field_text(value) for key, value in result.items()}
+
+    def _field_text(self, value: Any) -> str:
+        if value is None or isinstance(value, bool | list | dict):
+            return ""
+        return str(value).strip()
+
+    def _same_field_text(self, left: str, right: str) -> bool:
+        return " ".join(left.split()) == " ".join(right.split())
+
+    def _fill_post_date(self, page: Page, value: str) -> None:
+        page.evaluate(
+            """
+            (value) => {
+              const field = document.querySelector('[name="postDate"]');
+              if (!field || !value) return;
+              field.value = value;
+              field.dispatchEvent(new Event('input', { bubbles: true }));
+              field.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            """,
+            value,
+        )
 
     def _fill_admission_date(self, page: Page, value: str | None) -> None:
         page.evaluate(
@@ -896,6 +1281,48 @@ class CurrentStudentsModule(AutomationModule):
             return True
         except TimeoutError:
             return False
+
+    def _fill_title_code(self, page: Page, title_code: str) -> None:
+        label = NEW_STUDENT_TITLE_LABEL_BY_CODE.get(title_code, "")
+        page.evaluate(
+            """
+            ([fieldValue, label]) => {
+              const field = document.getElementsByName('titleCode')[0];
+              if (!field) return false;
+              const dispatch = (element) => {
+                element.dispatchEvent(new Event('input', { bubbles: true }));
+                element.dispatchEvent(new Event('change', { bubbles: true }));
+                try {
+                  if (window.jQuery) {
+                    window.jQuery(element).trigger('change').trigger('chosen:updated').trigger('liszt:updated');
+                  }
+                } catch (_error) {
+                }
+              };
+              if (field.tagName !== 'SELECT') {
+                field.value = fieldValue;
+                dispatch(field);
+                return true;
+              }
+              const normalize = (value) => String(value || '').replace(/[\\s.]+/g, '');
+              const options = Array.from(field.options);
+              const labelKey = normalize(label);
+              const option =
+                (labelKey && options.find((item) => normalize(item.textContent) === labelKey)) ||
+                (labelKey && options.find((item) => normalize(item.textContent).includes(labelKey))) ||
+                options.find((item) => item.value === fieldValue);
+              if (!option) return false;
+              field.value = option.value;
+              options.forEach((item) => {
+                item.selected = item === option;
+              });
+              field.selectedIndex = options.indexOf(option);
+              dispatch(field);
+              return true;
+            }
+            """,
+            [title_code, label],
+        )
 
     def _set_named_field_value(self, page: Page, name: str, value: str, *, trigger_change: bool = True) -> None:
         page.evaluate(
@@ -1073,8 +1500,12 @@ class CurrentStudentsModule(AutomationModule):
         status: str,
         message: str,
         page_url: str,
+        field_actions: object | None = None,
+        field_conflicts: object | None = None,
+        fallback: object | None = None,
+        transfer_error: object | None = None,
     ) -> dict[str, Any]:
-        return {
+        result = {
             "page": record_number,
             "portal_row_index": record_number,
             "matched_order": record.row_index,
@@ -1091,6 +1522,15 @@ class CurrentStudentsModule(AutomationModule):
             "applied": applied,
             "page_url": page_url,
         }
+        if isinstance(field_actions, list) and field_actions:
+            result["field_actions"] = field_actions
+        if isinstance(field_conflicts, list) and field_conflicts:
+            result["field_conflicts"] = field_conflicts
+        if isinstance(fallback, str) and fallback:
+            result["fallback"] = fallback
+        if isinstance(transfer_error, str) and transfer_error:
+            result["transfer_error"] = transfer_error
+        return result
 
     def _handle_record_result(self, result: dict[str, Any], context: JobContext) -> None:
         context.snapshot.processed += 1
@@ -1172,13 +1612,19 @@ class CurrentStudentsModule(AutomationModule):
             "note",
             "applied",
             "message",
+            "fallback",
+            "transfer_error",
+            "field_conflicts",
+            "field_actions",
             "page_url",
         ]
         self._write_csv(report_csv, results, columns)
         review_rows = [
             result
             for result in results
-            if result.get("status") != "success" or result.get("note") == "dmc_validation_error"
+            if result.get("status") != "success"
+            or result.get("note") == "dmc_validation_error"
+            or result.get("field_conflicts")
         ]
         self._write_csv(review_csv, review_rows, columns)
         return report_json, report_csv, review_csv
@@ -1187,7 +1633,20 @@ class CurrentStudentsModule(AutomationModule):
         with path.open("w", newline="", encoding="utf-8-sig") as handle:
             writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="ignore")
             writer.writeheader()
-            writer.writerows(rows)
+            writer.writerows(
+                {
+                    column: self._csv_value(row.get(column))
+                    for column in columns
+                }
+                for row in rows
+            )
+
+    def _csv_value(self, value: Any) -> str | int | float | bool | None:
+        if isinstance(value, list | dict):
+            return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        if value is None or isinstance(value, str | int | float | bool):
+            return value
+        return str(value)
 
     def _launch_browser_context(
         self,
@@ -1244,3 +1703,8 @@ class CurrentStudentsModule(AutomationModule):
                 or "singleton" in message
             )
         )
+
+
+def _today_buddhist_date_text(today: date | None = None) -> str:
+    current = today or datetime.now(BANGKOK_TIMEZONE).date()
+    return f"{current.day:02d}/{current.month:02d}/{current.year + 543}"

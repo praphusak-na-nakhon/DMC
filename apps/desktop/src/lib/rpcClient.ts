@@ -10,6 +10,7 @@ import type {
   BackupCreateResponse,
   BrowserRuntimeStatus,
   CurrentStudentOperationType,
+  DmcFormMatchConfirmation,
   ExportDmcFormJsonResponse,
   ExportCurrentStudentsBlankFormResponse,
   ExportCurrentStudentsImportExcelResponse,
@@ -285,6 +286,7 @@ export async function previewDmcFormJson(input: {
   schoolYear: number;
   gradeLevels: number[] | null;
   admissionDate?: string | null;
+  confirmedMatches?: DmcFormMatchConfirmation[];
 }): Promise<PreviewDmcFormJsonResponse> {
   const result = await sidecarRequest<unknown>("preview_dmc_form_json", {
     roster_excel_path: input.rosterExcelPath,
@@ -294,6 +296,7 @@ export async function previewDmcFormJson(input: {
     school_year: input.schoolYear,
     grade_levels: input.gradeLevels,
     admission_date: input.admissionDate ?? null,
+    confirmed_matches: input.confirmedMatches ?? [],
   });
   return parsePreviewDmcFormJsonResponse(result);
 }
@@ -307,6 +310,8 @@ export async function exportDmcFormJson(input: {
   gradeLevels: number[] | null;
   admissionDate?: string | null;
   outputPath: string | null;
+  confirmedMatches?: DmcFormMatchConfirmation[];
+  excludedRecordIds?: string[];
 }): Promise<ExportDmcFormJsonResponse> {
   const result = await sidecarRequest<unknown>("export_dmc_form_json", {
     roster_excel_path: input.rosterExcelPath,
@@ -317,6 +322,8 @@ export async function exportDmcFormJson(input: {
     grade_levels: input.gradeLevels,
     admission_date: input.admissionDate ?? null,
     output_path: input.outputPath,
+    confirmed_matches: input.confirmedMatches ?? [],
+    excluded_record_ids: input.excludedRecordIds ?? [],
   });
   return parseExportDmcFormJsonResponse(result);
 }

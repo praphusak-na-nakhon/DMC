@@ -17,6 +17,8 @@ from dmc_sidecar.gemini_ocr import (
     GeminiOcrUsageMetadata,
     _generate_structured_json_with_gemini,
     _generate_structured_json_with_gemini_batch,
+    _normalized_structured_payload,
+    _response_json,
     ocr_dmc_form_with_gemini,
 )
 
@@ -28,6 +30,36 @@ def _pdf_with_pages(page_count: int) -> bytes:
         writer.add_blank_page(width=72, height=72)
     writer.write(stream)
     return stream.getvalue()
+
+
+def test_response_json_accepts_single_object_with_extra_closing_brace() -> None:
+    payload = _response_json(
+        SimpleNamespace(
+            text=(
+                '{"schema_version":"dmc_assistant_structured_ocr.v1",'
+                '"records":[{"record_type":"dmc_form","fields":{"citizen_id":"1819900931740"}}]}'
+                "\n}"
+            )
+        )
+    )
+
+    assert payload["records"][0]["fields"]["citizen_id"] == "1819900931740"
+
+
+def test_normalized_structured_payload_converts_null_needs_review_to_empty_list() -> None:
+    payload = _normalized_structured_payload(
+        {
+            "records": [
+                {
+                    "record_type": "civil_registration",
+                    "fields": {"citizen_id": "1819900964641"},
+                    "needs_review": None,
+                }
+            ]
+        }
+    )
+
+    assert payload["records"][0]["needs_review"] == []
 
 
 def test_gemini_upload_uses_files_api_and_generate_content(

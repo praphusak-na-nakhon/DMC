@@ -64,6 +64,11 @@ function toUserError(error: unknown): string {
   return describeUserFacingError(error);
 }
 
+function errorHasCode(error: unknown, code: string): boolean {
+  const raw = error instanceof Error ? error.message : String(error);
+  return raw.includes(code);
+}
+
 type ConfirmDialogState = {
   type: "archive_old_jobs" | "start_live" | "start_current_students_live" | "cancel_job" | "close_active_job";
   title: string;
@@ -894,10 +899,23 @@ export function App() {
         return;
       }
       if (!dryRun) {
-        await handleRefreshAccount(true);
-        const latestAccount = await getAccountStatus();
-        setAccountStatus(latestAccount);
-        if (!latestAccount.signed_in || !latestAccount.can_start_credit_jobs) {
+        let latestAccount = accountStatus;
+        let usingCachedAccountAfterCloudFailure = false;
+        try {
+          await handleRefreshAccount(true);
+          latestAccount = await getAccountStatus();
+          setAccountStatus(latestAccount);
+        } catch (error) {
+          if (!errorHasCode(error, "ACCOUNT_CLOUD_UNAVAILABLE") || !accountStatus?.signed_in) {
+            throw error;
+          }
+          usingCachedAccountAfterCloudFailure = true;
+          latestAccount = accountStatus;
+          pushSidecarMessage(
+            "account cloud unavailable; using cached credit snapshot for currentStudents and letting sidecar bypass reservation",
+          );
+        }
+        if (!latestAccount?.signed_in || (!latestAccount.can_start_credit_jobs && !usingCachedAccountAfterCloudFailure)) {
           setErrorMessage(latestAccount.message ?? messages.app.account.signInBeforeLive);
           return;
         }
@@ -922,7 +940,14 @@ export function App() {
       upsertExistingJob(draft);
       pushSidecarMessage(`${dryRun ? "เริ่ม dry run ย้ายเข้า" : "เริ่มงานย้ายเข้า DMC จริง"}: ${result.job_id}`);
       if (!dryRun) {
-        await handleRefreshAccount(true);
+        try {
+          await handleRefreshAccount(true);
+        } catch (error) {
+          if (!errorHasCode(error, "ACCOUNT_CLOUD_UNAVAILABLE")) {
+            throw error;
+          }
+          pushSidecarMessage("account cloud unavailable after starting currentStudents; job is running with local bypass");
+        }
       }
       await handleLoadJobs();
     } catch (error) {

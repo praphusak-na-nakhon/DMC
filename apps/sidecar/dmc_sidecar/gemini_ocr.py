@@ -1047,9 +1047,25 @@ def _response_json(response: Any) -> dict[str, Any]:
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise DomainError("GEMINIOCR_RESPONSE_INVALID", f"Gemini OCR returned invalid structured JSON: {exc}") from exc
+        payload = _response_json_with_extra_closing_braces(text)
+        if payload is None:
+            raise DomainError("GEMINIOCR_RESPONSE_INVALID", f"Gemini OCR returned invalid structured JSON: {exc}") from exc
     if not isinstance(payload, dict):
         raise DomainError("GEMINIOCR_RESPONSE_INVALID", "Gemini OCR structured JSON root must be an object.")
+    return payload
+
+
+def _response_json_with_extra_closing_braces(text: str) -> dict[str, Any] | None:
+    decoder = json.JSONDecoder()
+    try:
+        payload, end_index = decoder.raw_decode(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    trailing = text[end_index:].strip()
+    if trailing and not re.fullmatch(r"}+", trailing):
+        return None
     return payload
 
 
@@ -1061,7 +1077,20 @@ def _normalized_structured_payload(payload: dict[str, Any]) -> dict[str, Any]:
     records = normalized.get("records")
     if not isinstance(records, list):
         raise DomainError("GEMINIOCR_RESPONSE_INVALID", "Gemini OCR structured JSON is missing records.")
-    normalized["records"] = [record for record in records if isinstance(record, dict)]
+    normalized_records: list[dict[str, Any]] = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        normalized_record = dict(record)
+        if not isinstance(normalized_record.get("fields"), dict):
+            normalized_record["fields"] = {}
+        needs_review = normalized_record.get("needs_review")
+        if not isinstance(needs_review, list):
+            normalized_record["needs_review"] = []
+        else:
+            normalized_record["needs_review"] = [item for item in needs_review if isinstance(item, str)]
+        normalized_records.append(normalized_record)
+    normalized["records"] = normalized_records
     if not normalized["records"]:
         raise DomainError("GEMINIOCR_RESPONSE_INVALID", "Gemini OCR structured JSON returned no records.")
     return normalized

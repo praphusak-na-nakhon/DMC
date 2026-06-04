@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 from openpyxl import Workbook, load_workbook  # type: ignore[import-untyped]
 from openpyxl.styles import Font, PatternFill  # type: ignore[import-untyped]
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .config import reports_dir
 from .errors import DomainError
@@ -43,6 +43,13 @@ TITLE_PREFIXES = (
     "Ms",
 )
 EMPTY_MARKERS = {"", "-", "—", "–", "........................", "..................."}
+DMC_DEFAULT_MISSING_SIBLING_COUNT = "0"
+DMC_DEFAULT_MISSING_MARRIAGE_STATUS_CODE = "01"
+DMC_DEFAULT_MISSING_OCCUPATION_CODE = "5"
+DMC_DEFAULT_MISSING_COMMUTE_MINUTES = "10.0"
+DMC_DEFAULT_MISSING_JOURNEY_TYPE_CODE = "02"
+DMC_DEFAULT_MISSING_RACE_CODE = "099"
+DMC_OTHER_OCCUPATION_CODE = "99"
 
 IMPORT_FIELD_DEFINITIONS: tuple[tuple[str, str, bool], ...] = (
     ("operation_type", "ประเภทงาน", True),
@@ -185,6 +192,7 @@ DMC_TRANSFER_IN_LEVEL_CODES: dict[int, str] = {
     15: "15",
 }
 DMC_TRANSFER_IN_VALID_LEVEL_CODES = {f"{index:02d}" for index in range(1, 19)}
+OCR_FUZZY_MATCH_THRESHOLD = 0.9
 DMC_TITLE_CODE_ITEMS: tuple[tuple[str, str], ...] = (
     ("เด็กชาย", "001"),
     ("ด.ช.", "001"),
@@ -300,6 +308,7 @@ DMC_KRABI_SUBDISTRICT_CODES = {
     "คลองเขม้า": "81080400",
     "โคกยาง": "81080500",
     "ตลิ่งชัน": "81080600",
+    "ปกาไส": "81080700",
     "ปกาสัย": "81080700",
     "ห้วยยูง": "81080800",
 }
@@ -348,6 +357,9 @@ DMC_PARENT_RELATION_CODES: tuple[tuple[str, str], ...] = (
     ("ผู้ปกครอง", "20"),
 )
 DMC_MARRIAGE_STATUS_CODES: tuple[tuple[str, str], ...] = (
+    ("สมรส", "01"),
+    ("อยู่ด้วยกัน", "05"),
+    ("หม้าย", "04"),
     ("บิดาและมารดาถึงแก่กรรม", "09"),
     ("บิดาถึงแก่กรรมมารดาแต่งงานใหม่", "10"),
     ("มารดาถึงแก่กรรมบิดาแต่งงานใหม่", "11"),
@@ -361,14 +373,19 @@ DMC_MARRIAGE_STATUS_CODES: tuple[tuple[str, str], ...] = (
 )
 DMC_OCCUPATION_CODES: tuple[tuple[str, str], ...] = (
     ("ไม่ได้ประกอบอาชีพ", "0"),
+    ("แม่บ้าน", "0"),
     ("รับราชการ", "1"),
     ("รัฐวิสาหกิจ", "2"),
     ("ค้าขาย", "3"),
     ("ธุรกิจ", "3"),
+    ("ทำสวน", "4"),
+    ("ชาวสวน", "4"),
     ("เกษตร", "4"),
     ("รับจ้าง", "5"),
+    ("ช่าง", "5"),
     ("ลูกจ้าง", "6"),
     ("พนักงาน", "6"),
+    ("พยาบาล", "6"),
     ("เกษียณ", "7"),
     ("พระ", "8"),
     ("นักบวช", "8"),
@@ -508,6 +525,13 @@ class MatchSuggestion(BaseModel):
     row_index: int
 
 
+class DmcFormMatchConfirmation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    record_id: str
+    student_no: str
+
+
 class RosterStudent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -594,6 +618,15 @@ class _StructuredOcrRecordPayload(BaseModel):
     fields: dict[str, Any] = Field(default_factory=dict)
     needs_review: list[str] = Field(default_factory=list)
 
+    @field_validator("needs_review", mode="before")
+    @classmethod
+    def _normalize_needs_review(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [str(item) for item in value if item is not None]
+        return [str(value)]
+
 
 class _StructuredOcrPayload(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -658,6 +691,7 @@ class ReconcileCurrentStudentsRequest(BaseModel):
     grade_levels: list[int] | None = None
     operation_type: OperationType = "current"
     fuzzy_match_threshold: float = Field(default=0.9, ge=0, le=1)
+    confirmed_matches: list[DmcFormMatchConfirmation] = Field(default_factory=list)
 
 
 class CurrentStudentsReconciliationResponse(BaseModel):
@@ -751,6 +785,7 @@ class PreviewDmcFormJsonRequest(BaseModel):
     school_year: int
     grade_levels: list[int] | None = None
     admission_date: str | None = None
+    confirmed_matches: list[DmcFormMatchConfirmation] = Field(default_factory=list)
 
 
 class PreviewDmcFormJsonResponse(BaseModel):
@@ -780,6 +815,8 @@ class ExportDmcFormJsonRequest(BaseModel):
     grade_levels: list[int] | None = None
     admission_date: str | None = None
     output_path: str | None = None
+    confirmed_matches: list[DmcFormMatchConfirmation] = Field(default_factory=list)
+    excluded_record_ids: list[str] = Field(default_factory=list)
 
 
 class ExportDmcFormJsonResponse(BaseModel):
@@ -899,6 +936,7 @@ def reconcile_current_students(request: ReconcileCurrentStudentsRequest) -> Curr
         civil_records=civil_records,
         operation_type=request.operation_type,
         fuzzy_match_threshold=request.fuzzy_match_threshold,
+        confirmed_ocr_matches=_confirmed_match_map(request.confirmed_matches),
     )
     records = sorted(records, key=_record_sort_key)
     review_queue = [record for record in records if record.match_status != "auto_matched"]
@@ -993,6 +1031,8 @@ def preview_dmc_form_json(request: PreviewDmcFormJsonRequest) -> PreviewDmcFormJ
         school_year=request.school_year,
         grade_levels=request.grade_levels,
         admission_date=request.admission_date,
+        confirmed_matches=request.confirmed_matches,
+        skip_unconfirmed_ocr_records=False,
     )
     return PreviewDmcFormJsonResponse(
         module="formConverter",
@@ -1018,6 +1058,9 @@ def export_dmc_form_json(request: ExportDmcFormJsonRequest) -> ExportDmcFormJson
         school_year=request.school_year,
         grade_levels=request.grade_levels,
         admission_date=request.admission_date,
+        confirmed_matches=request.confirmed_matches,
+        skip_unconfirmed_ocr_records=True,
+        excluded_record_ids=request.excluded_record_ids,
     )
     output_path = Path(request.output_path) if request.output_path else _default_form_json_output_path(request.school_year)
     if output_path.suffix.lower() != ".json":
@@ -1064,6 +1107,9 @@ def _build_dmc_form_json_payload(
     school_year: int,
     grade_levels: list[int] | None,
     admission_date: str | None,
+    confirmed_matches: list[DmcFormMatchConfirmation],
+    skip_unconfirmed_ocr_records: bool,
+    excluded_record_ids: Sequence[str] = (),
 ) -> _DmcFormJsonPayload:
     if not ocr_markdown_paths:
         raise DomainError(
@@ -1079,14 +1125,22 @@ def _build_dmc_form_json_payload(
             school_year=school_year,
             grade_levels=grade_levels,
             operation_type="current",
+            confirmed_matches=confirmed_matches,
         )
     )
-    export_records = [record for record in reconciliation.records if _has_source(record, "ocr_form")]
-    if not export_records:
+    ocr_records = [record for record in reconciliation.records if _has_source(record, "ocr_form")]
+    if not ocr_records:
         raise DomainError(
             "CURRENT_STUDENTS_OCR_NO_RECORDS",
             "No OCR markdown student records were found for DMC form conversion export.",
         )
+    excluded_record_id_set = set(excluded_record_ids)
+    export_records = [
+        record
+        for record in ocr_records
+        if not skip_unconfirmed_ocr_records or not _is_unconfirmed_ocr_record(record)
+        if record.record_id not in excluded_record_id_set
+    ]
 
     return _DmcFormJsonPayload(
         field_labels={field_name: IMPORT_FIELD_LABELS[field_name] for field_name in FORM_JSON_FIELD_NAMES},
@@ -1942,6 +1996,7 @@ def _build_canonical_records(
     civil_records: list[CivilRegistrationRecord],
     operation_type: OperationType,
     fuzzy_match_threshold: float,
+    confirmed_ocr_matches: dict[str, str],
 ) -> tuple[list[CanonicalStudentRecord], int, int]:
     records_by_roster_key = {_roster_key(student): _base_record(student, operation_type) for student in roster}
     roster_by_name: dict[str, list[RosterStudent]] = defaultdict(list)
@@ -2037,17 +2092,39 @@ def _build_canonical_records(
     ocr_unmatched = 0
     for ocr_record in ocr_records:
         target = None
-        if ocr_record.citizen_id:
+        suggestions = _best_ocr_suggestions(ocr_record, roster, limit=3)
+        confirmed_student_no = confirmed_ocr_matches.get(_ocr_record_key(ocr_record)) or confirmed_ocr_matches.get(
+            ocr_record.record_id
+        )
+        if confirmed_student_no:
+            confirmed_student = roster_by_student_no.get(confirmed_student_no)
+            if confirmed_student is not None:
+                target = records_by_roster_key[_roster_key(confirmed_student)]
+                target.match_score = _suggestion_score_for_student_no(suggestions, confirmed_student_no)
+                target.suggestions = suggestions
+                _add_reason(target, "user_confirmed_ocr_roster_match")
+        if target is None and ocr_record.citizen_id:
             target = records_by_citizen_id.get(ocr_record.citizen_id)
         if target is None and ocr_record.student_no:
             target = records_by_student_no.get(ocr_record.student_no)
         if target is None and ocr_record.name_key:
             target = records_by_name.get(ocr_record.name_key)
         if target is None:
-            records.append(_ocr_only_record(ocr_record, operation_type))
+            best_score = suggestions[0].score if suggestions else None
+            if best_score is not None and best_score >= OCR_FUZZY_MATCH_THRESHOLD:
+                ocr_status: MatchStatus = "needs_review"
+                reason = "ocr_fuzzy_roster_match_candidate"
+            else:
+                ocr_status = "new_or_transfer_candidate" if ocr_record.citizen_id_valid else "invalid_id"
+                reason = "ocr_form_not_linked_to_roster_or_thai_id_scan"
+            records.append(_ocr_only_record(ocr_record, operation_type, ocr_status, reason, suggestions))
             ocr_unmatched += 1
         else:
             _attach_ocr(target, ocr_record)
+            if suggestions and not target.suggestions:
+                target.suggestions = suggestions
+            if target.citizen_id:
+                records_by_citizen_id[target.citizen_id] = target
             ocr_attached += 1
 
     _promote_registered_address_to_current_when_matching(records)
@@ -2202,10 +2279,11 @@ def _dmc_form_values(
         "nationCode",
         _dmc_lookup_code(_dmc_field_text(record, "nationality", default_school_year), DMC_NATION_CODES),
     )
+    race = _dmc_field_text(record, "race", default_school_year)
     _dmc_put_value(
         values,
         "raceCode",
-        _dmc_lookup_code(_dmc_field_text(record, "race", default_school_year), DMC_RACE_CODES),
+        DMC_DEFAULT_MISSING_RACE_CODE if race is None else _dmc_lookup_code(race, DMC_RACE_CODES),
     )
     _dmc_put_value(
         values,
@@ -2234,19 +2312,57 @@ def _dmc_form_values(
     _dmc_put_value(
         values,
         "marriageStatusCode",
-        _dmc_code_from_items(
-            _dmc_field_text(record, "parents_marital_status", default_school_year),
-            DMC_MARRIAGE_STATUS_CODES,
+        _dmc_marriage_status_code(_dmc_field_text(record, "parents_marital_status", default_school_year)),
+    )
+    _dmc_put_value(
+        values,
+        "numOfOlderBrothers",
+        _dmc_integer_text(
+            record,
+            "older_brothers",
+            default_school_year,
+            default=DMC_DEFAULT_MISSING_SIBLING_COUNT,
         ),
     )
-    _dmc_put_value(values, "numOfOlderBrothers", _dmc_integer_text(record, "older_brothers", default_school_year))
-    _dmc_put_value(values, "numOfYoungerBrothers", _dmc_integer_text(record, "younger_brothers", default_school_year))
-    _dmc_put_value(values, "numOfOlderSisters", _dmc_integer_text(record, "older_sisters", default_school_year))
-    _dmc_put_value(values, "numOfYoungerSisters", _dmc_integer_text(record, "younger_sisters", default_school_year))
+    _dmc_put_value(
+        values,
+        "numOfYoungerBrothers",
+        _dmc_integer_text(
+            record,
+            "younger_brothers",
+            default_school_year,
+            default=DMC_DEFAULT_MISSING_SIBLING_COUNT,
+        ),
+    )
+    _dmc_put_value(
+        values,
+        "numOfOlderSisters",
+        _dmc_integer_text(
+            record,
+            "older_sisters",
+            default_school_year,
+            default=DMC_DEFAULT_MISSING_SIBLING_COUNT,
+        ),
+    )
+    _dmc_put_value(
+        values,
+        "numOfYoungerSisters",
+        _dmc_integer_text(
+            record,
+            "younger_sisters",
+            default_school_year,
+            default=DMC_DEFAULT_MISSING_SIBLING_COUNT,
+        ),
+    )
     _dmc_put_value(
         values,
         "numOfStudyingSiblings",
-        _dmc_integer_text(record, "siblings_studying_count", default_school_year),
+        _dmc_integer_text(
+            record,
+            "siblings_studying_count",
+            default_school_year,
+            default=DMC_DEFAULT_MISSING_SIBLING_COUNT,
+        ),
     )
     _dmc_put_value(values, "childIndex", _dmc_integer_text(record, "child_order", default_school_year))
 
@@ -2280,15 +2396,21 @@ def _dmc_form_values(
     )
     _dmc_put_value(values, "parentFamilyRelationCode", relation_code)
 
+    commute_method = _dmc_field_text(record, "commute_method", default_school_year)
     _dmc_put_value(
         values,
         "journeyTypeCode",
-        _dmc_code_from_items(_dmc_field_text(record, "commute_method", default_school_year), DMC_JOURNEY_TYPE_CODES),
+        DMC_DEFAULT_MISSING_JOURNEY_TYPE_CODE
+        if commute_method is None
+        else _dmc_code_from_items(commute_method, DMC_JOURNEY_TYPE_CODES),
     )
     _dmc_put_value(
         values,
         "timeDt",
-        _dmc_decimal_text(_dmc_field_text(record, "commute_minutes", default_school_year)),
+        _dmc_decimal_text(
+            _dmc_field_text(record, "commute_minutes", default_school_year),
+            default=DMC_DEFAULT_MISSING_COMMUTE_MINUTES,
+        ),
     )
     _dmc_put_value(values, "waterDt", "0.0")
     _dmc_put_value(values, "rockDt", "0.0")
@@ -2388,6 +2510,13 @@ def _dmc_code_from_items(value: str | None, items: Sequence[tuple[str, str]]) ->
         if marker.lower() in lowered:
             return code
     return None
+
+
+def _dmc_marriage_status_code(value: str | None) -> str | None:
+    text = _clean_text(value)
+    if not text:
+        return DMC_DEFAULT_MISSING_MARRIAGE_STATUS_CODE
+    return _dmc_code_from_items(text, DMC_MARRIAGE_STATUS_CODES)
 
 
 def _dmc_blood_code(value: str | None) -> str | None:
@@ -2552,9 +2681,15 @@ def _dmc_admission_date_text(value: str | None) -> str | None:
     return _dmc_date_text(text)
 
 
-def _dmc_integer_text(record: CanonicalStudentRecord, field_name: str, default_school_year: int | None) -> str | None:
+def _dmc_integer_text(
+    record: CanonicalStudentRecord,
+    field_name: str,
+    default_school_year: int | None,
+    *,
+    default: str | None = None,
+) -> str | None:
     value = _dmc_field_text(record, field_name, default_school_year)
-    return _first_digits(value)
+    return _first_digits(value) or default
 
 
 def _dmc_decimal_text(value: str | None, *, multiplier: float = 1.0, default: str | None = None) -> str | None:
@@ -2605,8 +2740,10 @@ def _dmc_put_address_values(
     province_code = _dmc_province_code(text("province"))
     district_code = _dmc_district_code(text("district"), province_code)
     subdistrict_code = _dmc_subdistrict_code(text("subdistrict"), province_code, district_code)
-    if district_code is None and subdistrict_code is not None:
-        district_code = f"{subdistrict_code[:4]}0000"
+    if subdistrict_code is not None:
+        inferred_district_code = f"{subdistrict_code[:4]}0000"
+        if district_code is None or district_code[:4] != subdistrict_code[:4]:
+            district_code = inferred_district_code
     if province_code is None and district_code is not None:
         province_code = f"{district_code[:2]}000000"
     postal_code = _first_digits(text("postal_code"))
@@ -2672,13 +2809,16 @@ def _dmc_put_person_values(
     last_name = _dmc_field_text(record, f"{person}.last_name", default_school_year)
     card_type = _dmc_field_text(record, f"{person}.card_type", default_school_year)
     blood_type = _dmc_blood_code(_dmc_field_text(record, f"{person}.blood_type", default_school_year))
-    occupation = _dmc_code_from_items(
-        _dmc_field_text(record, f"{person}.occupation", default_school_year),
-        DMC_OCCUPATION_CODES,
-    )
+    occupation_text = _dmc_field_text(record, f"{person}.occupation", default_school_year)
+    occupation = _dmc_code_from_items(occupation_text, DMC_OCCUPATION_CODES)
     income = _dmc_field_text(record, f"{person}.income_text", default_school_year)
     phone = _dmc_field_text(record, f"{person}.phone", default_school_year)
-    has_person = any([citizen_id, first_name, last_name, card_type, blood_type, occupation, income, phone])
+    has_person_without_occupation = any([citizen_id, first_name, last_name, card_type, blood_type, income, phone])
+    if occupation is None:
+        occupation = DMC_OTHER_OCCUPATION_CODE if _clean_text(occupation_text) else None
+    if occupation is None and has_person_without_occupation:
+        occupation = DMC_DEFAULT_MISSING_OCCUPATION_CODE
+    has_person = any([has_person_without_occupation, occupation])
     if not has_person:
         return
 
@@ -3483,9 +3623,14 @@ def _scan_only_record(
     return record
 
 
-def _ocr_only_record(ocr_record: OcrFormRecord, operation_type: OperationType) -> CanonicalStudentRecord:
-    reasons = ["ocr_form_not_linked_to_roster_or_thai_id_scan"]
-    status: MatchStatus = "new_or_transfer_candidate" if ocr_record.citizen_id_valid else "invalid_id"
+def _ocr_only_record(
+    ocr_record: OcrFormRecord,
+    operation_type: OperationType,
+    status: MatchStatus,
+    reason: str,
+    suggestions: list[MatchSuggestion],
+) -> CanonicalStudentRecord:
+    reasons = [reason]
     if not ocr_record.citizen_id_valid:
         reasons.append("invalid_or_missing_ocr_citizen_id")
     return CanonicalStudentRecord(
@@ -3501,7 +3646,9 @@ def _ocr_only_record(ocr_record: OcrFormRecord, operation_type: OperationType) -
         first_name=ocr_record.first_name,
         last_name=ocr_record.last_name,
         full_name=ocr_record.full_name,
+        match_score=suggestions[0].score if suggestions else None,
         review_reasons=reasons,
+        suggestions=suggestions,
         dmc_fields=ocr_record.fields,
         sources=[SourceReference(source="ocr_form", source_path=ocr_record.source_path)],
     )
@@ -3593,11 +3740,75 @@ def _has_source(record: CanonicalStudentRecord, source: SourceType) -> bool:
     return any(reference.source == source for reference in record.sources)
 
 
+def _is_unconfirmed_ocr_record(record: CanonicalStudentRecord) -> bool:
+    return (
+        _has_source(record, "ocr_form")
+        and not _has_source(record, "roster")
+        and "user_confirmed_ocr_roster_match" not in record.review_reasons
+    )
+
+
+def _confirmed_match_map(confirmations: Sequence[DmcFormMatchConfirmation]) -> dict[str, str]:
+    return {confirmation.record_id: confirmation.student_no for confirmation in confirmations}
+
+
+def _ocr_record_key(ocr_record: OcrFormRecord) -> str:
+    return f"ocr:{Path(ocr_record.source_path).name}:{ocr_record.record_id}"
+
+
 def _record_sort_key(record: CanonicalStudentRecord) -> tuple[int, int, int, str]:
     grade = record.grade if record.grade is not None else 999
     room = record.room if record.room is not None else 999
     seat = record.seat_no if record.seat_no is not None else 999
     return (grade, room, seat, record.record_id)
+
+
+def _best_ocr_suggestions(
+    ocr_record: OcrFormRecord,
+    roster: list[RosterStudent],
+    *,
+    limit: int,
+) -> list[MatchSuggestion]:
+    if not ocr_record.name_key:
+        return []
+    ocr_birth_date = _field_text_value(ocr_record.fields.get("birth_date"))
+    scored: list[MatchSuggestion] = []
+    for student in roster:
+        name_score = SequenceMatcher(None, ocr_record.name_key, student.name_key).ratio()
+        if name_score <= 0:
+            continue
+        birth_date_matches = _date_texts_match(ocr_birth_date, student.birth_date)
+        score = min(1.0, name_score + 0.08) if birth_date_matches and name_score >= 0.75 else name_score
+        scored.append(
+            MatchSuggestion(
+                student_no=student.student_no,
+                full_name=_full_name(student.prefix, student.first_name, student.last_name),
+                grade=student.grade,
+                room=student.room,
+                score=score,
+                source_path=student.source_path,
+                sheet_name=student.sheet_name,
+                row_index=student.row_index,
+            )
+        )
+    return sorted(scored, key=lambda item: item.score, reverse=True)[:limit]
+
+
+def _suggestion_score_for_student_no(suggestions: Sequence[MatchSuggestion], student_no: str) -> float | None:
+    suggestion = next((item for item in suggestions if item.student_no == student_no), None)
+    return suggestion.score if suggestion is not None else None
+
+
+def _field_text_value(field: CurrentStudentField | None) -> str | None:
+    if field is None:
+        return None
+    return _none_if_empty(field.value)
+
+
+def _date_texts_match(left: str | None, right: str | None) -> bool:
+    if not left or not right:
+        return False
+    return re.sub(r"\s+", "", _clean_text(left)) == re.sub(r"\s+", "", _clean_text(right))
 
 
 def _best_suggestions(name_key: str, roster: list[RosterStudent], *, limit: int) -> list[MatchSuggestion]:

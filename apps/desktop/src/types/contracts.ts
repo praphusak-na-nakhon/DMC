@@ -288,6 +288,11 @@ export type CurrentStudentMatchSuggestion = {
   row_index: number;
 };
 
+export type DmcFormMatchConfirmation = {
+  record_id: string;
+  student_no: string;
+};
+
 export type CurrentStudentRecord = {
   record_id: string;
   operation_type: CurrentStudentOperationType;
