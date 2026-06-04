@@ -461,7 +461,11 @@ def test_current_students_new_student_defaults_fill_missing_parent_and_postal_fi
     assert values["psHomeIdNo"] == "-"
     assert values["homeIdNo"] == "-"
     assert values["postalCode"] == "-"
-    assert values["rubberDt"] == "10000.0"
+    assert values["nationCode"] == "099"
+    assert values["religionCode"] == "001"
+    assert values["waterDt"] == "0.0"
+    assert values["rockDt"] == "0.0"
+    assert values["rubberDt"] == "5000.0"
     assert values["childIndex"] == "1"
     assert values["fatherCifNo"] == "-"
     assert values["fatherCifType"] == "O"
@@ -469,15 +473,18 @@ def test_current_students_new_student_defaults_fill_missing_parent_and_postal_fi
     assert values["fatherFirstNameTh"] == "-"
     assert values["fatherLastNameTh"] == "-"
     assert values["fatherOccupationCode"] == "5"
+    assert values["fatherSalary"] == "2500.0"
     assert values["motherTitleCode"] == "004"
     assert values["motherFirstNameTh"] == "Existing Mother"
     assert values["motherLastNameTh"] == "Existing Last"
     assert values["motherOccupationCode"] == "5"
+    assert values["motherSalary"] == "2500.0"
     assert values["parentFamilyRelationCode"] == "02"
     assert values["parentTitleCode"] == "004"
     assert values["parentFirstNameTh"] == "Existing Mother"
     assert values["parentLastNameTh"] == "Existing Last"
     assert values["parentOccupationCode"] == "5"
+    assert values["parentSalary"] == "2500.0"
     assert values["journeyTypeCode"] == "02"
     assert values["timeDt"] == "10.0"
     assert "psPostalCode" not in record.dmc_form_values
@@ -544,6 +551,7 @@ def test_current_students_new_student_defaults_copy_parent_from_declared_relatio
     assert values["parentFirstNameTh"] == "สุริน"
     assert values["parentLastNameTh"] == "ไกรนรา"
     assert values["parentOccupationCode"] == "5"
+    assert values["parentSalary"] == "0.0"
 
 
 def test_current_students_new_student_defaults_fill_required_parent_when_all_parent_sources_missing() -> None:
@@ -633,7 +641,15 @@ def test_current_students_new_student_form_fills_title_after_generic_values(
     module._fill_student_history_form(page, record)  # type: ignore[arg-type]
 
     assert "titleCode" not in filled_values
+    assert filled_values["nationCode"] == "099"
+    assert filled_values["religionCode"] == "001"
+    assert filled_values["fatherSalary"] == "2500.0"
+    assert filled_values["motherSalary"] == "2500.0"
+    assert filled_values["parentSalary"] == "2500.0"
     assert filled_values["journeyTypeCode"] == "02"
+    assert filled_values["waterDt"] == "0.0"
+    assert filled_values["rockDt"] == "0.0"
+    assert filled_values["rubberDt"] == "5000.0"
     assert filled_values["timeDt"] == "10.0"
     assert filled_values["genderCode"] == "F"
     assert title_codes == ["002"]
@@ -1093,6 +1109,9 @@ def _write_structured_ocr_json(path: Path) -> None:
                             "student_no": "19984",
                             "weight_kg": "40",
                             "height_cm": "150",
+                            "distance_water_km": "1.5",
+                            "distance_dirt_road_km": "2",
+                            "distance_paved_road_km": "3.25",
                             "registered_address": {
                                 "house_id": "8101-004408-9",
                                 "postal_code": "81130",
@@ -1181,6 +1200,8 @@ def test_read_ocr_records_accepts_structured_json_and_ignores_civil_records(tmp_
     assert record.row_index == 1
     assert record.fields["registered_address.house_id"].value == "8101-004408-9"
     assert record.fields["guardian.phone"].value == "063-839-5699"
+    assert record.fields["distance_water_km"].value == "1.5"
+    assert record.fields["distance_dirt_road_km"].value == "2"
     assert "unknown_field" not in record.fields
 
 
@@ -1302,6 +1323,30 @@ def test_read_ocr_markdown_accepts_typhoon_labels_without_asterisks(tmp_path: Pa
     assert record.fields["mother.phone"].value == "0650380104"
     assert record.fields["guardian.phone"].value == "0650380104"
     assert record.fields["guardian_relationship"].value == "มารดา"
+
+
+def test_read_ocr_markdown_keeps_all_visible_travel_distances(tmp_path: Path) -> None:
+    ocr_path = tmp_path / "ocr-travel-distances.md"
+    ocr_path.write_text(
+        "\n".join(
+            [
+                "เลขประจำตัวประชาชน* 1-8199-00905-15-7 เลขประจำตัวนักเรียน 19984",
+                (
+                    "การเดินทางมาโรงเรียน* [x] เดินเท้า ระยะทางจากบ้านมา ร.ร.* "
+                    "ทางน้ำ (กม.) 1.5 ถนนลูกรัง (กม.) 2 ถนนลาดยาง (กม.) 3 "
+                    "กม. รวมระยะเวลาการเดินทางมาโรงเรียน (นาที)* 10 นาที"
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    record, warnings = read_ocr_markdown(ocr_path)
+
+    assert warnings == []
+    assert record.fields["distance_water_km"].value == "1.5"
+    assert record.fields["distance_dirt_road_km"].value == "2"
+    assert record.fields["distance_paved_road_km"].value == "3"
 
 
 def test_read_student_roster_accepts_header_based_student_list(tmp_path: Path) -> None:
@@ -1804,9 +1849,17 @@ def test_dmc_form_values_apply_safe_defaults_for_missing_required_family_fields(
     assert values["fatherOccupationCode"] == "5"
     assert values["motherOccupationCode"] == "5"
     assert values["parentOccupationCode"] == "5"
+    assert values["fatherSalary"] == "2500.0"
+    assert values["motherSalary"] == "2500.0"
+    assert values["parentSalary"] == "2500.0"
     assert values["journeyTypeCode"] == "02"
     assert values["timeDt"] == "10.0"
+    assert values["nationCode"] == "099"
     assert values["raceCode"] == "099"
+    assert values["religionCode"] == "001"
+    assert values["waterDt"] == "0.0"
+    assert values["rockDt"] == "0.0"
+    assert values["rubberDt"] == "5000.0"
 
 
 def test_dmc_form_values_map_common_family_status_and_occupations() -> None:
@@ -1824,17 +1877,26 @@ def test_dmc_form_values_map_common_family_status_and_occupations() -> None:
         last_name="ไกรนรา",
         full_name="เด็กหญิง ปาริศา ไกรนรา",
         dmc_fields={
+            "nationality": _ocr_field("ไทย"),
+            "religion": _ocr_field("อิสลาม"),
             "parents_marital_status": _ocr_field("สมรส"),
             "older_brothers": _ocr_field(""),
+            "distance_water_km": _ocr_field("1.5"),
+            "distance_dirt_road_km": _ocr_field("2"),
+            "distance_paved_road_km": _ocr_field("3.25"),
+            "commute_minutes": _ocr_field("45"),
             "father.first_name": _ocr_field("นายทดสอบ"),
             "father.last_name": _ocr_field("พ่อ"),
             "father.occupation": _ocr_field("ทำสวน"),
+            "father.income_text": _ocr_field("4000"),
             "mother.first_name": _ocr_field("นางทดสอบ"),
             "mother.last_name": _ocr_field("แม่"),
             "mother.occupation": _ocr_field("พยาบาล"),
+            "mother.income_text": _ocr_field("5000"),
             "guardian.first_name": _ocr_field("นางทดสอบ"),
             "guardian.last_name": _ocr_field("แม่"),
             "guardian.occupation": _ocr_field("ช่างสัก"),
+            "guardian.income_text": _ocr_field("6000"),
         },
     )
 
@@ -1845,6 +1907,15 @@ def test_dmc_form_values_map_common_family_status_and_occupations() -> None:
     assert values["fatherOccupationCode"] == "4"
     assert values["motherOccupationCode"] == "6"
     assert values["parentOccupationCode"] == "5"
+    assert values["fatherSalary"] == "4000.0"
+    assert values["motherSalary"] == "5000.0"
+    assert values["parentSalary"] == "6000.0"
+    assert values["nationCode"] == "099"
+    assert values["religionCode"] == "002"
+    assert values["waterDt"] == "1500.0"
+    assert values["rockDt"] == "2000.0"
+    assert values["rubberDt"] == "3250.0"
+    assert values["timeDt"] == "45.0"
 
     widow_record = record.model_copy(
         update={"dmc_fields": {**record.dmc_fields, "parents_marital_status": _ocr_field("หม้าย")}}

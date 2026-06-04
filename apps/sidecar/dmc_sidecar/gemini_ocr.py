@@ -33,6 +33,7 @@ GEMINI_OCR_BATCH_POLL_INTERVAL_SECONDS = 10
 GEMINI_OCR_BATCH_TIMEOUT_SECONDS = 2 * 60 * 60
 GEMINI_OCR_BATCH_PDF_PAGES_PER_REQUEST = 2
 GEMINI_OCR_THINKING_LEVEL: Literal["low", "medium", "high"] | None = None
+GEMINI_OCR_PROMPT_VERSION = "dmc-structured-fields-2026-06-04"
 SUPPORTED_GEMINI_OCR_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
 _LEGACY_MODEL_ALIASES = {
     "typhoon-ocr": GEMINI_OCR_FLASH_MODEL,
@@ -341,6 +342,7 @@ def _cached_response(
             or metadata.get("model") != model
             or str(metadata.get("processing_mode") or "standard") != processing_mode
             or metadata.get("thinking_level") != GEMINI_OCR_THINKING_LEVEL
+            or metadata.get("prompt_version") != GEMINI_OCR_PROMPT_VERSION
             or metadata.get("file_sha256") != file_sha256
         ):
             return None
@@ -406,6 +408,7 @@ def _write_metadata(
                 "model": model,
                 "processing_mode": processing_mode,
                 "thinking_level": GEMINI_OCR_THINKING_LEVEL,
+                "prompt_version": GEMINI_OCR_PROMPT_VERSION,
                 "source_path": str(source_path),
                 "markdown_path": str(markdown_path),
                 "structured_json_path": str(markdown_path),

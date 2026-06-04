@@ -244,6 +244,8 @@ const priorityPreviewColumnGroups: PreviewColumnGroupDefinition[] = [
     label: "การเดินทางและสุขภาพ",
     columns: [
       { fieldName: "commute_method", label: "การเดินทาง" },
+      { fieldName: "distance_water_km", label: "ระยะทางทางน้ำ กม." },
+      { fieldName: "distance_dirt_road_km", label: "ระยะทางถนนลูกรัง กม." },
       { fieldName: "distance_paved_road_km", label: "ระยะทางถนนลาดยาง กม." },
       { fieldName: "commute_minutes", label: "เวลาเดินทาง นาที" },
       { fieldName: "weight_kg", label: "น้ำหนัก", required: true },

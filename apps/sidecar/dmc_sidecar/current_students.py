@@ -46,9 +46,15 @@ EMPTY_MARKERS = {"", "-", "—", "–", "........................", "...........
 DMC_DEFAULT_MISSING_SIBLING_COUNT = "0"
 DMC_DEFAULT_MISSING_MARRIAGE_STATUS_CODE = "01"
 DMC_DEFAULT_MISSING_OCCUPATION_CODE = "5"
+DMC_DEFAULT_MISSING_SALARY = "2500.0"
 DMC_DEFAULT_MISSING_COMMUTE_MINUTES = "10.0"
 DMC_DEFAULT_MISSING_JOURNEY_TYPE_CODE = "02"
+DMC_DEFAULT_MISSING_NATION_CODE = "099"
 DMC_DEFAULT_MISSING_RACE_CODE = "099"
+DMC_DEFAULT_MISSING_RELIGION_CODE = "001"
+DMC_DEFAULT_MISSING_WATER_DISTANCE_METERS = "0.0"
+DMC_DEFAULT_MISSING_DIRT_ROAD_DISTANCE_METERS = "0.0"
+DMC_DEFAULT_MISSING_PAVED_ROAD_DISTANCE_METERS = "5000.0"
 DMC_OTHER_OCCUPATION_CODE = "99"
 
 IMPORT_FIELD_DEFINITIONS: tuple[tuple[str, str, bool], ...] = (
@@ -89,6 +95,8 @@ IMPORT_FIELD_DEFINITIONS: tuple[tuple[str, str, bool], ...] = (
     ("current_address.province", "จังหวัดปัจจุบัน", False),
     ("current_address.postal_code", "รหัสไปรษณีย์ปัจจุบัน", False),
     ("commute_method", "การเดินทาง", False),
+    ("distance_water_km", "ระยะทางทางน้ำ กม.", False),
+    ("distance_dirt_road_km", "ระยะทางถนนลูกรัง กม.", False),
     ("distance_paved_road_km", "ระยะทางถนนลาดยาง กม.", False),
     ("commute_minutes", "เวลาเดินทาง นาที", False),
     ("weight_kg", "น้ำหนัก กก.", False),
@@ -1628,6 +1636,8 @@ def read_ocr_markdown(path: Path, *, record_index: int = 1) -> tuple[OcrFormReco
     _put_address_fields(fields, text, prefix="registered_address", start="ตามทะเบียนบ้าน")
     _put_address_fields(fields, text, prefix="current_address", start="ที่อยู่ปัจจุบัน")
     _put_field(fields, "commute_method", _checked_option(_extract_between(text, "การเดินทางมาโรงเรียน*", ("ระยะทางจากบ้านมา",))), "ocr_form", "review")
+    _put_field(fields, "distance_water_km", _number_text(_extract_between(text, "ทางน้ำ (กม.)", ("ถนนลูกรัง",))), "ocr_form", "review")
+    _put_field(fields, "distance_dirt_road_km", _number_text(_extract_between(text, "ถนนลูกรัง (กม.)", ("ถนนลาดยาง",))), "ocr_form", "review")
     _put_field(fields, "distance_paved_road_km", _number_text(_extract_between(text, "ถนนลาดยาง (กม.)", ("กม. รวมระยะเวลา",))), "ocr_form", "review")
     _put_field(fields, "commute_minutes", _number_text(_extract_between(text, "รวมระยะเวลาการเดินทางมาโรงเรียน (นาที)*", ("นาที",))), "ocr_form", "review")
     _put_field(fields, "weight_kg", _number_text(_extract_between(text, "น้ำหนัก*", ("กิโลกรัม",))), "ocr_form", "review")
@@ -2274,10 +2284,13 @@ def _dmc_form_values(
         _dmc_province_code(_dmc_field_text(record, "birth_province", default_school_year)),
     )
     _dmc_put_value(values, "bloodCode", _dmc_blood_code(_dmc_field_text(record, "blood_type", default_school_year)))
+    nationality = _dmc_field_text(record, "nationality", default_school_year)
     _dmc_put_value(
         values,
         "nationCode",
-        _dmc_lookup_code(_dmc_field_text(record, "nationality", default_school_year), DMC_NATION_CODES),
+        DMC_DEFAULT_MISSING_NATION_CODE
+        if nationality is None
+        else _dmc_lookup_code(nationality, DMC_NATION_CODES),
     )
     race = _dmc_field_text(record, "race", default_school_year)
     _dmc_put_value(
@@ -2285,10 +2298,13 @@ def _dmc_form_values(
         "raceCode",
         DMC_DEFAULT_MISSING_RACE_CODE if race is None else _dmc_lookup_code(race, DMC_RACE_CODES),
     )
+    religion = _dmc_field_text(record, "religion", default_school_year)
     _dmc_put_value(
         values,
         "religionCode",
-        _dmc_lookup_code(_dmc_field_text(record, "religion", default_school_year), DMC_RELIGION_CODES),
+        DMC_DEFAULT_MISSING_RELIGION_CODE
+        if religion is None
+        else _dmc_lookup_code(religion, DMC_RELIGION_CODES),
     )
     _dmc_put_value(values, "studentTypeCode", "01")
     _dmc_put_value(values, "objectStatus", "Y")
@@ -2412,12 +2428,32 @@ def _dmc_form_values(
             default=DMC_DEFAULT_MISSING_COMMUTE_MINUTES,
         ),
     )
-    _dmc_put_value(values, "waterDt", "0.0")
-    _dmc_put_value(values, "rockDt", "0.0")
+    _dmc_put_value(
+        values,
+        "waterDt",
+        _dmc_decimal_text(
+            _dmc_field_text(record, "distance_water_km", default_school_year),
+            multiplier=1000,
+            default=DMC_DEFAULT_MISSING_WATER_DISTANCE_METERS,
+        ),
+    )
+    _dmc_put_value(
+        values,
+        "rockDt",
+        _dmc_decimal_text(
+            _dmc_field_text(record, "distance_dirt_road_km", default_school_year),
+            multiplier=1000,
+            default=DMC_DEFAULT_MISSING_DIRT_ROAD_DISTANCE_METERS,
+        ),
+    )
     _dmc_put_value(
         values,
         "rubberDt",
-        _dmc_decimal_text(_dmc_field_text(record, "distance_paved_road_km", default_school_year), multiplier=1000),
+        _dmc_decimal_text(
+            _dmc_field_text(record, "distance_paved_road_km", default_school_year),
+            multiplier=1000,
+            default=DMC_DEFAULT_MISSING_PAVED_ROAD_DISTANCE_METERS,
+        ),
     )
     _dmc_put_value(values, "weight", _dmc_decimal_text(_dmc_field_text(record, "weight_kg", default_school_year)))
     _dmc_put_value(values, "height", _dmc_decimal_text(_dmc_field_text(record, "height_cm", default_school_year)))
@@ -2702,11 +2738,11 @@ def _dmc_decimal_text(value: str | None, *, multiplier: float = 1.0, default: st
     return f"{numbers[0] * multiplier:.1f}"
 
 
-def _dmc_salary_text(value: str | None) -> str:
+def _dmc_salary_text(value: str | None, *, default: str = "0.0") -> str:
     text = _clean_text(value)
     numbers = [float(match.replace(",", "")) for match in re.findall(r"\d[\d,]*(?:\.\d+)?", text)]
     if not numbers:
-        return "0.0"
+        return default
     salary = sum(numbers[:2]) / min(len(numbers), 2)
     return f"{salary:.1f}"
 
@@ -2831,7 +2867,7 @@ def _dmc_put_person_values(
     _dmc_put_value(values, f"{prefix}LastNameTh", last_name)
     _dmc_put_value(values, f"{prefix}MiddleNameTh", "")
     _dmc_put_value(values, f"{prefix}BloodCode", blood_type)
-    _dmc_put_value(values, f"{prefix}Salary", _dmc_salary_text(income))
+    _dmc_put_value(values, f"{prefix}Salary", _dmc_salary_text(income, default=DMC_DEFAULT_MISSING_SALARY))
     _dmc_put_value(values, f"{prefix}TelNo", phone or "-")
 
 

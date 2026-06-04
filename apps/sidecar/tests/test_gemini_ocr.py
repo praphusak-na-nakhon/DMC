@@ -19,6 +19,7 @@ from dmc_sidecar.gemini_ocr import (
     _generate_structured_json_with_gemini_batch,
     _normalized_structured_payload,
     _response_json,
+    _structured_ocr_prompt,
     ocr_dmc_form_with_gemini,
 )
 
@@ -60,6 +61,14 @@ def test_normalized_structured_payload_converts_null_needs_review_to_empty_list(
     )
 
     assert payload["records"][0]["needs_review"] == []
+
+
+def test_structured_ocr_prompt_requests_all_travel_distance_fields() -> None:
+    prompt = _structured_ocr_prompt()
+
+    assert '"distance_water_km"' in prompt
+    assert '"distance_dirt_road_km"' in prompt
+    assert '"distance_paved_road_km"' in prompt
 
 
 def test_gemini_upload_uses_files_api_and_generate_content(

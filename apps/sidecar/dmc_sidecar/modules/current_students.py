@@ -65,6 +65,24 @@ DMC_PRESERVE_EXISTING_PARENT_NAME_FIELDS = (
 )
 DEFAULT_COMMUTE_MINUTES = "10.0"
 DEFAULT_JOURNEY_TYPE_CODE = "02"
+DEFAULT_NATION_CODE = "099"
+DEFAULT_RELIGION_CODE = "001"
+DEFAULT_SALARY = "2500.0"
+DEFAULT_WATER_DISTANCE_METERS = "0.0"
+DEFAULT_DIRT_ROAD_DISTANCE_METERS = "0.0"
+DEFAULT_PAVED_ROAD_DISTANCE_METERS = "5000.0"
+DMC_MISSING_FORM_DEFAULT_VALUES: dict[str, str] = {
+    "nationCode": DEFAULT_NATION_CODE,
+    "religionCode": DEFAULT_RELIGION_CODE,
+    "fatherSalary": DEFAULT_SALARY,
+    "motherSalary": DEFAULT_SALARY,
+    "parentSalary": DEFAULT_SALARY,
+    "journeyTypeCode": DEFAULT_JOURNEY_TYPE_CODE,
+    "waterDt": DEFAULT_WATER_DISTANCE_METERS,
+    "rockDt": DEFAULT_DIRT_ROAD_DISTANCE_METERS,
+    "rubberDt": DEFAULT_PAVED_ROAD_DISTANCE_METERS,
+    "timeDt": DEFAULT_COMMUTE_MINUTES,
+}
 NEW_STUDENT_TITLE_BY_LEVEL_AND_GENDER = {
     "10": {"M": "001", "F": "002"},
     "13": {"M": "003", "F": "004"},
@@ -105,7 +123,7 @@ NEW_STUDENT_DEFAULT_VALUES: dict[str, str] = {
     "psPostalCode": "-",
     "homeIdNo": "-",
     "postalCode": "-",
-    "rubberDt": "10000.0",
+    "rubberDt": DEFAULT_PAVED_ROAD_DISTANCE_METERS,
     "childIndex": "1",
     "fatherCifNo": "-",
     "fatherCifType": "O",
@@ -113,7 +131,7 @@ NEW_STUDENT_DEFAULT_VALUES: dict[str, str] = {
     "fatherFirstNameTh": "-",
     "fatherLastNameTh": "-",
     "fatherOccupationCode": "5",
-    "fatherSalary": "0.0",
+    "fatherSalary": DEFAULT_SALARY,
     "fatherTelNo": "-",
     "motherCifNo": "-",
     "motherCifType": "O",
@@ -121,7 +139,7 @@ NEW_STUDENT_DEFAULT_VALUES: dict[str, str] = {
     "motherFirstNameTh": "-",
     "motherLastNameTh": "-",
     "motherOccupationCode": "5",
-    "motherSalary": "0.0",
+    "motherSalary": DEFAULT_SALARY,
     "motherTelNo": "-",
 }
 
@@ -790,10 +808,7 @@ class CurrentStudentsModule(AutomationModule):
             if not self._string_form_value(values.get(name)):
                 values[name] = value
         self._apply_new_student_parent_defaults(values)
-        if not self._string_form_value(values.get("journeyTypeCode")):
-            values["journeyTypeCode"] = DEFAULT_JOURNEY_TYPE_CODE
-        if not self._string_form_value(values.get("timeDt")):
-            values["timeDt"] = DEFAULT_COMMUTE_MINUTES
+        self._apply_missing_form_defaults(values)
         title_code = self._new_student_title_code(record, values)
         if title_code:
             values["titleCode"] = title_code
@@ -839,7 +854,7 @@ class CurrentStudentsModule(AutomationModule):
         if not self._string_form_value(values.get("parentOccupationCode")):
             values["parentOccupationCode"] = "5"
         if not self._string_form_value(values.get("parentSalary")):
-            values["parentSalary"] = "0.0"
+            values["parentSalary"] = DEFAULT_SALARY
         if not self._string_form_value(values.get("parentTelNo")):
             values["parentTelNo"] = "-"
 
@@ -853,6 +868,11 @@ class CurrentStudentsModule(AutomationModule):
         ):
             return "mother"
         return None
+
+    def _apply_missing_form_defaults(self, values: dict[str, Any]) -> None:
+        for name, value in DMC_MISSING_FORM_DEFAULT_VALUES.items():
+            if not self._string_form_value(values.get(name)):
+                values[name] = value
 
     def _has_meaningful_parent_source_value(self, value: Any) -> bool:
         text = self._string_form_value(value)
@@ -968,10 +988,7 @@ class CurrentStudentsModule(AutomationModule):
         values.setdefault("cifNo", record.citizen_id)
         values.setdefault("cifNoChk", record.citizen_id)
         values.setdefault("cifType", "I")
-        if not self._string_form_value(values.get("journeyTypeCode")):
-            values["journeyTypeCode"] = DEFAULT_JOURNEY_TYPE_CODE
-        if not self._string_form_value(values.get("timeDt")):
-            values["timeDt"] = DEFAULT_COMMUTE_MINUTES
+        self._apply_missing_form_defaults(values)
         new_student_title_code = self._new_student_title_code(record, values) if self._is_new_student_add_page(page) else None
         if new_student_title_code:
             values["titleCode"] = new_student_title_code
