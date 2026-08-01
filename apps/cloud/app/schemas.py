@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 AccountStatus = Literal["active", "disabled"]
 CreditReservationStatus = Literal["active", "captured", "released"]
@@ -133,15 +133,47 @@ class CreditReservationResponse(BaseModel):
 class CreditCaptureRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    units: int = Field(ge=0)
+    target_captured_units: int = Field(ge=0)
     idempotency_key: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_deprecated_units(cls, data: object) -> object:
+        if not isinstance(data, dict) or "units" not in data:
+            return data
+        normalized = dict(data)
+        old_units = normalized.pop("units")
+        if "target_captured_units" in normalized and normalized["target_captured_units"] != old_units:
+            raise ValueError("units conflicts with target_captured_units")
+        normalized["target_captured_units"] = old_units
+        return normalized
+
+    @property
+    def units(self) -> int:
+        return self.target_captured_units
 
 
 class CreditReleaseRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    units: int = Field(ge=0)
+    target_released_units: int = Field(ge=0)
     idempotency_key: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_deprecated_units(cls, data: object) -> object:
+        if not isinstance(data, dict) or "units" not in data:
+            return data
+        normalized = dict(data)
+        old_units = normalized.pop("units")
+        if "target_released_units" in normalized and normalized["target_released_units"] != old_units:
+            raise ValueError("units conflicts with target_released_units")
+        normalized["target_released_units"] = old_units
+        return normalized
+
+    @property
+    def units(self) -> int:
+        return self.target_released_units
 
 
 class CloudUserCreateRequest(BaseModel):

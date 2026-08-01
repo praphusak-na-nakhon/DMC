@@ -50,7 +50,7 @@
 ### Boundaries
 - **ข้อมูลนักเรียน (PII)** อยู่เฉพาะใน desktop และ report files ในเครื่องเป็นค่าเริ่มต้น ยกเว้น `formConverter` ที่ผู้ใช้ยินยอมส่ง PDF ไป cloud OCR gateway
 - **Account/session, credit wallet/reservation, config sync, และ allow-listed telemetry** เป็นข้อมูลปกติที่ขึ้น cloud ได้โดยต้องไม่มี PII
-- **Cloud OCR gateway** ต้องไม่ persist PDF ต้นฉบับหรือ field ที่อ่านได้ และต้องอยู่หลัง auth + credit reservation เสมอ
+- **Cloud OCR gateway** ต้องไม่ persist PDF ต้นฉบับถาวร คำตอบ OCR ที่มีข้อมูลนักเรียนเก็บได้ชั่วคราวเพื่อรองรับ retry/recovery แล้ว purge อัตโนมัติเมื่ออายุเกิน 24 ชม. และต้องอยู่หลัง auth + credit reservation เสมอ
 - **Playwright รันบนเครื่อง user** เพื่อให้ IP เป็นของโรงเรียนและ user ทำ QR 2FA เองได้
 
 ## 3. Tech Stack
@@ -373,6 +373,7 @@ JSON-RPC 2.0 over stdin/stdout. Tauri spawns the sidecar as a child process at s
 - `validate_excel(path, module)` → `{ rows, warnings[], preview }`
 - `start_job(job_id, module, excel_path, options)` → streams events back
 - `pause_job(job_id)` / `resume_job(job_id)` / `cancel_job(job_id)`
+- `resume_existing_job(job_id)` — resume ข้าม process restart สำหรับ `paused`/`stopped_on_review`; re-reserve credits ถ้า reservation เดิมถูก finalize ไปแล้ว
 - `get_job_status(job_id)` → snapshot
 
 ### Events (sidecar → desktop)

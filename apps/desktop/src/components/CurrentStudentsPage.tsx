@@ -399,19 +399,19 @@ function DmcJobControls({
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" disabled={!activeJobId || !onRefreshStatus} onClick={() => onRefreshStatus?.()}>
           <RefreshCw className="h-4 w-4" />
-          Refresh
+          รีเฟรช
         </Button>
         <Button variant="outline" disabled={!canResume || !onResume} onClick={() => onResume?.()}>
           <PlayCircle className="h-4 w-4" />
-          Resume
+          {currentJob?.needs_auth ? "ทำต่อหลังยืนยันตัวตน" : "ทำงานต่อ"}
         </Button>
         <Button variant="outline" disabled={!canPause || !onPause} onClick={() => onPause?.()}>
           <PauseCircle className="h-4 w-4" />
-          Pause
+          พักงาน
         </Button>
         <Button variant="destructive" disabled={!canCancel || !onCancel} onClick={() => onCancel?.()}>
           <Square className="h-4 w-4" />
-          Cancel
+          ยกเลิกงาน
         </Button>
       </div>
     </section>

@@ -47,6 +47,36 @@ def test_response_json_accepts_single_object_with_extra_closing_brace() -> None:
     assert payload["records"][0]["fields"]["citizen_id"] == "1819900931740"
 
 
+def test_response_json_accepts_extra_closing_braces_separated_by_newlines() -> None:
+    payload = _response_json(
+        SimpleNamespace(
+            text=(
+                '{"schema_version":"dmc_assistant_structured_ocr.v1",'
+                '"records":[{"record_type":"dmc_form","fields":{"citizen_id":"1819900931740"}}]}'
+                "\n}\n}\n}\n\n\n}"
+            )
+        )
+    )
+
+    assert payload["records"][0]["fields"]["citizen_id"] == "1819900931740"
+
+
+def test_response_json_quotes_bare_numeric_ranges() -> None:
+    payload = _response_json(
+        SimpleNamespace(
+            text=(
+                '{"schema_version":"dmc_assistant_structured_ocr.v1",'
+                '"records":[{"record_type":"dmc_form","fields":{'
+                '"commute_minutes":10-15,"distance_paved_road_km":25}}]}'
+            )
+        )
+    )
+
+    fields = payload["records"][0]["fields"]
+    assert fields["commute_minutes"] == "10-15"
+    assert fields["distance_paved_road_km"] == 25
+
+
 def test_normalized_structured_payload_converts_null_needs_review_to_empty_list() -> None:
     payload = _normalized_structured_payload(
         {

@@ -406,7 +406,7 @@ describe("FormConverterPage", () => {
       ocrMarkdownPaths: ["C:\\dmc\\uploadTest\\1-3ex.md"],
       civilRegistrationMarkdownPaths: ["D:\\DMC\\2569\\CivilDoc.md"],
       schoolYear: 2569,
-      gradeLevels: [1],
+      gradeLevels: null,
       admissionDate: "2026-05-16",
       confirmedMatches: [],
     });
@@ -416,7 +416,7 @@ describe("FormConverterPage", () => {
       ocrMarkdownPaths: ["C:\\dmc\\uploadTest\\1-3ex.md"],
       civilRegistrationMarkdownPaths: ["D:\\DMC\\2569\\CivilDoc.md"],
       schoolYear: 2569,
-      gradeLevels: [1],
+      gradeLevels: null,
       admissionDate: "2026-05-16",
       confirmedMatches: [],
       excludedRecordIds: [],
@@ -584,7 +584,7 @@ describe("FormConverterPage", () => {
       ocrMarkdownPaths: ["D:\\DMC\\2569\\dmc m1\\m1 DMCform\\dmc103.json"],
       civilRegistrationMarkdownPaths: [],
       schoolYear: 2569,
-      gradeLevels: [1],
+      gradeLevels: null,
       admissionDate: null,
       confirmedMatches: [{ record_id: "ocr:structured-ocr.json:ocr-1", student_no: "19988" }],
     });

@@ -78,6 +78,10 @@ type ConfirmDialogState = {
   variant?: "default" | "destructive";
 };
 
+type RefreshAccountOptions = {
+  surfaceError?: boolean;
+};
+
 async function requestWindowAttention(): Promise<void> {
   try {
     const { getCurrentWindow, UserAttentionType } = await import("@tauri-apps/api/window");
@@ -230,7 +234,8 @@ export function App() {
   }, [pushSidecarMessage, setErrorMessage, setModuleConfigStatus]);
 
   const handleRefreshAccount = useCallback(
-    async (forceWallet: boolean): Promise<void> => {
+    async (forceWallet: boolean, options: RefreshAccountOptions = {}): Promise<void> => {
+      const surfaceError = options.surfaceError ?? true;
       try {
         const status = forceWallet ? await refreshWallet() : await getAccountStatus();
         setAccountStatus(status);
@@ -240,7 +245,9 @@ export function App() {
             : "account: signed out",
         );
       } catch (error) {
-        setErrorMessage(toUserError(error));
+        if (surfaceError) {
+          setErrorMessage(toUserError(error));
+        }
         throw error;
       }
     },
@@ -682,15 +689,35 @@ export function App() {
     };
   }, [applySidecarEvent, handleConnect, setConnectionState, setErrorMessage]);
 
+  const refreshAccountAfterStart = useCallback(async () => {
+    try {
+      await handleRefreshAccount(true, { surfaceError: false });
+    } catch (error) {
+      if (errorHasCode(error, "ACCOUNT_CLOUD_UNAVAILABLE")) {
+        pushSidecarMessage(
+          "account cloud unavailable while refreshing credits after job start; keeping cached wallet snapshot",
+        );
+        return;
+      }
+      pushSidecarMessage(`account refresh after job start failed: ${toUserError(error)}`);
+    }
+  }, [handleRefreshAccount, pushSidecarMessage]);
+
   const handleJobReconciled = useCallback(
     (status: JobStatusSnapshot) => {
       setCurrentJob(status);
       upsertExistingJob(status);
       if (status.credit_status === "finalized") {
-        void handleRefreshAccount(true);
+        void handleRefreshAccount(true, { surfaceError: false }).catch((error) => {
+          if (errorHasCode(error, "ACCOUNT_CLOUD_UNAVAILABLE")) {
+            pushSidecarMessage("account cloud unavailable while refreshing finalized credits; keeping cached account snapshot");
+            return;
+          }
+          setErrorMessage(toUserError(error));
+        });
       }
     },
-    [handleRefreshAccount, setCurrentJob, upsertExistingJob],
+    [handleRefreshAccount, pushSidecarMessage, setCurrentJob, setErrorMessage, upsertExistingJob],
   );
 
   const handleJobReconcileError = useCallback(
@@ -828,7 +855,7 @@ export function App() {
       upsertExistingJob(draft);
       pushSidecarMessage(`${dryRun ? "เริ่ม dry run" : "เริ่มงานจริง"} แล้ว: ${result.job_id}`);
       if (!dryRun) {
-        await handleRefreshAccount(true);
+        await refreshAccountAfterStart();
       }
       await handleLoadJobs();
     } catch (error) {
@@ -899,23 +926,10 @@ export function App() {
         return;
       }
       if (!dryRun) {
-        let latestAccount = accountStatus;
-        let usingCachedAccountAfterCloudFailure = false;
-        try {
-          await handleRefreshAccount(true);
-          latestAccount = await getAccountStatus();
-          setAccountStatus(latestAccount);
-        } catch (error) {
-          if (!errorHasCode(error, "ACCOUNT_CLOUD_UNAVAILABLE") || !accountStatus?.signed_in) {
-            throw error;
-          }
-          usingCachedAccountAfterCloudFailure = true;
-          latestAccount = accountStatus;
-          pushSidecarMessage(
-            "account cloud unavailable; using cached credit snapshot for currentStudents and letting sidecar bypass reservation",
-          );
-        }
-        if (!latestAccount?.signed_in || (!latestAccount.can_start_credit_jobs && !usingCachedAccountAfterCloudFailure)) {
+        await handleRefreshAccount(true);
+        const latestAccount = await getAccountStatus();
+        setAccountStatus(latestAccount);
+        if (!latestAccount.signed_in || !latestAccount.can_start_credit_jobs) {
           setErrorMessage(latestAccount.message ?? messages.app.account.signInBeforeLive);
           return;
         }
@@ -940,14 +954,7 @@ export function App() {
       upsertExistingJob(draft);
       pushSidecarMessage(`${dryRun ? "เริ่ม dry run ย้ายเข้า" : "เริ่มงานย้ายเข้า DMC จริง"}: ${result.job_id}`);
       if (!dryRun) {
-        try {
-          await handleRefreshAccount(true);
-        } catch (error) {
-          if (!errorHasCode(error, "ACCOUNT_CLOUD_UNAVAILABLE")) {
-            throw error;
-          }
-          pushSidecarMessage("account cloud unavailable after starting currentStudents; job is running with local bypass");
-        }
+        await refreshAccountAfterStart();
       }
       await handleLoadJobs();
     } catch (error) {

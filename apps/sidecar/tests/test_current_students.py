@@ -30,9 +30,12 @@ from dmc_sidecar.current_students import (
     read_student_roster,
     reconcile_current_students,
     validate_current_students_import_form,
+    _dmc_admission_date_text,
+    _dmc_date_text,
     _dmc_form_values,
 )
 from dmc_sidecar.checkpoint import JobCheckpoint
+from dmc_sidecar.errors import DomainError
 from dmc_sidecar.modules.current_students import CurrentStudentsModule, _today_buddhist_date_text
 from dmc_sidecar.rpc import RpcServer
 
@@ -917,6 +920,19 @@ def test_current_students_today_buddhist_date_text_uses_buddhist_year() -> None:
     assert _today_buddhist_date_text(date(2026, 6, 3)) == "03/06/2569"
 
 
+def test_dmc_admission_date_text_preserves_day_month_order_for_ambiguous_iso_date() -> None:
+    assert _dmc_admission_date_text("2026-05-04") == "04/05/2569"
+
+
+def test_dmc_date_text_converts_ce_year_to_buddhist_year_for_birth_date() -> None:
+    # DMC form dates are Buddhist-calendar; a Common-Era year must be converted like admission dates.
+    assert _dmc_date_text("13/02/2014") == "13/02/2557"
+    assert _dmc_date_text("13/02/2557") == "13/02/2557"
+    assert _dmc_date_text("2026-05-04") == "04/05/2569"
+    assert _dmc_date_text("13 กุมภาพันธ์ 2014") == "13/02/2557"
+    assert _dmc_date_text("13 กุมภาพันธ์ 2557") == "13/02/2557"
+
+
 def test_current_students_fill_post_date_sets_post_date_field() -> None:
     module = CurrentStudentsModule()
     calls: list[tuple[str, str]] = []
@@ -930,6 +946,24 @@ def test_current_students_fill_post_date_sets_post_date_field() -> None:
     assert len(calls) == 1
     assert '[name="postDate"]' in calls[0][0]
     assert calls[0][1] == "03/06/2569"
+    assert calls[0][0].count("setExactTextValue(field, value)") == 2
+
+
+def test_current_students_fill_admission_date_reapplies_exact_text_after_events() -> None:
+    module = CurrentStudentsModule()
+    calls: list[tuple[str, str]] = []
+
+    class FakePage:
+        def evaluate(self, script: str, value: str) -> None:
+            calls.append((script, value))
+
+    module._fill_admission_date(FakePage(), "04/05/2569")  # type: ignore[arg-type]
+
+    assert len(calls) == 1
+    assert '[name="admissionDate"]' in calls[0][0]
+    assert calls[0][1] == "04/05/2569"
+    assert calls[0][0].count("setExactTextValue(field, nextValue)") == 2
+    assert "setDate" not in calls[0][0]
 
 
 def test_current_students_history_form_preserves_existing_parent_names(
@@ -1371,6 +1405,57 @@ def test_read_student_roster_accepts_header_based_student_list(tmp_path: Path) -
     assert records[0].prefix == "เด็กหญิง"
     assert records[0].first_name == "อัซซูน่า"
     assert records[0].last_name == "หมาดตา"
+
+
+def test_read_student_roster_accepts_header_sheet_matching_selected_year(tmp_path: Path) -> None:
+    roster_path = tmp_path / "studentlist-M1.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Worksheet"
+    sheet["A1"] = "รายชื่อนักเรียนชั้น ม.1 ปีการศึกษา 2569"
+    sheet.append(["ลำดับ", "รหัสนักเรียน", "ชื่อ - นามสกุล", "วันเกิด", "เลขบัตรประชาชน", "ชั้น", "ห้อง"])
+    sheet.append([80, 20020, "เด็กหญิง อัซซูน่า หมาดตา", "20 มีนาคม 2556", 1928800047068, "ม.1", 3])
+    workbook.save(roster_path)
+
+    records, warnings = read_student_roster(roster_path, school_year=2569, grade_levels=[1])
+
+    assert warnings == []
+    assert len(records) == 1
+    assert records[0].student_no == "20020"
+
+
+def test_read_student_roster_skips_header_sheet_from_other_year(tmp_path: Path) -> None:
+    roster_path = tmp_path / "studentlist-M1-wrongyear.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Worksheet"
+    sheet["A1"] = "รายชื่อนักเรียนชั้น ม.1 ปีการศึกษา 2568"
+    sheet.append(["ลำดับ", "รหัสนักเรียน", "ชื่อ - นามสกุล", "วันเกิด", "เลขบัตรประชาชน", "ชั้น", "ห้อง"])
+    sheet.append([80, 20020, "เด็กหญิง อัซซูน่า หมาดตา", "20 มีนาคม 2556", 1928800047068, "ม.1", 3])
+    workbook.save(roster_path)
+
+    records, warnings = read_student_roster(roster_path, school_year=2569, grade_levels=[1])
+
+    assert records == []
+
+
+def test_reconcile_current_students_reports_grade_filter_mismatch(tmp_path: Path) -> None:
+    roster_path = tmp_path / "studentListM1-M4 2569.xlsx"
+    _write_roster(roster_path)
+
+    with pytest.raises(DomainError) as exc_info:
+        reconcile_current_students(
+            ReconcileCurrentStudentsRequest(
+                roster_excel_path=str(roster_path),
+                school_year=2569,
+                grade_levels=[4],
+                thai_id_csv_path=None,
+                ocr_markdown_paths=[],
+                civil_registration_markdown_paths=[],
+            )
+        )
+
+    assert exc_info.value.code == "ROSTER_NO_MATCHING_SHEETS"
 
 
 def test_dmc_form_json_uses_header_roster_citizen_id_to_attach_ocr(tmp_path: Path) -> None:

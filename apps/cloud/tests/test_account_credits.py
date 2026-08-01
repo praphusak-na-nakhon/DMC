@@ -244,7 +244,7 @@ def test_manual_topup_wallet_and_reservation_flow(monkeypatch, tmp_path: Path) -
     capture = client.post(
         f"/v1/credits/reservations/{reservation['reservation_id']}/capture",
         headers=headers,
-        json={"units": 2, "idempotency_key": "capture-1"},
+        json={"target_captured_units": 2, "idempotency_key": "capture-1"},
     )
     assert capture.status_code == 200
     assert capture.json()["units_captured"] == 2
@@ -253,7 +253,7 @@ def test_manual_topup_wallet_and_reservation_flow(monkeypatch, tmp_path: Path) -
     repeated_capture = client.post(
         f"/v1/credits/reservations/{reservation['reservation_id']}/capture",
         headers=headers,
-        json={"units": 2, "idempotency_key": "capture-1"},
+        json={"target_captured_units": 2, "idempotency_key": "capture-1"},
     )
     assert repeated_capture.status_code == 200
     assert repeated_capture.json()["units_captured"] == 2
@@ -261,14 +261,14 @@ def test_manual_topup_wallet_and_reservation_flow(monkeypatch, tmp_path: Path) -
     changed_capture = client.post(
         f"/v1/credits/reservations/{reservation['reservation_id']}/capture",
         headers=headers,
-        json={"units": 3, "idempotency_key": "capture-1"},
+        json={"target_captured_units": 3, "idempotency_key": "capture-1"},
     )
     assert changed_capture.status_code == 409
 
     release = client.post(
         f"/v1/credits/reservations/{reservation['reservation_id']}/release",
         headers=headers,
-        json={"units": 1, "idempotency_key": "release-1"},
+        json={"target_released_units": 1, "idempotency_key": "release-1"},
     )
     assert release.status_code == 200
     assert release.json()["status"] == "captured"
@@ -278,7 +278,7 @@ def test_manual_topup_wallet_and_reservation_flow(monkeypatch, tmp_path: Path) -
     repeated_release = client.post(
         f"/v1/credits/reservations/{reservation['reservation_id']}/release",
         headers=headers,
-        json={"units": 1, "idempotency_key": "release-1"},
+        json={"target_released_units": 1, "idempotency_key": "release-1"},
     )
     assert repeated_release.status_code == 200
     assert repeated_release.json()["units_released"] == 1
@@ -286,7 +286,7 @@ def test_manual_topup_wallet_and_reservation_flow(monkeypatch, tmp_path: Path) -
     changed_release = client.post(
         f"/v1/credits/reservations/{reservation['reservation_id']}/release",
         headers=headers,
-        json={"units": 2, "idempotency_key": "release-1"},
+        json={"target_released_units": 2, "idempotency_key": "release-1"},
     )
     assert changed_release.status_code == 409
 
@@ -988,9 +988,12 @@ def test_form_converter_ocr_enforces_pdf_limits(monkeypatch, tmp_path: Path) -> 
     payload["page_count"] = 1
     payload["document_sha256"] = hashlib.sha256(small_document).hexdigest()
     payload["document_base64"] = base64.b64encode(small_document).decode("ascii")
+    page_count_calls: list[bytes] = []
+    monkeypatch.setattr("app.ocr_service._actual_pdf_page_count", lambda value: page_count_calls.append(value) or 1)
     response = client.post("/v1/ocr/form-converter", headers={"Authorization": f"Bearer {token}"}, json=payload)
     assert response.status_code == 413
     assert response.json()["detail"] == "OCR_DOCUMENT_TOO_LARGE"
+    assert page_count_calls == []
 
 
 def test_form_converter_ocr_rejects_page_count_mismatch_before_capture(monkeypatch, tmp_path: Path) -> None:
@@ -1101,6 +1104,94 @@ def test_form_converter_ocr_refunds_capture_when_provider_fails(monkeypatch, tmp
     ledger_amounts = {(entry["type"], entry["module"]): entry["amount"] for entry in ledger}
     assert ledger_amounts[("capture", "formConverter")] == _form_ocr_credits(1)
     assert ledger_amounts[("release", "formConverter")] == _form_ocr_credits(1)
+
+
+def test_form_converter_ocr_retry_after_provider_failure_recaptures(monkeypatch, tmp_path: Path) -> None:
+    """A retry after a refunded provider failure must re-run the provider and re-capture.
+
+    Previously the idempotency guard saw the old capture transaction and returned a
+    permanent 409, so the same document could never be reprocessed. After the fix the
+    retry uses a fresh idempotency key, re-captures, and returns a fresh response.
+    """
+    user_id = _create_user(monkeypatch, tmp_path)
+    assert (
+        client.post(
+            f"/v1/admin/users/{user_id}/credits/topup",
+            headers=_admin_headers(),
+            json={"amount": _form_ocr_credits(2) * 2, "idempotency_key": "topup-ocr-retry-recapture"},
+        ).status_code
+        == 200
+    )
+    token = _login()
+    headers = {"Authorization": f"Bearer {token}"}
+    reservation = client.post(
+        "/v1/credits/reservations",
+        headers=headers,
+        json={
+            "job_id": "form-job-retry-recapture",
+            "module": "formConverter",
+            "units": _form_ocr_credits(2) * 2,
+            "idempotency_key": "reserve-ocr-retry-recapture",
+        },
+    ).json()
+    document = _pdf_with_pages(2)
+    calls = {"count": 0}
+
+    def fake_ocr(_request) -> OcrFormConverterResponse:  # noqa: ANN001
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise HTTPException(status_code=503, detail="OCR_PROVIDER_TIMEOUT")
+        return OcrFormConverterResponse(
+            job_id="form-job-retry-recapture",
+            module="formConverter",
+            template_type="student_history_v1",
+            provider="test-provider-retry",
+            records=[
+                OcrRecordResponse(
+                    record_id="record-1",
+                    page_number=1,
+                    status="ready",
+                    fields=[
+                        OcrFieldResponse(
+                            field_name="student_id",
+                            label_th="เลขประจำตัว",
+                            value="1001",
+                            confidence=0.99,
+                            status="ready",
+                        )
+                    ],
+                )
+            ],
+        )
+
+    monkeypatch.setattr("app.routes.ocr.run_form_converter_ocr", fake_ocr)
+    payload = {
+        "job_id": "form-job-retry-recapture",
+        "module": "formConverter",
+        "template_type": "student_history_v1",
+        "page_count": 2,
+        "credit_reservation_id": reservation["reservation_id"],
+        "document_sha256": hashlib.sha256(document).hexdigest(),
+        "document_base64": base64.b64encode(document).decode("ascii"),
+    }
+
+    first = client.post("/v1/ocr/form-converter", headers=headers, json=payload)
+    assert first.status_code == 503
+    assert calls["count"] == 1
+
+    second = client.post("/v1/ocr/form-converter", headers=headers, json=payload)
+    assert second.status_code == 200
+    assert calls["count"] == 2
+    assert second.json()["provider"] == "test-provider-retry"
+
+    ledger = client.get(f"/v1/admin/users/{user_id}/ledger", headers=_admin_headers()).json()
+    capture_entries = [entry for entry in ledger if entry["type"] == "capture"]
+    release_entries = [entry for entry in ledger if entry["type"] == "release"]
+    assert len(capture_entries) == 2
+    assert len(release_entries) == 1
+    assert sum(entry["amount"] for entry in release_entries) == _form_ocr_credits(2)
+    wallet = client.get("/v1/wallet", headers=headers).json()
+    assert wallet["available"] == _form_ocr_credits(2)
 
 
 def test_form_converter_ocr_credit_ledger_end_to_end(monkeypatch, tmp_path: Path) -> None:
@@ -1285,7 +1376,7 @@ def test_form_converter_ocr_stale_captured_request_does_not_call_provider(monkey
     capture = AccountRepository().capture_credits(
         user_id,
         reservation["reservation_id"],
-        CreditCaptureRequest(units=_form_ocr_credits(2), idempotency_key=capture_key),
+        CreditCaptureRequest(target_captured_units=_form_ocr_credits(2), idempotency_key=capture_key),
     )
     assert capture.units_captured == _form_ocr_credits(2)
 
@@ -1377,7 +1468,7 @@ def test_form_converter_ocr_finalizes_provider_done_capture_without_provider_ret
     capture = AccountRepository().capture_credits(
         user_id,
         reservation["reservation_id"],
-        CreditCaptureRequest(units=_form_ocr_credits(2), idempotency_key=capture_key),
+        CreditCaptureRequest(target_captured_units=_form_ocr_credits(2), idempotency_key=capture_key),
     )
     assert capture.units_captured == _form_ocr_credits(2)
 
@@ -1408,3 +1499,78 @@ def test_form_converter_ocr_finalizes_provider_done_capture_without_provider_ret
         "reserved": 0,
         "available": 1,
     }
+
+
+def test_ocr_request_store_purges_expired_pii_payloads(monkeypatch, tmp_path: Path) -> None:
+    user_id = _create_user(monkeypatch, tmp_path)
+    assert (
+        client.post(
+            f"/v1/admin/users/{user_id}/credits/topup",
+            headers=_admin_headers(),
+            json={"amount": _form_ocr_credits(1), "idempotency_key": "topup-form-purge-1"},
+        ).status_code
+        == 200
+    )
+    token = _login()
+    headers = {"Authorization": f"Bearer {token}"}
+    reservation = client.post(
+        "/v1/credits/reservations",
+        headers=headers,
+        json={
+            "job_id": "form-job-purge-1",
+            "module": "formConverter",
+            "units": _form_ocr_credits(1),
+            "idempotency_key": "reserve-form-purge-1",
+        },
+    ).json()
+    request_store = OcrRequestStore()
+    request_key = "form-converter:purge-key"
+    claim = request_store.claim_processing(
+        user_id=user_id,
+        request_key=request_key,
+        job_id="form-job-purge-1",
+        reservation_id=reservation["reservation_id"],
+        template_type="student_history_v1",
+        document_sha256="purge-sha",
+        page_count=1,
+    )
+    assert claim.claimed is True
+    response = OcrFormConverterResponse(
+        job_id="form-job-purge-1",
+        module="formConverter",
+        template_type="student_history_v1",
+        provider="purge-provider",
+        records=[
+            OcrRecordResponse(
+                record_id="record-1",
+                page_number=1,
+                status="ready",
+                fields=[
+                    OcrFieldResponse(
+                        field_name="first_name",
+                        label_th="ชื่อ",
+                        value="SomeStudentName",
+                        confidence=0.9,
+                        status="ready",
+                    )
+                ],
+            )
+        ],
+    )
+    request_store.mark_done(user_id=user_id, request_key=request_key, response=response)
+    assert request_store.completed_response(user_id=user_id, request_key=request_key) is not None
+
+    # Backdate the request so it falls outside the retention window, then confirm
+    # the purge drops the stored PII payload.
+    with connect(Path(settings.sqlite_path)) as connection:
+        connection.execute(
+            """
+            UPDATE ocr_form_converter_requests
+            SET updated_at = ?
+            WHERE user_id = ? AND request_key = ?
+            """,
+            ("2000-01-01T00:00:00Z", user_id, request_key),
+        )
+    assert request_store.purge_expired_requests() >= 1
+    assert request_store.completed_response(user_id=user_id, request_key=request_key) is None
+    assert request_store.request_status(user_id=user_id, request_key=request_key) is None

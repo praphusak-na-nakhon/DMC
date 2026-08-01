@@ -32,10 +32,15 @@
    - reserve credit ตามจำนวนหน้า PDF ก่อนส่ง OCR
    - capture credit ตามจำนวน record ที่ export จริง
    - release credit เมื่อ OCR ล้มเหลว หรือมีส่วนที่ไม่ได้ export
+   - idempotency key ของ capture/release ใช้ prefix ตาม attempt ของ request นั้น ๆ
+     (`ocr:{request_key}:capture:{attempt}`) ทำให้ retry หลัง provider ล้มเหลว re-capture
+     ด้วย key ใหม่ได้ ไม่ติด `CREDIT_IDEMPOTENCY_CONFLICT`
 
 6. Privacy controls
    - Cloud OCR ต้องมี account session และ active reservation
-   - Cloud ไม่ persist PDF ต้นฉบับหรือ field ที่อ่านได้
+   - Cloud เก็บคำตอบ OCR ที่มีข้อมูลนักเรียนได้ชั่วคราวเพื่อรองรับ retry/recovery
+     แล้วลบออกอัตโนมัติเมื่ออายุเกิน 24 ชั่วโมง (รัน purge บน startup ของ cloud)
+   - Cloud ไม่ persist PDF ต้นฉบับถาวร
    - telemetry/admin audit/ledger ต้องไม่มีชื่อ/เลขนักเรียน
 
 7. Synthetic performance

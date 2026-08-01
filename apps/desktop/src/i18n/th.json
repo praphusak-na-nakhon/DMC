@@ -293,7 +293,8 @@
         "OCR_GEMINI_UPLOAD_FINALIZE_HTTP_403_PERMISSION_DENIED": "Gemini ปฏิเสธสิทธิ์ตอนส่งไฟล์ PDF กรุณาตรวจ API key และ project",
         "OCR_GEMINI_GENERATE_HTTP_403_PERMISSION_DENIED": "Gemini ปฏิเสธสิทธิ์ตอนเรียกโมเดล กรุณาตรวจว่าโมเดลนี้ใช้ได้กับ API key/project นี้",
         "OCR_GEMINI_HTTP_403_API_KEY_SERVICE_BLOCKED": "API key นี้ยังไม่ได้รับอนุญาตให้ใช้ Gemini API กรุณาเปิดใช้งาน Generative Language API ใน Google Cloud/AI Studio",
-        "OCR_PROVIDER_RESPONSE_INVALID": "ผลลัพธ์จาก AI ไม่อยู่ในรูปแบบที่ระบบอ่านได้ กรุณาลองใหม่หรือส่ง diagnostics"
+        "OCR_PROVIDER_RESPONSE_INVALID": "ผลลัพธ์จาก AI ไม่อยู่ในรูปแบบที่ระบบอ่านได้ กรุณาลองใหม่หรือส่ง diagnostics",
+        "ROSTER_NO_MATCHING_SHEETS": "ไม่พบชีตบัญชีรายชื่อที่ตรงกับปีการศึกษาและระดับชั้นที่เลือก กรุณาตรวจปี/ระดับชั้นหรือไฟล์บัญชีรายชื่อ"
       }
     }
   }

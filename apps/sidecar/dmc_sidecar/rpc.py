@@ -56,7 +56,7 @@ from .job_store import JobStore
 from .module_config import load_effective_config, sync_module_config
 from .modules import get_module
 from .p_sar_readiness import PsarReadinessService
-from .runtime import JobManager, build_event_notification, utc_now
+from .runtime import JobManager, build_event_notification, finalize_job_credits, utc_now
 from .schemas import (
     AddPsarEvidenceRequest,
     ArchiveJobsRequest,
@@ -81,8 +81,6 @@ from .telemetry import TelemetryClient
 
 
 GEMINI_OCR_CREDIT_BYPASS_CODES = {"ACCOUNT_CLOUD_UNAVAILABLE", "ACCOUNT_CLOUD_REQUIRED"}
-LIVE_JOB_CREDIT_BYPASS_MODULES = {"currentStudents"}
-LIVE_JOB_CREDIT_BYPASS_CODES = {"ACCOUNT_CLOUD_UNAVAILABLE"}
 
 
 class RpcServer:
@@ -522,46 +520,26 @@ class RpcServer:
         try:
             if not bool(start_params.options.get("dry_run", False)):
                 credits_reserved = self._estimate_credit_units(start_params)
-                try:
-                    reservation = reserve_credits(
-                        self.account_store,
-                        job_id=start_params.job_id,
-                        module=start_params.module,
-                        units=credits_reserved,
-                        idempotency_key=f"{start_params.job_id}:reserve",
-                    )
-                except DomainError as exc:
-                    if not self._can_bypass_live_job_credit_reservation(start_params, exc):
-                        raise
-                    self.job_store.update_credit_status(
-                        start_params.job_id,
-                        credits_reserved=0,
-                        credit_status=f"bypassed:{exc.code}",
-                    )
-                    credits_reserved = 0
-                    self._emit_background_notification(
-                        {
-                            "type": "sidecar_stderr",
-                            "message": (
-                                f"credit reservation bypassed for job {start_params.job_id}: "
-                                f"{start_params.module} {exc.code}"
-                            ),
-                        }
-                    )
-                else:
-                    credit_reservation_id = reservation.reservation_id
-                    self.job_store.update_credit_status(
-                        start_params.job_id,
-                        credit_reservation_id=credit_reservation_id,
-                        credits_reserved=credits_reserved,
-                        credit_status="reserved",
-                    )
-                    self._emit_background_notification(
-                        {
-                            "type": "sidecar_stderr",
-                            "message": f"credits reserved for job {start_params.job_id}: {credits_reserved}",
-                        }
-                    )
+                reservation = reserve_credits(
+                    self.account_store,
+                    job_id=start_params.job_id,
+                    module=start_params.module,
+                    units=credits_reserved,
+                    idempotency_key=f"{start_params.job_id}:reserve",
+                )
+                credit_reservation_id = reservation.reservation_id
+                self.job_store.update_credit_status(
+                    start_params.job_id,
+                    credit_reservation_id=credit_reservation_id,
+                    credits_reserved=credits_reserved,
+                    credit_status="reserved",
+                )
+                self._emit_background_notification(
+                    {
+                        "type": "sidecar_stderr",
+                        "message": f"credits reserved for job {start_params.job_id}: {credits_reserved}",
+                    }
+                )
 
             self.job_manager.start_job(
                 job_id=start_params.job_id,
@@ -575,6 +553,12 @@ class RpcServer:
             print(f"[sidecar] start_job background error for {start_params.job_id}: {exc!r}", file=sys.stderr)
             print(traceback.format_exc(), file=sys.stderr)
             code = exc.code if isinstance(exc, DomainError) else exc.__class__.__name__.upper()
+            if credit_reservation_id and credits_reserved > 0:
+                self._release_start_failed_reservation(
+                    job_id=start_params.job_id,
+                    reservation_id=credit_reservation_id,
+                    credits_reserved=credits_reserved,
+                )
             self.job_store.mark_start_failed(start_params.job_id, code=code, finished_at=utc_now())
             self._emit_background_notification(
                 {
@@ -585,24 +569,57 @@ class RpcServer:
                 }
             )
 
-    def _can_bypass_live_job_credit_reservation(
-        self,
-        start_params: StartJobRequest,
-        exc: DomainError,
-    ) -> bool:
-        return start_params.module in LIVE_JOB_CREDIT_BYPASS_MODULES and exc.code in LIVE_JOB_CREDIT_BYPASS_CODES
-
     def _emit_background_notification(self, payload: dict[str, Any]) -> None:
         try:
             self.emit_notification(payload)
         except Exception as exc:  # pragma: no cover - defensive notification boundary
             print(f"[sidecar] failed to emit background event: {exc!r}", file=sys.stderr)
 
+    def _release_start_failed_reservation(
+        self,
+        *,
+        job_id: str,
+        reservation_id: str,
+        credits_reserved: int,
+    ) -> None:
+        try:
+            release_credits(
+                self.account_store,
+                reservation_id=reservation_id,
+                units=credits_reserved,
+                idempotency_key=f"{job_id}:start_failed:release",
+            )
+            self.job_store.update_credit_status(job_id, credits_refunded=credits_reserved)
+        except DomainError as release_error:
+            print(
+                f"[sidecar] failed to release start-failed reservation for {job_id}: {release_error.code}",
+                file=sys.stderr,
+            )
+        except Exception as release_error:  # pragma: no cover - defensive release path
+            print(
+                f"[sidecar] unexpected start-failed reservation release error for {job_id}: {release_error!r}",
+                file=sys.stderr,
+            )
+
     def _reap_interrupted_reservations(self) -> int:
-        jobs = self.job_store.list_reserving_jobs()
-        for job in jobs:
-            self._release_interrupted_reservation(job)
-        return self.job_store.mark_reserving_jobs_failed([str(job["id"]) for job in jobs])
+        reaped = 0
+        for job in self.job_store.list_stale_credit_jobs():
+            job_id = str(job["id"])
+            credit_status = str(job.get("credit_status") or "")
+            if credit_status in {"reserving", "reserved"}:
+                # Crashed between reserve and run start: refund the reservation and fail the job.
+                self._release_interrupted_reservation(job)
+                self.job_store.mark_stale_credit_jobs_failed([job_id], code="RESTART_DURING_RESERVATION")
+                reaped += 1
+            elif credit_status.startswith("start_failed:"):
+                # A previous start failed and its release never completed; retry it.
+                if self._retry_start_failed_release(job):
+                    reaped += 1
+            elif credit_status.startswith("finalize_failed:"):
+                # A previous finalize raised; recompute capture/release against the reservation.
+                if self._retry_finalize_failed(job):
+                    reaped += 1
+        return reaped
 
     def _release_interrupted_reservation(self, job: dict[str, Any]) -> None:
         credits_reserved = int(job.get("credits_reserved") or 0)
@@ -632,6 +649,49 @@ class RpcServer:
         except Exception as exc:  # pragma: no cover - defensive startup path
             print(f"[sidecar] unexpected interrupted reservation release error for {job_id}: {exc!r}", file=sys.stderr)
 
+    def _retry_start_failed_release(self, job: dict[str, Any]) -> bool:
+        """Re-attempt the release of a reservation whose start failed and never refunded."""
+        job_id = str(job["id"])
+        reservation_id = job.get("credit_reservation_id")
+        credits_reserved = int(job.get("credits_reserved") or 0)
+        if not reservation_id or credits_reserved <= 0 or self.account_store.get_session() is None:
+            return False
+        try:
+            release_credits(
+                self.account_store,
+                reservation_id=str(reservation_id),
+                units=credits_reserved,
+                idempotency_key=f"{job_id}:start_failed:release",
+            )
+        except DomainError as exc:
+            print(f"[sidecar] failed to release start-failed reservation for {job_id}: {exc.code}", file=sys.stderr)
+            return False
+        except Exception as exc:  # pragma: no cover - defensive startup path
+            print(f"[sidecar] unexpected start-failed reservation release error for {job_id}: {exc!r}", file=sys.stderr)
+            return False
+        self.job_store.update_credit_status(
+            job_id,
+            credits_captured=0,
+            credits_refunded=credits_reserved,
+            credit_status="finalized",
+        )
+        return True
+
+    def _retry_finalize_failed(self, job: dict[str, Any]) -> bool:
+        """Re-run credit finalize for a job whose prior finalize raised."""
+        job_id = str(job["id"])
+        if self.account_store.get_session() is None:
+            return False
+        status = self.job_store.get_status(job_id)
+        if status is None:
+            return False
+        result = finalize_job_credits(
+            account_store=self.account_store,
+            job_store=self.job_store,
+            status=status,
+        )
+        return result == "finalized"
+
     def _resume_existing_job(
         self,
         request_id: str | int | None,
@@ -656,7 +716,7 @@ class RpcServer:
                 message="Job not found.",
             )
 
-        if record["status"] != "paused":
+        if record["status"] not in {"paused", "stopped_on_review"}:
             return self._error(
                 request_id,
                 code="JOB_NOT_RESUMABLE",

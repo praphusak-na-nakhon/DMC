@@ -149,6 +149,21 @@ export function describeCreditStatus(status: string | null | undefined): {
       message: `ระบบกันเครดิตหรือเตรียมงานไม่สำเร็จ (${code}) กรุณาลองใหม่หรือติดต่อผู้ดูแล`,
     };
   }
+  if (status.startsWith("finalize_failed:")) {
+    const code = status.slice("finalize_failed:".length);
+    if (code === "ACCOUNT_CLOUD_UNAVAILABLE" || code === "SIGN_IN_REQUIRED") {
+      return {
+        tone: "warning",
+        title: "ยังสรุปเครดิตไม่เสร็จ",
+        message: "งานเสร็จแล้วแต่ติดต่อ cloud ไม่ได้เพื่อตัดเครดิต ระบบจะลองสรุปเครดิตใหม่ในครั้งถัดไปที่เปิดโปรแกรม",
+      };
+    }
+    return {
+      tone: "warning",
+      title: "สรุปเครดิตไม่สำเร็จ",
+      message: `งานเสร็จแล้วแต่ตัดเครดิตค้างอยู่ (${code}) ระบบจะลองใหม่ในครั้งถัดไปที่เปิดโปรแกรม`,
+    };
+  }
   return {
     tone: "warning",
     title: "สถานะเครดิต",

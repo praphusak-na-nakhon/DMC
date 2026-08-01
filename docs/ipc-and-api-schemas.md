@@ -200,6 +200,30 @@ Response:
 }
 ```
 
+#### `resume_existing_job`
+Resumes a job that is still resumable after a process restart: accepts jobs with status
+`paused` or `stopped_on_review` (the latter is a review-stopped job that was finalized).
+If the prior reservation was already finalized, the sidecar re-reserves credits for the
+remaining records before starting.
+
+Request:
+```json
+{
+  "job_id": "uuid"
+}
+```
+
+Response:
+```json
+{
+  "accepted": true,
+  "job_id": "uuid",
+  "status": "running"
+}
+```
+
+Errors: `JOB_NOT_FOUND`, `JOB_NOT_RESUMABLE` (any other status), `PLAYWRIGHT_BROWSER_MISSING`.
+
 #### `cancel_job`
 Request:
 ```json
@@ -237,9 +261,20 @@ Response:
   "current_page": 3,
   "needs_auth": false,
   "report_path": null,
-  "stopped_item": null
+  "stopped_item": null,
+  "credit_reservation_id": "reservation-uuid",
+  "credits_reserved": 200,
+  "credits_captured": 0,
+  "credits_refunded": 0,
+  "credit_status": "reserved"
 }
 ```
+
+`credit_status` lifecycle on a live (non-dry-run) job:
+- `reserving` → `reserved` → `finalized`
+- `start_failed:<code>` — start failed after reserve; the reservation is refunded
+  (retried on restart if the release never completed)
+- `finalize_failed:<code>` — job ended but capture/release failed; retried on restart
 
 ### 3.2 Sidecar events
 

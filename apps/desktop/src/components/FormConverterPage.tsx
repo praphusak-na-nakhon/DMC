@@ -130,7 +130,7 @@ const errorMessages: Record<string, string> = {
   CURRENT_STUDENTS_INPUT_NOT_FOUND: "ไม่พบไฟล์ที่เลือก",
   CURRENT_STUDENTS_INPUT_NOT_FILE: "พาธที่เลือกไม่ใช่ไฟล์",
   CURRENT_STUDENTS_UNSUPPORTED_INPUT_TYPE: "ชนิดไฟล์ไม่รองรับ",
-  CURRENT_STUDENTS_ROSTER_EMPTY: "ไม่พบรายชื่อนักเรียนในไฟล์บัญชีรายชื่อ",
+  ROSTER_NO_MATCHING_SHEETS: "ไม่พบชีตบัญชีรายชื่อที่ตรงกับปีการศึกษาและระดับชั้นที่เลือก กรุณาเลือกปี/ระดับชั้นให้ตรงหรือตรวจไฟล์บัญชีรายชื่อ",
   CURRENT_STUDENTS_EXPORT_UNSUPPORTED_TYPE: "ไฟล์ปลายทางต้องเป็น .xlsx",
   DMC_FORM_JSON_EXPORT_UNSUPPORTED_TYPE: "ไฟล์ปลายทางต้องเป็น .json",
   CURRENT_STUDENTS_OCR_REQUIRED: "กรุณาเพิ่มไฟล์ OCR จากแบบฟอร์ม DMC อย่างน้อย 1 ไฟล์",
@@ -317,7 +317,7 @@ export function FormConverterPage({
   const [civilRegistrationGeminiOcrResult, setCivilRegistrationGeminiOcrResult] =
     useState<GeminiOcrDmcFormResponse | null>(null);
   const [schoolYear, setSchoolYear] = useState("2569");
-  const [gradeLevels, setGradeLevels] = useState("1");
+  const [gradeLevels, setGradeLevels] = useState("");
   const [admissionDate, setAdmissionDate] = useState("");
   const [jsonPreview, setJsonPreview] = useState<PreviewDmcFormJsonResponse | null>(null);
   const [jsonExport, setJsonExport] = useState<ExportDmcFormJsonResponse | null>(null);
@@ -861,7 +861,7 @@ export function FormConverterPage({
                     setGradeLevels(event.target.value);
                     resetResult();
                   }}
-                  placeholder="1 หรือ 1,2,3"
+                  placeholder="เว้นว่าง = ทุกระดับ หรือ 1,2,3"
                 />
               </div>
               <div className="grid gap-2">

@@ -19,6 +19,7 @@ obec-fill-review.csv
 apps/.cloud-state.sqlite3
 rate-limit.sqlite3*
 uploadTest/
+upload/
 %TEMP%/
 2568-*-student.xlsx
 student_basic_info_form.xlsx

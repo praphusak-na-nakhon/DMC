@@ -25,7 +25,7 @@ from .errors import DomainError
 
 
 BUNDLED_CONFIG_SHA256: dict[str, str] = {
-    "graduation": "943369dc2d4c7d7f2360c05fbb8a6e77a6b06c6f7b5918a1bbdc69e13351d776",
+    "graduation": "eb38e41ba55346033e0f1f38a79514c0efa0ce1481f1286b49f01f7e40cb057c",
 }
 
 

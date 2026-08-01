@@ -911,7 +911,7 @@ def reconcile_current_students(request: ReconcileCurrentStudentsRequest) -> Curr
         grade_levels=request.grade_levels,
     )
     if not roster:
-        raise DomainError("CURRENT_STUDENTS_ROSTER_EMPTY", "No roster rows were found for the requested year/grade.")
+        raise DomainError("ROSTER_NO_MATCHING_SHEETS", "No roster rows matched the requested school year and grade filters.")
 
     scans: list[ThaiIdScanRecord] = []
     if request.thai_id_csv_path:
@@ -1482,6 +1482,11 @@ def _read_header_roster_sheet(
     school_year: int,
     wanted_grades: set[int] | None,
 ) -> tuple[list[RosterStudent], list[CurrentStudentsWarning]]:
+    # Sheet-name rosters ("1.1") validate the detected school year; header rosters must too,
+    # otherwise a sheet from another year is silently imported as the selected year.
+    detected_year = _detect_roster_year(sheet)
+    if detected_year is not None and detected_year != school_year:
+        return [], []
     header_row_index: int | None = None
     header_columns: dict[str, int] = {}
     for row_index, row in enumerate(sheet.iter_rows(min_row=1, max_row=10, values_only=True), start=1):
@@ -2690,30 +2695,39 @@ def _dmc_date_text(value: str | None) -> str | None:
     text = _clean_text(value)
     if not text:
         return None
-    slash_match = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", text)
-    if slash_match:
-        day, month, year = slash_match.groups()
-        return f"{int(day):02d}/{int(month):02d}/{year}"
-    thai_match = re.search(r"(\d{1,2})\s+([ก-๙.]+)\s+(\d{4})", text)
-    if thai_match is None:
-        return None
-    day, month_text, year = thai_match.groups()
-    month = THAI_MONTH_CODES.get(month_text)
-    if month is None:
-        return None
-    return f"{int(day):02d}/{month}/{year}"
-
-
-def _dmc_admission_date_text(value: str | None) -> str | None:
-    text = _clean_text(value)
-    if not text:
-        return None
+    # DMC form dates are Buddhist-calendar (BE). A four-digit year below 2400 is a
+    # Common-Era year (e.g. "2014") and must be converted, mirroring the BE/CE rule
+    # already applied by _dmc_admission_date_text.
     iso_match = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", text)
     if iso_match:
         year, month, day = (int(part) for part in iso_match.groups())
         if year < 2400:
             year += 543
         return f"{day:02d}/{month:02d}/{year}"
+    slash_match = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", text)
+    if slash_match:
+        slash_day, slash_month, slash_year = slash_match.groups()
+        slash_year_int = int(slash_year)
+        if slash_year_int < 2400:
+            slash_year_int += 543
+        return f"{int(slash_day):02d}/{int(slash_month):02d}/{slash_year_int}"
+    thai_match = re.search(r"(\d{1,2})\s+([ก-๙.]+)\s+(\d{4})", text)
+    if thai_match is None:
+        return None
+    thai_day, month_text, thai_year = thai_match.groups()
+    month_code = THAI_MONTH_CODES.get(month_text)
+    if month_code is None:
+        return None
+    thai_year_int = int(thai_year)
+    if thai_year_int < 2400:
+        thai_year_int += 543
+    return f"{int(thai_day):02d}/{month_code}/{thai_year_int}"
+
+
+def _dmc_admission_date_text(value: str | None) -> str | None:
+    text = _clean_text(value)
+    if not text:
+        return None
     return _dmc_date_text(text)
 
 
@@ -2941,30 +2955,6 @@ def _is_missing_import_value(value: str | int | float | bool | None) -> bool:
     if isinstance(value, str):
         return _clean_text(value) in EMPTY_MARKERS
     return False
-
-
-def _export_conflicts(
-    records: list[CanonicalStudentRecord],
-    *,
-    default_school_year: int | None,
-) -> list[CurrentStudentsFieldConflict]:
-    conflicts: list[CurrentStudentsFieldConflict] = []
-    for record in records:
-        for conflict in record.conflicts:
-            selected_value, selected_source = _selected_import_field(record, conflict.field_name, default_school_year)
-            conflicts.append(
-                conflict.model_copy(
-                    update={
-                        "full_name": _export_full_name(record),
-                        "student_no": record.student_no,
-                        "citizen_id": record.citizen_id,
-                        "selected_value": selected_value,
-                        "selected_source": selected_source,
-                        "selected_basis": _selected_basis(conflict.field_name, selected_source),
-                    }
-                )
-            )
-    return conflicts
 
 
 def _add_field_conflict(

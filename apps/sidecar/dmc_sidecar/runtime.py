@@ -380,63 +380,94 @@ class JobManager:
             with self._lock:
                 self._jobs.pop(context.job_id, None)
 
-    def _require_active_job(self, job_id: str) -> ActiveJob:
-        with self._lock:
-            active = self._jobs.get(job_id)
-        if active is None:
-            raise DomainError("JOB_NOT_FOUND")
-        return active
-
     def _finalize_credits(self, context: JobContext, status: dict[str, Any]) -> None:
         reservation_id = context.snapshot.credit_reservation_id or status.get("credit_reservation_id")
         reserved = int(context.snapshot.credits_reserved or status.get("credits_reserved") or 0)
         if not reservation_id or reserved <= 0:
             return
 
-        summary = status.get("run_summary") if isinstance(status.get("run_summary"), dict) else None
-        if status.get("status") == "done" and summary is not None:
-            capture_units = int(summary.get("applied_rows") or status.get("succeeded") or 0)
-        else:
-            capture_units = int(status.get("succeeded") or context.snapshot.succeeded or 0)
-        capture_units = max(0, min(capture_units, reserved))
-        release_units = max(reserved - capture_units, 0)
-
-        try:
-            if capture_units:
-                capture_result = capture_credits(
-                    context.account_store,
-                    reservation_id=str(reservation_id),
-                    units=capture_units,
-                    idempotency_key=f"{context.job_id}:capture",
-                )
-                context.snapshot.credits_captured = capture_result.units_captured
-            if release_units:
-                release_result = release_credits(
-                    context.account_store,
-                    reservation_id=str(reservation_id),
-                    units=release_units,
-                    idempotency_key=f"{context.job_id}:release",
-                )
-                context.snapshot.credits_refunded = release_result.units_released
+        credit_status = finalize_job_credits(
+            account_store=context.account_store,
+            job_store=context.job_store,
+            status=status,
+        )
+        if credit_status == "finalized":
+            # status is a pre-finalize read; recompute locally for the live snapshot.
+            status = dict(status)
+            status["credits_reserved"] = reserved
+            capture_units = _finalize_capture_units(status)
+            context.snapshot.credits_captured = capture_units
+            context.snapshot.credits_refunded = max(reserved - capture_units, 0)
             context.snapshot.credit_status = "finalized"
-            self.job_store.update_credit_status(
-                context.job_id,
-                credits_captured=capture_units,
-                credits_refunded=release_units,
-                credit_status="finalized",
-            )
-        except DomainError as exc:
-            context.snapshot.credit_status = f"finalize_failed:{exc.code}"
-            self.job_store.update_credit_status(
-                context.job_id,
-                credit_status=context.snapshot.credit_status,
-            )
+        else:
+            context.snapshot.credit_status = credit_status
             self.emit_notification(
                 {
                     "type": "sidecar_stderr",
-                    "message": f"credit finalize failed: {exc.code}",
+                    "message": f"credit finalize failed: {credit_status.removeprefix('finalize_failed:')}",
                 }
             )
+
+
+def _finalize_capture_units(status: dict[str, Any]) -> int:
+    """Billable capture units for a terminal job, clamped to the reservation size."""
+    reserved = int(status.get("credits_reserved") or 0)
+    summary = status.get("run_summary") if isinstance(status.get("run_summary"), dict) else None
+    if status.get("status") == "done" and summary is not None:
+        capture_units = int(summary.get("applied_rows") or status.get("succeeded") or 0)
+    else:
+        capture_units = int(status.get("succeeded") or 0)
+    return max(0, min(capture_units, reserved))
+
+
+def finalize_job_credits(
+    *,
+    account_store: AccountSessionStore,
+    job_store: JobStore,
+    status: dict[str, Any],
+) -> str:
+    """Settle a finished job's credit reservation: capture the earned units and release the rest.
+
+    Idempotency keys are scoped to the reservation (``{job_id}:{reservation_id}:capture`` /
+    ``:release``) so a resume-after-finalize attempt, which starts a fresh reservation, does not
+    collide with the keys already recorded against the previous reservation (the cloud rejects a
+    reused key that points at a different reservation with CREDIT_IDEMPOTENCY_CONFLICT).
+
+    Returns the resulting ``credit_status``: ``"finalized"`` or ``"finalize_failed:<code>"``.
+    Never raises; cloud errors are recorded on the job and returned via the status string.
+    """
+    job_id = str(status["job_id"])
+    reservation_id = status.get("credit_reservation_id")
+    reserved = int(status.get("credits_reserved") or 0)
+    if not reservation_id or reserved <= 0:
+        return "finalized"
+    capture_units = _finalize_capture_units(status)
+    release_units = max(reserved - capture_units, 0)
+    try:
+        if capture_units:
+            capture_credits(
+                account_store,
+                reservation_id=str(reservation_id),
+                units=capture_units,
+                idempotency_key=f"{job_id}:{reservation_id}:capture",
+            )
+        if release_units:
+            release_credits(
+                account_store,
+                reservation_id=str(reservation_id),
+                units=release_units,
+                idempotency_key=f"{job_id}:{reservation_id}:release",
+            )
+    except DomainError as exc:
+        job_store.update_credit_status(job_id, credit_status=f"finalize_failed:{exc.code}")
+        return f"finalize_failed:{exc.code}"
+    job_store.update_credit_status(
+        job_id,
+        credits_captured=capture_units,
+        credits_refunded=release_units,
+        credit_status="finalized",
+    )
+    return "finalized"
 
 
 def build_event_notification(payload: dict[str, Any]) -> str:

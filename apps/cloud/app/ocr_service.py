@@ -302,7 +302,9 @@ def run_form_converter_ocr(request: OcrFormConverterRequest) -> OcrFormConverter
 
 
 def validate_form_converter_document(request: OcrFormConverterRequest) -> ValidatedOcrDocument:
+    _validate_declared_limits(request)
     document_bytes = _validate_document_hash(request)
+    _validate_document_size(document_bytes)
     actual_page_count = _actual_pdf_page_count(document_bytes)
     if actual_page_count <= 0:
         raise HTTPException(
@@ -314,7 +316,6 @@ def validate_form_converter_document(request: OcrFormConverterRequest) -> Valida
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="OCR_PAGE_COUNT_MISMATCH",
         )
-    _validate_limits(request, document_bytes)
     return ValidatedOcrDocument(document_bytes=document_bytes, actual_page_count=actual_page_count)
 
 
@@ -348,8 +349,9 @@ def _validate_document_hash(request: OcrFormConverterRequest) -> bytes:
     return document_bytes
 
 
-def _validate_limits(request: OcrFormConverterRequest, document_bytes: bytes) -> None:
-    if len(document_bytes) > settings.ocr_max_pdf_bytes:
+def _validate_declared_limits(request: OcrFormConverterRequest) -> None:
+    max_base64_length = ((settings.ocr_max_pdf_bytes + 2) // 3) * 4
+    if len(request.document_base64) > max_base64_length:
         raise HTTPException(
             status_code=413,
             detail="OCR_DOCUMENT_TOO_LARGE",
@@ -358,6 +360,14 @@ def _validate_limits(request: OcrFormConverterRequest, document_bytes: bytes) ->
         raise HTTPException(
             status_code=413,
             detail="OCR_PAGE_LIMIT_EXCEEDED",
+        )
+
+
+def _validate_document_size(document_bytes: bytes) -> None:
+    if len(document_bytes) > settings.ocr_max_pdf_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail="OCR_DOCUMENT_TOO_LARGE",
         )
 
 

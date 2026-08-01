@@ -1124,12 +1124,26 @@ class CurrentStudentsModule(AutomationModule):
     def _fill_post_date(self, page: Page, value: str) -> None:
         page.evaluate(
             """
-            (value) => {
+            async (value) => {
               const field = document.querySelector('[name="postDate"]');
               if (!field || !value) return;
-              field.value = value;
-              field.dispatchEvent(new Event('input', { bubbles: true }));
-              field.dispatchEvent(new Event('change', { bubbles: true }));
+              const dispatch = (element) => {
+                element.dispatchEvent(new Event('input', { bubbles: true }));
+                element.dispatchEvent(new Event('change', { bubbles: true }));
+              };
+              const setExactTextValue = (element, text) => {
+                const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+                if (descriptor && descriptor.set) {
+                  descriptor.set.call(element, text);
+                } else {
+                  element.value = text;
+                }
+              };
+              setExactTextValue(field, value);
+              dispatch(field);
+              await new Promise((resolve) => setTimeout(resolve, 0));
+              setExactTextValue(field, value);
+              dispatch(field);
             }
             """,
             value,
@@ -1138,12 +1152,20 @@ class CurrentStudentsModule(AutomationModule):
     def _fill_admission_date(self, page: Page, value: str | None) -> None:
         page.evaluate(
             """
-            (explicitValue) => {
+            async (explicitValue) => {
               const field = document.querySelector('[name="admissionDate"]');
               if (!field) return;
               const dispatch = (element) => {
                 element.dispatchEvent(new Event('input', { bubbles: true }));
                 element.dispatchEvent(new Event('change', { bubbles: true }));
+              };
+              const setExactTextValue = (element, text) => {
+                const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+                if (descriptor && descriptor.set) {
+                  descriptor.set.call(element, text);
+                } else {
+                  element.value = text;
+                }
               };
               const postDate = document.querySelector('[name="postDate"]')?.value || "";
               const nextValue = explicitValue || postDate;
@@ -1155,9 +1177,14 @@ class CurrentStudentsModule(AutomationModule):
                   if (option) field.value = option.value;
                 }
               } else if (nextValue) {
-                field.value = nextValue;
+                setExactTextValue(field, nextValue);
               }
               dispatch(field);
+              if (field.tagName !== 'SELECT' && nextValue) {
+                await new Promise((resolve) => setTimeout(resolve, 0));
+                setExactTextValue(field, nextValue);
+                dispatch(field);
+              }
             }
             """,
             value,

@@ -98,6 +98,11 @@ corepack pnpm --dir apps/desktop exec tauri dev
 
 Live run จะเริ่มได้ก็ต่อเมื่อ cloud ติดต่อได้, login แล้ว และเครดิตพอ ระบบจะ reserve เครดิตก่อนเปิด browser และ capture/release หลังงานจบตามผลจริง
 
+Lifecycle hardening (crash recovery):
+- รอบ restart ของ sidecar จะ reap งานที่ค้างอยู่: `reserving`/`reserved` ที่ crash ระหว่าง reserve→run จะ refund และ mark failed, `start_failed:*` ที่ release ไม่สำเร็จจะ retry release, และ `finalize_failed:*` จะ retry finalize
+- `resume_existing_job` รองรับทั้ง `paused` และ `stopped_on_review`; ถ้า reservation เดิมถูก finalize ไปแล้วจะ re-reserve เครดิตสำหรับ record ที่เหลือ
+- idempotency key ของ capture/release scope ตาม reservation (`{job_id}:{reservation_id}:capture/:release`) กันชน key เดิมเมื่อ resume หลัง finalize
+
 ## 6. Admin API ขั้นต่ำ
 
 ต้องส่ง header:

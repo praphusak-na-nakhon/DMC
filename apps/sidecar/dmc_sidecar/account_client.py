@@ -255,7 +255,7 @@ def capture_credits(
         f"/v1/credits/reservations/{reservation_id}/capture",
         method="POST",
         token=session.token,
-        payload={"units": units, "idempotency_key": idempotency_key},
+        payload={"target_captured_units": units, "idempotency_key": idempotency_key},
     )
     reservation = CreditReservationSnapshot.model_validate(payload)
     store.update_wallet(reservation.wallet, checked_at=utc_now())
@@ -276,7 +276,7 @@ def release_credits(
         f"/v1/credits/reservations/{reservation_id}/release",
         method="POST",
         token=session.token,
-        payload={"units": units, "idempotency_key": idempotency_key},
+        payload={"target_released_units": units, "idempotency_key": idempotency_key},
     )
     reservation = CreditReservationSnapshot.model_validate(payload)
     store.update_wallet(reservation.wallet, checked_at=utc_now())

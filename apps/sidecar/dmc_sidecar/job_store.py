@@ -203,6 +203,50 @@ class JobStore:
             )
             return int(cursor.rowcount)
 
+    def list_stale_credit_jobs(self) -> list[dict[str, Any]]:
+        """Jobs with an unsettled credit reservation that are not actively running.
+
+        Covers crashes between reserve and run start (``reserving``/``reserved``), a failed
+        start whose release never completed (``start_failed:*``), and a finalize that raised
+        (``finalize_failed:*``). Running/paused jobs are resumable and must be left alone.
+        """
+        with connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM job
+                WHERE status NOT IN ('running', 'paused')
+                  AND credit_status IS NOT NULL
+                  AND credit_status != 'finalized'
+                ORDER BY id ASC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_stale_credit_jobs_failed(
+        self,
+        job_ids: list[str],
+        *,
+        code: str = "RESTART_DURING_RESERVATION",
+    ) -> int:
+        if not job_ids:
+            return 0
+        placeholders = ", ".join(["?"] * len(job_ids))
+        with connect(immediate=True) as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE job
+                SET status = 'failed',
+                    finished_at = ?,
+                    run_summary_json = COALESCE(run_summary_json, '{{}}'),
+                    credit_status = ?
+                WHERE status = 'pending'
+                  AND id IN ({placeholders})
+                """,
+                (utc_now(), f"start_failed:{code}", *job_ids),
+            )
+            return int(cursor.rowcount)
+
     def reap_reserving_jobs(self, *, code: str = "RESTART_DURING_RESERVATION") -> int:
         jobs = self.list_reserving_jobs()
         return self.mark_reserving_jobs_failed([str(job["id"]) for job in jobs], code=code)

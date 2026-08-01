@@ -10,6 +10,7 @@ from .schemas import OcrFormConverterResponse
 
 
 OCR_PROCESSING_STALE_MINUTES = 15
+OCR_REQUEST_RETENTION_HOURS = 24
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,25 @@ class OcrRequestStore:
         if row is None or not row["response_json"]:
             return None
         return OcrFormConverterResponse.model_validate_json(str(row["response_json"]))
+
+    def request_status(
+        self,
+        *,
+        user_id: str,
+        request_key: str,
+    ) -> dict[str, str] | None:
+        with connect(self.sqlite_path) as connection:
+            row = connection.execute(
+                """
+                SELECT status, updated_at
+                FROM ocr_form_converter_requests
+                WHERE user_id = ? AND request_key = ?
+                """,
+                (user_id, request_key),
+            ).fetchone()
+        if row is None:
+            return None
+        return {"status": str(row["status"]), "updated_at": str(row["updated_at"])}
 
     def claim_processing(
         self,
@@ -193,3 +213,22 @@ class OcrRequestStore:
                 """,
                 (error_detail[:200], utc_now(), user_id, request_key),
             )
+
+    def purge_expired_requests(self, *, retention_hours: int = OCR_REQUEST_RETENTION_HOURS) -> int:
+        """Delete OCR requests older than the retention window.
+
+        OCR responses contain student-derived fields and must not be retained
+        indefinitely (privacy policy). This bounds the stored response payloads.
+        """
+        cutoff = (
+            datetime.now(UTC) - timedelta(hours=retention_hours)
+        ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        with connect(self.sqlite_path, immediate=True) as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM ocr_form_converter_requests
+                WHERE updated_at < ?
+                """,
+                (cutoff,),
+            )
+        return cursor.rowcount

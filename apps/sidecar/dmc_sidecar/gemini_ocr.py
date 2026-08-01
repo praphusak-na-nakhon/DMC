@@ -1052,6 +1052,8 @@ def _response_json(response: Any) -> dict[str, Any]:
     except json.JSONDecodeError as exc:
         payload = _response_json_with_extra_closing_braces(text)
         if payload is None:
+            payload = _response_json_with_quoted_numeric_ranges(text)
+        if payload is None:
             raise DomainError("GEMINIOCR_RESPONSE_INVALID", f"Gemini OCR returned invalid structured JSON: {exc}") from exc
     if not isinstance(payload, dict):
         raise DomainError("GEMINIOCR_RESPONSE_INVALID", "Gemini OCR structured JSON root must be an object.")
@@ -1067,9 +1069,31 @@ def _response_json_with_extra_closing_braces(text: str) -> dict[str, Any] | None
     if not isinstance(payload, dict):
         return None
     trailing = text[end_index:].strip()
-    if trailing and not re.fullmatch(r"}+", trailing):
+    trailing_without_whitespace = re.sub(r"\s+", "", trailing)
+    if trailing_without_whitespace and not re.fullmatch(r"}+", trailing_without_whitespace):
         return None
     return payload
+
+
+def _response_json_with_quoted_numeric_ranges(text: str) -> dict[str, Any] | None:
+    repaired = re.sub(
+        r'(:\s*)(\d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?)(\s*[,}\]])',
+        lambda match: f'{match.group(1)}"{_compact_json_numeric_range(match.group(2))}"{match.group(3)}',
+        text,
+    )
+    if repaired == text:
+        return None
+    try:
+        payload = json.loads(repaired)
+    except json.JSONDecodeError:
+        return _response_json_with_extra_closing_braces(repaired)
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def _compact_json_numeric_range(value: str) -> str:
+    return re.sub(r"\s+", "", value)
 
 
 def _normalized_structured_payload(payload: dict[str, Any]) -> dict[str, Any]:
