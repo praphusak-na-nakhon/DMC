@@ -53,7 +53,6 @@ describe("ModuleHome", () => {
     expect(screen.getByText(messages.app.home.modules.studentBasicInfo.title)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.currentStudents.title)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.graduation.title)).toBeInTheDocument();
-    expect(screen.queryByText("ตรวจความพร้อม P-SAR")).not.toBeInTheDocument();
   });
 
   it("opens currentStudents from the ready module list", () => {

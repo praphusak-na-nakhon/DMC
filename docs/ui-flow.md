@@ -25,7 +25,6 @@ DMC Assistant ช่วยครูและเจ้าหน้าที่โ
 - `Graduation Wizard`: ตรวจไฟล์จบการศึกษา, กันเครดิต, รัน automation, pause/resume/cancel, ดูรายงาน
 - `Form Converter`: ใช้ OCR แปลงแบบฟอร์ม DMC เป็น JSON และแสดง error ของ provider เป็นภาษาไทย
 - `Student Basic Info`: สร้าง workbook ข้อมูลพื้นฐานนักเรียนจากไฟล์ DMC
-- `P-SAR Readiness`: ตรวจความพร้อมหลักฐาน P-SAR, แนะนำไฟล์ที่ขาด, สร้างรายงาน
 - `Current Students`: ตรวจแบบฟอร์มนักเรียนปัจจุบันก่อนนำเข้า
 
 ทุกหน้าต้องใช้ข้อความภาษาไทยเป็นค่าเริ่มต้น และ error code ต้อง map เป็นข้อความที่ผู้ใช้ทำต่อได้
@@ -53,7 +52,7 @@ Must show:
 - สถานะบัญชีและเครดิตพร้อมใช้
 - form ลงชื่อเข้าใช้ email/password
 - ปุ่ม refresh credits และ sign out เมื่อ signed in
-- module cards ทั้ง 5 โมดูล พร้อม badge ว่าใช้เครดิตหรือไม่
+- module cards ทั้ง 4 โมดูล พร้อม badge ว่าใช้เครดิตหรือไม่
 - backup, restore, diagnostics และ updater controls
 
 Important states:
@@ -114,22 +113,7 @@ Must show:
 - summary จำนวนแถว/ชีตที่สร้าง
 - error ภาษาไทยสำหรับไฟล์ผิดรูปแบบหรือ column ไม่ครบ
 
-### 4.5 P-SAR Readiness
-
-Purpose: ตรวจหลักฐาน P-SAR และแนะนำสิ่งที่ยังขาด
-
-Must show:
-
-- readiness score, complete/partial/missing/needs review
-- รายการ requirement แยกตาม section
-- หลักฐานที่ขาดและหลักฐานที่พบ
-- recommended uploads เรียงตาม priority
-- mapped files
-- confirmation dialog เมื่อสร้างรายงานทั้งที่ score ต่ำกว่า threshold
-
-Copy must be Thai throughout this page.
-
-### 4.6 Current Students
+### 4.5 Current Students
 
 Purpose: ตรวจแบบฟอร์มนักเรียนปัจจุบันก่อน import
 
@@ -178,7 +162,6 @@ Empty states ต้องมี next action เมื่อเหมาะสม
 - ยังไม่เลือกไฟล์: ชี้ให้กดเลือกไฟล์
 - ยังไม่มี preview: ชี้ให้กดตรวจไฟล์
 - ไม่มีงานใน checkpoint: ชี้ให้เริ่มงานใหม่จากไฟล์
-- P-SAR ยังไม่มี mapped files: ชี้ให้อัปโหลดหลักฐาน
 
 Blocking errors ต้องมี:
 
@@ -208,7 +191,6 @@ Blocking errors ต้องมี:
 - job done แล้ว notification/attention ทำงาน
 - ปิดหน้าต่างขณะมีงาน active แล้ว dialog กันไว้
 - Form Converter แสดง OCR provider errors เป็นไทย
-- P-SAR ทั้งหน้าไม่มี label อังกฤษที่เป็น action/status หลัก
 
 ## 10. Acceptance Criteria
 

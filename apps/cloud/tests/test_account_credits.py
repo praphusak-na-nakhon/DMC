@@ -580,13 +580,7 @@ def test_reserve_insufficient_credit_and_module_catalog(monkeypatch, tmp_path: P
     catalog = client.get("/v1/modules/catalog", headers=headers)
     assert catalog.status_code == 200
     modules = {item["id"]: item for item in catalog.json()["modules"]}
-    assert modules["psar"]["requires_credits"] is False
-    assert modules["psar"]["credit_per_unit"] == 0
-    assert all(
-        item["requires_credits"] is True
-        for module_id, item in modules.items()
-        if module_id != "psar"
-    )
+    assert all(item["requires_credits"] is True for item in modules.values())
     assert modules["currentStudents"]["credit_per_unit"] == 1
     assert modules["graduation"]["credit_per_unit"] == 1
     assert modules["formConverter"]["credit_per_unit"] == settings.form_converter_ocr_credits_per_page

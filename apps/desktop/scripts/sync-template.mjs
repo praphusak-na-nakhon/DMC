@@ -8,7 +8,7 @@ const repoRoot = path.resolve(desktopRoot, "..", "..");
 const targetDir = path.join(desktopRoot, "src-tauri", "templates");
 mkdirSync(targetDir, { recursive: true });
 
-const templates = ["obec-study-form.xlsx", "P-SAR-form.docx"];
+const templates = ["obec-study-form.xlsx"];
 let changed = false;
 
 for (const templateName of templates) {

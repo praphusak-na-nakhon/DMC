@@ -305,14 +305,6 @@ def cached_module_catalog(store: AccountSessionStore) -> ModuleCatalogResponse:
                     production_dry_run_enabled=False,
                 ),
                 ModuleCatalogItem(
-                    id="psar",
-                    enabled=True,
-                    requires_credits=False,
-                    pricing_mode="per_billable_record",
-                    credit_per_unit=0,
-                    production_dry_run_enabled=False,
-                ),
-                ModuleCatalogItem(
                     id="graduation",
                     enabled=True,
                     requires_credits=True,

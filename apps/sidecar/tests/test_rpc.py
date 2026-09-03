@@ -82,14 +82,6 @@ def test_ping_rpc() -> None:
     assert response["result"]["sidecar_version"] == "0.1.0"
 
 
-def test_removed_psar_rpc_is_not_exposed() -> None:
-    server = RpcServer(emit_notification=lambda payload: None)
-
-    response = _rpc_call(server, "get_psar_readiness", {"project_id": "default"})
-
-    assert response["error"]["code"] == "RPC_METHOD_NOT_FOUND"
-
-
 def test_ocr_dmc_form_with_gemini_rpc(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
     captured: dict[str, object] = {}
     source_path = tmp_path / "form.pdf"
