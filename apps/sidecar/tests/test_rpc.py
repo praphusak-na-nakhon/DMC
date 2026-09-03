@@ -6,6 +6,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from dmc_sidecar import config
+from ai_fakes import InMemorySecretStore
+from dmc_sidecar.ai.base import AiConnectionTestResponse, OcrDocumentRequest, OcrDocumentResponse
+from dmc_sidecar.ai.registry import ProviderRegistry
 from dmc_sidecar.checkpoint import JobCheckpoint
 from dmc_sidecar.errors import DomainError
 from dmc_sidecar.job_store import JobStore
@@ -92,10 +95,122 @@ def test_unsupported_rpc_returns_method_not_found_envelope() -> None:
         "id": "req-unsupported_method",
         "error": {
             "code": "RPC_METHOD_NOT_FOUND",
-            "message": "Unsupported method: unsupported_method",
+            "message": "Unsupported method.",
             "details": {},
         },
     }
+
+
+class _FakeAiProvider:
+    provider_id = "gemini"
+
+    def test_connection(self) -> AiConnectionTestResponse:
+        return AiConnectionTestResponse(
+            provider="gemini",
+            ok=True,
+            tested_at="2026-09-04T00:00:00+00:00",
+            message="Gemini connection succeeded.",
+        )
+
+    def ocr_document(self, request: OcrDocumentRequest) -> OcrDocumentResponse:
+        return OcrDocumentResponse(
+            provider="gemini",
+            model=request.model,
+            processing_mode=request.processing_mode,
+            source_path=request.source_path,
+            markdown_path="C:\\data\\form.md",
+            cached=False,
+            pages_processed=1,
+            pages_estimated=1,
+            file_sha256="digest",
+            created_at="2026-09-04T00:00:00+00:00",
+        )
+
+
+def _ai_server(store: InMemorySecretStore | None = None) -> RpcServer:
+    return RpcServer(
+        emit_notification=lambda payload: None,
+        secret_store=store or InMemorySecretStore(),
+        provider_registry=ProviderRegistry([_FakeAiProvider()]),
+    )
+
+
+def test_ai_key_rpc_never_returns_secret() -> None:
+    store = InMemorySecretStore()
+    server = _ai_server(store)
+
+    saved = _rpc_call(server, "save_ai_api_key", {"provider": "gemini", "api_key": "secret-value"})
+    status = _rpc_call(server, "get_ai_settings", {"provider": "gemini"})
+
+    assert saved["result"] == {"provider": "gemini", "configured": True}
+    assert status["result"] == {"provider": "gemini", "configured": True}
+    assert "secret-value" not in json.dumps([saved, status])
+
+
+def test_ai_connection_and_ocr_rpc_use_injected_provider() -> None:
+    store = InMemorySecretStore()
+    store.set("gemini", "configured-key")
+    server = _ai_server(store)
+
+    connection = _rpc_call(server, "test_ai_connection", {"provider": "gemini"})
+    document = _rpc_call(
+        server,
+        "ocr_document",
+        {"provider": "gemini", "source_path": "C:\\data\\form.pdf"},
+    )
+
+    assert connection["result"]["ok"] is True
+    assert document["result"]["provider"] == "gemini"
+    assert document["result"]["source_path"] == "C:\\data\\form.pdf"
+
+
+def test_deleting_key_blocks_new_ocr_requests() -> None:
+    store = InMemorySecretStore()
+    store.set("gemini", "secret-value")
+    server = _ai_server(store)
+    deleted = _rpc_call(server, "delete_ai_api_key", {"provider": "gemini"})
+
+    response = _rpc_call(
+        server,
+        "ocr_document",
+        {"provider": "gemini", "source_path": "C:\\data\\form.pdf"},
+    )
+
+    assert deleted["result"] == {"provider": "gemini", "configured": False}
+    assert response["error"]["code"] == "AI_API_KEY_REQUIRED"
+
+
+def test_ai_rpc_validation_and_unexpected_errors_never_echo_secrets(capsys) -> None:  # noqa: ANN001
+    class ExplodingProvider(_FakeAiProvider):
+        def test_connection(self) -> AiConnectionTestResponse:
+            raise RuntimeError("provider-secret")
+
+    server = RpcServer(
+        emit_notification=lambda payload: None,
+        secret_store=InMemorySecretStore(),
+        provider_registry=ProviderRegistry([ExplodingProvider()]),
+    )
+
+    malformed = json.loads(
+        server.handle_text(
+            json.dumps({"jsonrpc": "2.0", "id": "request-secret", "method": "ping", "params": {}, "api_key": "envelope-secret"})
+        )
+    )
+    invalid_params = _rpc_call(
+        server,
+        "save_ai_api_key",
+        {"provider": "provider-secret", "api_key": "param-secret", "extra": "extra-secret"},
+    )
+    invalid_method = json.loads(
+        server.handle_text(
+            json.dumps({"jsonrpc": "2.0", "id": "request-id", "method": "method-secret", "params": {}})
+        )
+    )
+    unexpected = _rpc_call(server, "test_ai_connection", {"provider": "gemini"})
+
+    visible_output = json.dumps([malformed, invalid_params, invalid_method, unexpected]) + capsys.readouterr().err
+    for secret in ("envelope-secret", "param-secret", "extra-secret", "provider-secret", "method-secret", "request-secret"):
+        assert secret not in visible_output
 
 
 def test_ocr_dmc_form_with_gemini_rpc(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001

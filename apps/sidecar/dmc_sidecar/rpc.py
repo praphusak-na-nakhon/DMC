@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import re
 import sys
 import threading
-import traceback
 import uuid
 from pathlib import Path
 from typing import Any, Callable
@@ -24,6 +22,9 @@ from .account_client import (
 from .account_store import AccountSessionStore
 
 from . import __version__
+from .ai.base import AiSettingsResponse, OcrDocumentRequest, SecretStore
+from .ai.credentials import WindowsCredentialStore
+from .ai.registry import ProviderRegistry, build_provider_registry
 from .gemini_ocr import (
     GEMINI_OCR_CREDITS_PER_PAGE,
     GeminiOcrDmcFormRequest,
@@ -57,6 +58,7 @@ from .module_config import load_effective_config, sync_module_config
 from .modules import get_module
 from .runtime import JobManager, build_event_notification, finalize_job_credits, utc_now
 from .schemas import (
+    AiProviderRequest,
     ArchiveJobsRequest,
     ExportStudentBasicInfoFormRequest,
     FilePathRequest,
@@ -68,6 +70,7 @@ from .schemas import (
     RpcErrorResponse,
     RpcRequest,
     RpcSuccessResponse,
+    SaveAiApiKeyRequest,
     SignInRequest,
     StartJobRequest,
     ValidateExcelRequest,
@@ -77,11 +80,32 @@ from .telemetry import TelemetryClient
 
 
 GEMINI_OCR_CREDIT_BYPASS_CODES = {"ACCOUNT_CLOUD_UNAVAILABLE", "ACCOUNT_CLOUD_REQUIRED"}
+_AI_RPC_METHODS = {"get_ai_settings", "save_ai_api_key", "test_ai_connection", "delete_ai_api_key", "ocr_document"}
+_SAFE_RUNTIME_ERROR_CODES = {"DEVICE_ID_UNAVAILABLE", "TELEMETRY_QUEUE_INSERT_FAILED"}
+
+
+def _safe_validation_errors(exc: ValidationError) -> list[dict[str, str]]:
+    """Return validation metadata without client-controlled inputs or contexts."""
+    return [
+        {
+            "type": str(error.get("type", "validation_error")),
+            "message": str(error.get("msg", "Invalid request.")),
+        }
+        for error in exc.errors()
+    ]
 
 
 class RpcServer:
-    def __init__(self, emit_notification: Callable[[dict[str, Any]], None]) -> None:
+    def __init__(
+        self,
+        emit_notification: Callable[[dict[str, Any]], None],
+        *,
+        secret_store: SecretStore | None = None,
+        provider_registry: ProviderRegistry | None = None,
+    ) -> None:
         self.emit_notification = emit_notification
+        self.secret_store = secret_store if secret_store is not None else WindowsCredentialStore()
+        self.provider_registry = provider_registry if provider_registry is not None else build_provider_registry(self.secret_store)
         self.job_store = JobStore()
         self.account_store = AccountSessionStore()
         self.telemetry = TelemetryClient(account_store=self.account_store)
@@ -111,7 +135,7 @@ class RpcServer:
                 error=RpcErrorData(
                     code="RPC_INVALID_REQUEST",
                     message="Request payload does not match the JSON-RPC schema.",
-                    details={"errors": exc.errors()},
+                    details={"errors": _safe_validation_errors(exc)},
                 ),
             )
         return response.model_dump_json(ensure_ascii=True)
@@ -120,6 +144,38 @@ class RpcServer:
         try:
             if request.method == "ping":
                 result = PingResponse(sidecar_version=__version__).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "get_ai_settings":
+                ai_params = AiProviderRequest.model_validate(request.params)
+                result = AiSettingsResponse(
+                    provider=ai_params.provider,
+                    configured=self.secret_store.get(ai_params.provider) is not None,
+                ).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "save_ai_api_key":
+                ai_params = SaveAiApiKeyRequest.model_validate(request.params)
+                self.secret_store.set(ai_params.provider, ai_params.api_key.get_secret_value())
+                result = AiSettingsResponse(provider=ai_params.provider, configured=True).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "test_ai_connection":
+                ai_params = AiProviderRequest.model_validate(request.params)
+                result = self.provider_registry.get(ai_params.provider).test_connection().model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "delete_ai_api_key":
+                ai_params = AiProviderRequest.model_validate(request.params)
+                self.secret_store.delete(ai_params.provider)
+                result = AiSettingsResponse(provider=ai_params.provider, configured=False).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "ocr_document":
+                ocr_params = OcrDocumentRequest.model_validate(request.params)
+                if not self.secret_store.get(ocr_params.provider):
+                    raise DomainError("AI_API_KEY_REQUIRED")
+                result = self.provider_registry.get(ocr_params.provider).ocr_document(ocr_params).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "validate_excel":
@@ -365,14 +421,14 @@ class RpcServer:
             return self._error(
                 request.id,
                 code="RPC_METHOD_NOT_FOUND",
-                message=f"Unsupported method: {request.method}",
+                message="Unsupported method.",
             )
         except DomainError as exc:
             return self._error(
                 request.id,
                 code=exc.code,
                 message=exc.user_message,
-                details=exc.details,
+                details={} if request.method in _AI_RPC_METHODS else exc.details,
             )
         except RuntimeError as exc:
             error_code = self._safe_runtime_error_code(exc)
@@ -388,7 +444,7 @@ class RpcServer:
                 message="Requested operation is not implemented.",
             )
         except Exception as exc:  # pragma: no cover - defensive boundary
-            print(f"[sidecar] unexpected rpc error: {exc!r}", file=sys.stderr)
+            print(f"[sidecar] unexpected rpc error: {exc.__class__.__name__}", file=sys.stderr)
             return self._error(
                 request.id,
                 code="UNEXPECTED_ERROR",
@@ -527,8 +583,7 @@ class RpcServer:
                 credits_reserved=credits_reserved,
             )
         except Exception as exc:  # pragma: no cover - defensive background path
-            print(f"[sidecar] start_job background error for {start_params.job_id}: {exc!r}", file=sys.stderr)
-            print(traceback.format_exc(), file=sys.stderr)
+            print(f"[sidecar] start_job background error: {exc.__class__.__name__}", file=sys.stderr)
             code = exc.code if isinstance(exc, DomainError) else exc.__class__.__name__.upper()
             if credit_reservation_id and credits_reserved > 0:
                 self._release_start_failed_reservation(
@@ -550,7 +605,7 @@ class RpcServer:
         try:
             self.emit_notification(payload)
         except Exception as exc:  # pragma: no cover - defensive notification boundary
-            print(f"[sidecar] failed to emit background event: {exc!r}", file=sys.stderr)
+            print(f"[sidecar] failed to emit background event: {exc.__class__.__name__}", file=sys.stderr)
 
     def _release_start_failed_reservation(
         self,
@@ -574,7 +629,7 @@ class RpcServer:
             )
         except Exception as release_error:  # pragma: no cover - defensive release path
             print(
-                f"[sidecar] unexpected start-failed reservation release error for {job_id}: {release_error!r}",
+                f"[sidecar] unexpected start-failed reservation release error: {release_error.__class__.__name__}",
                 file=sys.stderr,
             )
 
@@ -624,7 +679,7 @@ class RpcServer:
         except DomainError as exc:
             print(f"[sidecar] failed to release interrupted reservation for {job_id}: {exc.code}", file=sys.stderr)
         except Exception as exc:  # pragma: no cover - defensive startup path
-            print(f"[sidecar] unexpected interrupted reservation release error for {job_id}: {exc!r}", file=sys.stderr)
+            print(f"[sidecar] unexpected interrupted reservation release error: {exc.__class__.__name__}", file=sys.stderr)
 
     def _retry_start_failed_release(self, job: dict[str, Any]) -> bool:
         """Re-attempt the release of a reservation whose start failed and never refunded."""
@@ -644,7 +699,7 @@ class RpcServer:
             print(f"[sidecar] failed to release start-failed reservation for {job_id}: {exc.code}", file=sys.stderr)
             return False
         except Exception as exc:  # pragma: no cover - defensive startup path
-            print(f"[sidecar] unexpected start-failed reservation release error for {job_id}: {exc!r}", file=sys.stderr)
+            print(f"[sidecar] unexpected start-failed reservation release error: {exc.__class__.__name__}", file=sys.stderr)
             return False
         self.job_store.update_credit_status(
             job_id,
@@ -772,7 +827,7 @@ class RpcServer:
 
     def _safe_runtime_error_code(self, exc: RuntimeError) -> str:
         raw = str(exc).strip()
-        if re.fullmatch(r"[A-Z][A-Z0-9_]*", raw):
+        if raw in _SAFE_RUNTIME_ERROR_CODES:
             return raw
         return "RUNTIME_ERROR"
 

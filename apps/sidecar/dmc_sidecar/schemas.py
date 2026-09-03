@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 
 class RpcErrorData(BaseModel):
@@ -20,6 +20,16 @@ class RpcRequest(BaseModel):
     id: str | int | None
     method: str
     params: dict[str, Any] = Field(default_factory=dict)
+
+
+class AiProviderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["gemini"]
+
+
+class SaveAiApiKeyRequest(AiProviderRequest):
+    api_key: SecretStr = Field(min_length=1)
 
 
 class RpcSuccessResponse(BaseModel):
