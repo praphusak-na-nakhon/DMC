@@ -708,9 +708,7 @@ fn rpc_timeout_secs(method: &str) -> u64 {
         | "export_current_student_import_excel"
         | "preview_dmc_form_json"
         | "export_dmc_form_json"
-        | "ocr_dmc_form_with_gemini"
-        | "ocr_dmc_form_with_akson"
-        | "ocr_dmc_form_with_typhoon" => RPC_TIMEOUT_LONG_SECS,
+        | "ocr_document" => RPC_TIMEOUT_LONG_SECS,
         _ => RPC_TIMEOUT_STANDARD_SECS,
     }
 }
@@ -726,9 +724,7 @@ mod rpc_timeout_tests {
             "export_current_student_import_excel",
             "preview_dmc_form_json",
             "export_dmc_form_json",
-            "ocr_dmc_form_with_gemini",
-            "ocr_dmc_form_with_akson",
-            "ocr_dmc_form_with_typhoon",
+            "ocr_document",
         ] {
             assert_eq!(rpc_timeout_secs(method), RPC_TIMEOUT_LONG_SECS);
         }
@@ -736,11 +732,16 @@ mod rpc_timeout_tests {
 
     #[test]
     fn lightweight_rpc_methods_keep_standard_timeout() {
-        assert_eq!(rpc_timeout_secs("ping"), RPC_TIMEOUT_STANDARD_SECS);
-        assert_eq!(
-            rpc_timeout_secs("get_account_status"),
-            RPC_TIMEOUT_STANDARD_SECS
-        );
+        for method in [
+            "ping",
+            "get_account_status",
+            "get_ai_settings",
+            "save_ai_api_key",
+            "test_ai_connection",
+            "delete_ai_api_key",
+        ] {
+            assert_eq!(rpc_timeout_secs(method), RPC_TIMEOUT_STANDARD_SECS);
+        }
     }
 }
 

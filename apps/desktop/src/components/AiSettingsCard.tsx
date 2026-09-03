@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import messages from "../i18n/th.json";
+import { describeAiError } from "../lib/errorMessages";
 import { deleteAiApiKey, getAiSettings, saveAiApiKey, testAiConnection } from "../lib/rpcClient";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -10,7 +11,7 @@ type AiSettingsCardProps = {
   connectionReady: boolean;
 };
 
-type Feedback = "testSuccess" | "testFailure" | "actionFailure" | null;
+type Feedback = "testSuccess" | "testFailure" | null;
 
 export function AiSettingsCard({ connectionReady }: AiSettingsCardProps) {
   const ai = messages.app.home.aiSettings;
@@ -21,6 +22,7 @@ export function AiSettingsCard({ connectionReady }: AiSettingsCardProps) {
   const [isTesting, setIsTesting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const settingsRequestGeneration = useRef(0);
 
   const loadSettings = useCallback(() => {
@@ -68,17 +70,18 @@ export function AiSettingsCard({ connectionReady }: AiSettingsCardProps) {
     settingsRequestGeneration.current += 1;
     setIsSaving(true);
     setFeedback(null);
+    setActionError(null);
     try {
       const settings = await saveAiApiKey("gemini", submittedKey);
       setConfigured(settings.configured);
       setSettingsLoadState("ready");
       setApiKey("");
-    } catch {
+    } catch (error) {
       if (hadPendingSettingsLoad) {
         setConfigured(null);
         setSettingsLoadState("failed");
       }
-      setFeedback("actionFailure");
+      setActionError(describeAiError(error));
     } finally {
       setIsSaving(false);
     }
@@ -87,11 +90,12 @@ export function AiSettingsCard({ connectionReady }: AiSettingsCardProps) {
   async function checkConnection() {
     setIsTesting(true);
     setFeedback(null);
+    setActionError(null);
     try {
       const result = await testAiConnection("gemini");
       setFeedback(result.ok ? "testSuccess" : "testFailure");
-    } catch {
-      setFeedback("testFailure");
+    } catch (error) {
+      setActionError(describeAiError(error));
     } finally {
       setIsTesting(false);
     }
@@ -102,16 +106,17 @@ export function AiSettingsCard({ connectionReady }: AiSettingsCardProps) {
     settingsRequestGeneration.current += 1;
     setIsDeleting(true);
     setFeedback(null);
+    setActionError(null);
     try {
       const settings = await deleteAiApiKey("gemini");
       setConfigured(settings.configured);
       setSettingsLoadState("ready");
-    } catch {
+    } catch (error) {
       if (hadPendingSettingsLoad) {
         setConfigured(null);
         setSettingsLoadState("failed");
       }
-      setFeedback("actionFailure");
+      setActionError(describeAiError(error));
     } finally {
       setIsDeleting(false);
     }
@@ -170,9 +175,9 @@ export function AiSettingsCard({ connectionReady }: AiSettingsCardProps) {
             {ai.delete}
           </Button>
         </div>
-        {feedback ? (
+        {feedback || actionError ? (
           <p className={feedback === "testSuccess" ? "text-sm text-emerald-700" : "text-sm text-red-700"} role="status">
-            {ai[feedback]}
+            {feedback ? ai[feedback] : actionError}
           </p>
         ) : null}
         <p className="text-sm leading-6 text-blue-950/65">{ai.privacyDisclosure}</p>

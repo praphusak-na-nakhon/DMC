@@ -87,8 +87,11 @@ describe("AiSettingsCard", () => {
     expect(document.body.textContent).not.toContain("secret-value");
   });
 
-  it("keeps a failed save safe and leaves the key only in its password input", async () => {
-    mockRpc.saveAiApiKey.mockRejectedValue(new Error("save secret-value failure"));
+  it.each([
+    ["AI_API_KEY_REQUIRED", "กรุณาตั้งค่า Gemini API key ที่หน้าหลักก่อนใช้ OCR"],
+    ["AI_API_KEY_INVALID", "Gemini API key ไม่ถูกต้องหรือไม่มีสิทธิ์ใช้งาน กรุณาตรวจสอบที่หน้าหลัก"],
+  ])("explains %s save errors without rendering the submitted key", async (code, expectedMessage) => {
+    mockRpc.saveAiApiKey.mockRejectedValue(new Error(`${code}: secret-value`));
     render(<AiSettingsCard connectionReady />);
     await screen.findByText("ยังไม่ได้ตั้งค่า Gemini API key");
 
@@ -96,8 +99,32 @@ describe("AiSettingsCard", () => {
     fireEvent.change(apiKey, { target: { value: "secret-value" } });
     fireEvent.click(screen.getByRole("button", { name: "บันทึก API key" }));
 
-    expect(await screen.findByText("ไม่สามารถทำรายการได้ กรุณาลองใหม่")).toBeInTheDocument();
+    expect(await screen.findByText(expectedMessage)).toBeInTheDocument();
     expect(apiKey).toHaveValue("secret-value");
+    expect(document.body.textContent).not.toContain("secret-value");
+  });
+
+  it("explains a credential-store failure when deleting a configured key", async () => {
+    mockRpc.getAiSettings.mockResolvedValue(geminiSettings(true));
+    mockRpc.deleteAiApiKey.mockRejectedValue(new Error("AI_CREDENTIAL_STORE_UNAVAILABLE: secret-value"));
+    render(<AiSettingsCard connectionReady />);
+    await screen.findByText("ตั้งค่า Gemini API key แล้ว");
+
+    fireEvent.click(screen.getByRole("button", { name: "ลบ API key" }));
+
+    expect(await screen.findByText("ไม่สามารถเข้าถึงที่เก็บ API key ที่ปลอดภัยได้ กรุณาตรวจสอบการตั้งค่า AI ที่หน้าหลัก")).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("secret-value");
+  });
+
+  it("uses the safe AI fallback for unknown secret-bearing action errors", async () => {
+    mockRpc.saveAiApiKey.mockRejectedValue(new Error("provider error: secret-value"));
+    render(<AiSettingsCard connectionReady />);
+    await screen.findByText("ยังไม่ได้ตั้งค่า Gemini API key");
+
+    fireEvent.change(screen.getByLabelText("Gemini API key"), { target: { value: "secret-value" } });
+    fireEvent.click(screen.getByRole("button", { name: "บันทึก API key" }));
+
+    expect(await screen.findByText("AI ประมวลผลเอกสารไม่สำเร็จ กรุณาลองใหม่")).toBeInTheDocument();
     expect(document.body.textContent).not.toContain("secret-value");
   });
 
@@ -115,13 +142,13 @@ describe("AiSettingsCard", () => {
     expect(await screen.findByText("เชื่อมต่อ Gemini สำเร็จ")).toBeInTheDocument();
   });
 
-  it("shows a safe failure message when the Gemini connection test fails", async () => {
+  it("uses the safe AI fallback when the Gemini connection test returns an unknown error", async () => {
     mockRpc.testAiConnection.mockRejectedValue(new Error("invalid secret-value"));
     render(<AiSettingsCard connectionReady />);
 
     fireEvent.click(screen.getByRole("button", { name: "ทดสอบการเชื่อมต่อ" }));
 
-    expect(await screen.findByText("ไม่สามารถทดสอบการเชื่อมต่อ Gemini ได้ กรุณาลองใหม่")).toBeInTheDocument();
+    expect(await screen.findByText("AI ประมวลผลเอกสารไม่สำเร็จ กรุณาลองใหม่")).toBeInTheDocument();
     expect(document.body.textContent).not.toContain("secret-value");
   });
 
