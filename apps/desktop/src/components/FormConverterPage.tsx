@@ -12,22 +12,24 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useState, type DragEvent, type ReactNode } from "react";
+import { useEffect, useState, type DragEvent, type ReactNode } from "react";
 import messages from "../i18n/th.json";
-import { describeUserFacingError } from "../lib/errorMessages";
+import { describeAiError, describeUserFacingError } from "../lib/errorMessages";
 import {
   exportDmcFormJson,
   openCsvDialog,
   openExcelDialog,
   openMarkdownDialog,
   openOcrSourceDialog,
-  ocrDmcFormWithGemini,
+  getAiSettings,
+  ocrDocument,
   previewDmcFormJson,
   copyOcrMarkdownFile,
   saveOcrMarkdownDialog,
 } from "../lib/rpcClient";
 import type {
-  GeminiOcrDmcFormResponse,
+  AiSettings,
+  OcrDocumentResponse,
   DmcFormJsonRecord,
   DmcFormMatchConfirmation,
   CurrentStudentMatchSuggestion,
@@ -135,30 +137,6 @@ const errorMessages: Record<string, string> = {
   DMC_FORM_JSON_EXPORT_UNSUPPORTED_TYPE: "ไฟล์ปลายทางต้องเป็น .json",
   CURRENT_STUDENTS_OCR_REQUIRED: "กรุณาเพิ่มไฟล์ OCR จากแบบฟอร์ม DMC อย่างน้อย 1 ไฟล์",
   CURRENT_STUDENTS_OCR_NO_RECORDS: "ไม่พบข้อมูลนักเรียนจากไฟล์ OCR จากแบบฟอร์ม DMC ที่เลือก",
-  SIGN_IN_REQUIRED: "กรุณาเข้าสู่ระบบก่อนใช้ OCR แบบคิดเครดิต",
-  INSUFFICIENT_CREDITS: "เครดิตไม่พอสำหรับ OCR จำนวนหน้านี้",
-  GEMINIOCR_API_KEY_REQUIRED: "ยังไม่ได้ตั้งค่า Gemini API key ฝั่งระบบ",
-  GEMINIOCR_DEPENDENCY_MISSING: "ระบบยังไม่พร้อมเรียก Gemini ใน sidecar",
-  GEMINIOCR_MODEL_UNSUPPORTED: "โมเดล Gemini OCR นี้ยังไม่รองรับ",
-  GEMINIOCR_INPUT_NOT_FOUND: "ไม่พบไฟล์ PDF/รูปภาพที่เลือกสำหรับ Gemini",
-  GEMINIOCR_INPUT_NOT_FILE: "พาธที่เลือกสำหรับ Gemini ไม่ใช่ไฟล์",
-  GEMINIOCR_INPUT_EMPTY: "ไฟล์ที่เลือกสำหรับ Gemini ไม่มีข้อมูล",
-  GEMINIOCR_UNSUPPORTED_INPUT_TYPE: "Gemini รองรับเฉพาะไฟล์ .pdf, .png, .jpg, .jpeg, .webp",
-  GEMINIOCR_FILE_TOO_LARGE: "ไฟล์ใหญ่เกินขีดจำกัด Gemini: สูงสุด 200 MB ต่อครั้ง",
-  GEMINIOCR_PAGE_LIMIT_EXCEEDED: "ไฟล์ PDF เกิน 1000 หน้า สำหรับ Gemini",
-  GEMINIOCR_PAGE_COUNT_UNKNOWN: "ไม่สามารถนับจำนวนหน้า PDF ก่อนทำ OCR ได้",
-  GEMINIOCR_PDF_SPLIT_FAILED: "ไม่สามารถแยก PDF เป็นชุดละ 2 หน้าก่อนส่ง Gemini Batch OCR ได้",
-  GEMINIOCR_AUTH_FAILED: "Gemini API key ไม่ถูกต้องหรือไม่มีสิทธิ์ใช้งาน",
-  GEMINIOCR_RATE_LIMITED: "Gemini จำกัดจำนวนคำขอชั่วคราว กรุณาลองใหม่อีกครั้ง",
-  GEMINIOCR_NETWORK_ERROR: "เชื่อมต่อ Gemini ไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ต",
-  GEMINIOCR_UPLOAD_REJECTED: "Gemini ปฏิเสธไฟล์หรือคำขอที่ส่งไป",
-  GEMINIOCR_FILE_PROCESSING_FAILED: "Gemini ประมวลผลไฟล์ที่อัปโหลดไม่สำเร็จ",
-  GEMINIOCR_FILE_PROCESSING_TIMEOUT: "รอ Gemini ประมวลผลไฟล์นานเกินไป กรุณาลองใหม่อีกครั้ง",
-  GEMINIOCR_PROCESSING_FAILED: "Gemini ประมวลผลไฟล์ไม่สำเร็จ",
-  GEMINIOCR_RESPONSE_INVALID: "Gemini ส่งผลลัพธ์กลับมาในรูปแบบที่ระบบอ่านไม่ได้",
-  GEMINIOCR_BATCH_TIMEOUT: "Gemini Batch OCR ยังไม่เสร็จภายในเวลาที่กำหนด กรุณาลองไฟล์เล็กลงหรือตรวจสถานะใน Google AI Studio",
-  GEMINIOCR_BATCH_FAILED: "Gemini Batch OCR ทำงานไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
-  GEMINIOCR_BATCH_RESPONSE_MISSING: "Gemini Batch OCR เสร็จแล้วแต่ไม่มีผลลัพธ์ที่ระบบอ่านได้",
   OCR_MARKDOWN_SOURCE_NOT_FOUND: "ไม่พบไฟล์ OCR ต้นทางสำหรับบันทึกเป็นไฟล์ใหม่",
   OCR_MARKDOWN_SOURCE_NOT_FILE: "ตำแหน่งไฟล์ OCR ต้นทางไม่ใช่ไฟล์",
 };
@@ -305,17 +283,37 @@ export function FormConverterPage({
   onRevealPath,
   onRetryRuntime,
 }: FormConverterPageProps) {
+  const [aiSettings, setAiSettings] = useState<AiSettings | null>(null);
+  const [aiSettingsError, setAiSettingsError] = useState<string | null>(null);
+  const [isLoadingAiSettings, setIsLoadingAiSettings] = useState(true);
+  useEffect(() => {
+    let active = true;
+    getAiSettings("gemini")
+      .then((settings) => {
+        if (active) setAiSettings(settings);
+      })
+      .catch((error: unknown) => {
+        if (active) setAiSettingsError(describeAiError(error));
+      })
+      .finally(() => {
+        if (active) setIsLoadingAiSettings(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  const ocrReady = !isLoadingAiSettings && !aiSettingsError && aiSettings?.configured === true;
   const [rosterPath, setRosterPath] = useState("");
   const [thaiIdCsvPath, setThaiIdCsvPath] = useState("");
   const [ocrMarkdownPaths, setOcrMarkdownPaths] = useState("");
   const [civilRegistrationMarkdownPaths, setCivilRegistrationMarkdownPaths] = useState("");
   const [ocrInputMode, setOcrInputMode] = useState<OcrInputMode>("ocrFile");
-  const [geminiSourcePath, setGeminiSourcePath] = useState("");
-  const [geminiOcrResult, setGeminiOcrResult] = useState<GeminiOcrDmcFormResponse | null>(null);
+  const [ocrSourcePath, setOcrSourcePath] = useState("");
+  const [ocrResult, setOcrResult] = useState<OcrDocumentResponse | null>(null);
   const [civilRegistrationInputMode, setCivilRegistrationInputMode] = useState<OcrInputMode>("ocrFile");
-  const [civilRegistrationGeminiSourcePath, setCivilRegistrationGeminiSourcePath] = useState("");
-  const [civilRegistrationGeminiOcrResult, setCivilRegistrationGeminiOcrResult] =
-    useState<GeminiOcrDmcFormResponse | null>(null);
+  const [civilRegistrationSourcePath, setCivilRegistrationSourcePath] = useState("");
+  const [civilRegistrationOcrResult, setCivilRegistrationOcrResult] =
+    useState<OcrDocumentResponse | null>(null);
   const [schoolYear, setSchoolYear] = useState("2569");
   const [gradeLevels, setGradeLevels] = useState("");
   const [admissionDate, setAdmissionDate] = useState("");
@@ -327,8 +325,8 @@ export function FormConverterPage({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
-  const [isRunningGeminiOcr, setIsRunningGeminiOcr] = useState(false);
-  const [isRunningCivilRegistrationGeminiOcr, setIsRunningCivilRegistrationGeminiOcr] = useState(false);
+  const [isRunningOcr, setIsRunningOcr] = useState(false);
+  const [isRunningCivilRegistrationOcr, setIsRunningCivilRegistrationOcr] = useState(false);
   const activeResult = jsonExport ?? jsonPreview;
   const activeConflicts = activeResult?.conflicts ?? [];
   const activeWarnings = activeResult?.warnings ?? [];
@@ -380,12 +378,12 @@ export function FormConverterPage({
     }
   }
 
-  async function handleBrowseGeminiSource() {
+  async function handleBrowseOcrSource() {
     try {
       const selected = await openOcrSourceDialog();
       if (selected) {
-        setGeminiSourcePath(selected);
-        setGeminiOcrResult(null);
+        setOcrSourcePath(selected);
+        setOcrResult(null);
         setErrorMessage(null);
       }
     } catch (error) {
@@ -393,47 +391,48 @@ export function FormConverterPage({
     }
   }
 
-  async function handleRunGeminiOcr() {
-    const sourcePath = geminiSourcePath.trim();
+  async function handleRunOcr() {
+    if (!ocrReady) return;
+    const sourcePath = ocrSourcePath.trim();
     if (!sourcePath) {
       setErrorMessage("กรุณาเลือกไฟล์ PDF หรือรูปภาพก่อนสร้างไฟล์ OCR");
       return;
     }
 
-    setIsRunningGeminiOcr(true);
+    setIsRunningOcr(true);
     setErrorMessage(null);
     try {
-      const result = await ocrDmcFormWithGemini({
+      const result = await ocrDocument({
         sourcePath,
-        apiKey: null,
+        provider: "gemini",
         model: "gemini-3.5-flash",
         processingMode: "batch",
         forceRefresh: false,
       });
-      setGeminiOcrResult(result);
+      setOcrResult(result);
       setOcrMarkdownPaths((current) => appendPathList(current, [result.markdown_path]));
       resetResult();
     } catch (error) {
-      setErrorMessage(readableError(error));
+      setErrorMessage(describeAiError(error));
     } finally {
-      setIsRunningGeminiOcr(false);
+      setIsRunningOcr(false);
     }
   }
 
-  async function handleSaveGeminiOcrAs() {
-    if (!geminiOcrResult) {
+  async function handleSaveOcrAs() {
+    if (!ocrResult) {
       return;
     }
 
     setErrorMessage(null);
     try {
-      const destinationPath = await saveOcrMarkdownDialog(fileNameFromPath(geminiOcrResult.markdown_path));
+      const destinationPath = await saveOcrMarkdownDialog(fileNameFromPath(ocrResult.markdown_path));
       if (!destinationPath) {
         return;
       }
-      const savedPath = await copyOcrMarkdownFile(geminiOcrResult.markdown_path, destinationPath);
-      const originalPath = geminiOcrResult.markdown_path;
-      setGeminiOcrResult({ ...geminiOcrResult, markdown_path: savedPath });
+      const savedPath = await copyOcrMarkdownFile(ocrResult.markdown_path, destinationPath);
+      const originalPath = ocrResult.markdown_path;
+      setOcrResult({ ...ocrResult, markdown_path: savedPath });
       setOcrMarkdownPaths((current) => replacePathList(current, originalPath, savedPath));
       resetResult();
     } catch (error) {
@@ -453,12 +452,12 @@ export function FormConverterPage({
     }
   }
 
-  async function handleBrowseCivilRegistrationGeminiSource() {
+  async function handleBrowseCivilRegistrationSource() {
     try {
       const selected = await openOcrSourceDialog();
       if (selected) {
-        setCivilRegistrationGeminiSourcePath(selected);
-        setCivilRegistrationGeminiOcrResult(null);
+        setCivilRegistrationSourcePath(selected);
+        setCivilRegistrationOcrResult(null);
         setErrorMessage(null);
       }
     } catch (error) {
@@ -466,49 +465,50 @@ export function FormConverterPage({
     }
   }
 
-  async function handleRunCivilRegistrationGeminiOcr() {
-    const sourcePath = civilRegistrationGeminiSourcePath.trim();
+  async function handleRunCivilRegistrationOcr() {
+    if (!ocrReady) return;
+    const sourcePath = civilRegistrationSourcePath.trim();
     if (!sourcePath) {
       setErrorMessage("กรุณาเลือกไฟล์ PDF หรือรูปภาพก่อนสร้างไฟล์ OCR");
       return;
     }
 
-    setIsRunningCivilRegistrationGeminiOcr(true);
+    setIsRunningCivilRegistrationOcr(true);
     setErrorMessage(null);
     try {
-      const result = await ocrDmcFormWithGemini({
+      const result = await ocrDocument({
         sourcePath,
-        apiKey: null,
+        provider: "gemini",
         model: "gemini-3.5-flash",
         processingMode: "batch",
         forceRefresh: false,
       });
-      setCivilRegistrationGeminiOcrResult(result);
+      setCivilRegistrationOcrResult(result);
       setCivilRegistrationMarkdownPaths((current) => appendPathList(current, [result.markdown_path]));
       resetResult();
     } catch (error) {
-      setErrorMessage(readableError(error));
+      setErrorMessage(describeAiError(error));
     } finally {
-      setIsRunningCivilRegistrationGeminiOcr(false);
+      setIsRunningCivilRegistrationOcr(false);
     }
   }
 
-  async function handleSaveCivilRegistrationGeminiOcrAs() {
-    if (!civilRegistrationGeminiOcrResult) {
+  async function handleSaveCivilRegistrationOcrAs() {
+    if (!civilRegistrationOcrResult) {
       return;
     }
 
     setErrorMessage(null);
     try {
       const destinationPath = await saveOcrMarkdownDialog(
-        fileNameFromPath(civilRegistrationGeminiOcrResult.markdown_path),
+        fileNameFromPath(civilRegistrationOcrResult.markdown_path),
       );
       if (!destinationPath) {
         return;
       }
-      const savedPath = await copyOcrMarkdownFile(civilRegistrationGeminiOcrResult.markdown_path, destinationPath);
-      const originalPath = civilRegistrationGeminiOcrResult.markdown_path;
-      setCivilRegistrationGeminiOcrResult({ ...civilRegistrationGeminiOcrResult, markdown_path: savedPath });
+      const savedPath = await copyOcrMarkdownFile(civilRegistrationOcrResult.markdown_path, destinationPath);
+      const originalPath = civilRegistrationOcrResult.markdown_path;
+      setCivilRegistrationOcrResult({ ...civilRegistrationOcrResult, markdown_path: savedPath });
       setCivilRegistrationMarkdownPaths((current) => replacePathList(current, originalPath, savedPath));
       resetResult();
     } catch (error) {
@@ -630,12 +630,6 @@ export function FormConverterPage({
     const raw = error instanceof Error ? error.message : String(error);
     const code = raw.match(/[A-Z][A-Z0-9_]+/)?.[0] ?? raw;
     const message = errorMessages[code];
-    if (message && code === "GEMINIOCR_BATCH_FAILED") {
-      const detail = raw.replace(/^.*GEMINIOCR_BATCH_FAILED[:\s-]*/s, "").trim();
-      if (detail && !detail.includes(message)) {
-        return `${message}\nรายละเอียดจาก Gemini: ${detail}`;
-      }
-    }
     return message ?? describeUserFacingError(error);
   }
 
@@ -649,6 +643,15 @@ export function FormConverterPage({
         description="แปลงข้อมูลจากไฟล์ OCR ของแบบฟอร์มที่นักเรียนกรอกจริงเป็นไฟล์ JSON กลาง โดยใช้บัญชีรายชื่อและ CSV เครื่องสแกนบัตรเป็นข้อมูลอ้างอิง"
         icon={<FileText className="h-5 w-5 text-primary" />}
       />
+
+      {isLoadingAiSettings ? <p role="status">{messages.app.formConverter.aiLoading}</p> : null}
+      {aiSettingsError ? <SystemErrorAlert message={aiSettingsError} onRetry={onRetryRuntime} retryWhen="runtime" /> : null}
+      {!isLoadingAiSettings && !aiSettingsError && !aiSettings?.configured ? (
+        <div role="status" className="flex flex-wrap items-center gap-3">
+          <p>{messages.app.formConverter.aiKeyRequired}</p>
+          <Button variant="outline" onClick={onBackHome}>{messages.app.formConverter.aiSettingsHome}</Button>
+        </div>
+      ) : null}
 
       {errorMessage ? (
         <SystemErrorAlert message={errorMessage} onRetry={onRetryRuntime} retryWhen="runtime" />
@@ -734,17 +737,18 @@ export function FormConverterPage({
               showPicker={ocrInputMode === "ocrFile"}
             >
               {ocrInputMode === "scanFile" ? (
-                <GeminiOcrTool
-                  sourcePath={geminiSourcePath}
-                  result={geminiOcrResult}
-                  isRunning={isRunningGeminiOcr}
+                <OcrTool
+                  ready={ocrReady}
+                  sourcePath={ocrSourcePath}
+                  result={ocrResult}
+                  isRunning={isRunningOcr}
                   onSourcePathChange={(value) => {
-                    setGeminiSourcePath(value);
-                    setGeminiOcrResult(null);
+                    setOcrSourcePath(value);
+                    setOcrResult(null);
                   }}
-                  onBrowseSource={() => void handleBrowseGeminiSource()}
-                  onRun={() => void handleRunGeminiOcr()}
-                  onSaveAs={() => void handleSaveGeminiOcrAs()}
+                  onBrowseSource={() => void handleBrowseOcrSource()}
+                  onRun={() => void handleRunOcr()}
+                  onSaveAs={() => void handleSaveOcrAs()}
                   onRevealPath={onRevealPath}
                 />
               ) : null}
@@ -816,17 +820,18 @@ export function FormConverterPage({
               showPicker={civilRegistrationInputMode === "ocrFile"}
             >
               {civilRegistrationInputMode === "scanFile" ? (
-                <GeminiOcrTool
-                  sourcePath={civilRegistrationGeminiSourcePath}
-                  result={civilRegistrationGeminiOcrResult}
-                  isRunning={isRunningCivilRegistrationGeminiOcr}
+                <OcrTool
+                  ready={ocrReady}
+                  sourcePath={civilRegistrationSourcePath}
+                  result={civilRegistrationOcrResult}
+                  isRunning={isRunningCivilRegistrationOcr}
                   onSourcePathChange={(value) => {
-                    setCivilRegistrationGeminiSourcePath(value);
-                    setCivilRegistrationGeminiOcrResult(null);
+                    setCivilRegistrationSourcePath(value);
+                    setCivilRegistrationOcrResult(null);
                   }}
-                  onBrowseSource={() => void handleBrowseCivilRegistrationGeminiSource()}
-                  onRun={() => void handleRunCivilRegistrationGeminiOcr()}
-                  onSaveAs={() => void handleSaveCivilRegistrationGeminiOcrAs()}
+                  onBrowseSource={() => void handleBrowseCivilRegistrationSource()}
+                  onRun={() => void handleRunCivilRegistrationOcr()}
+                  onSaveAs={() => void handleSaveCivilRegistrationOcrAs()}
                   onRevealPath={onRevealPath}
                 />
               ) : null}
@@ -1126,7 +1131,8 @@ function OcrInputModeSelector({
   );
 }
 
-function GeminiOcrTool({
+function OcrTool({
+  ready,
   sourcePath,
   result,
   isRunning,
@@ -1137,7 +1143,8 @@ function GeminiOcrTool({
   onRevealPath,
 }: {
   sourcePath: string;
-  result: GeminiOcrDmcFormResponse | null;
+  result: OcrDocumentResponse | null;
+  ready: boolean;
   isRunning: boolean;
   onSourcePathChange: (value: string) => void;
   onBrowseSource: () => void;
@@ -1145,7 +1152,7 @@ function GeminiOcrTool({
   onSaveAs: () => void;
   onRevealPath: (path: string) => void;
 }) {
-  const canRun = sourcePath.trim().length > 0 && !isRunning;
+  const canRun = ready && sourcePath.trim().length > 0 && !isRunning;
 
   return (
     <div className="grid gap-3 rounded-md border bg-slate-50/50 p-3">
@@ -1165,7 +1172,7 @@ function GeminiOcrTool({
         <div className="relative min-w-0">
           <FileIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
           <Input
-            aria-label="ไฟล์ PDF หรือรูปภาพสำหรับ Gemini"
+            aria-label="ไฟล์ PDF หรือรูปภาพสำหรับ OCR"
             className="h-9 pl-9"
             value={sourcePath}
             onChange={(event) => onSourcePathChange(event.target.value)}
@@ -1176,7 +1183,7 @@ function GeminiOcrTool({
           type="button"
           variant="outline"
           className="border-blue-300 text-blue-700 hover:bg-blue-50 hover:text-blue-800"
-          aria-label="เลือกไฟล์ PDF หรือรูปภาพสำหรับ Gemini"
+          aria-label="เลือกไฟล์ PDF หรือรูปภาพสำหรับ OCR"
           onClick={onBrowseSource}
         >
           <FolderOpen className="h-4 w-4" />
@@ -1198,14 +1205,9 @@ function GeminiOcrTool({
             <span className="mx-1 text-muted-foreground">·</span>
             <span className="text-muted-foreground">
               {result.pages_processed} หน้า
-              {formatGeminiMode(result)}
+              {formatOcrMode(result)}
               {result.average_confidence === null ? "" : ` · confidence ${formatConfidence(result.average_confidence)}`}
-              {formatGeminiUsage(result)}
-              {result.cached
-                ? " · ไม่คิดเครดิตซ้ำ"
-                : result.charged
-                  ? ` · ใช้ ${result.credits_charged} เครดิต (${result.credits_per_page} เครดิต/หน้า)`
-                  : " · ไม่คิดเครดิตระบบ"}
+              {formatOcrUsage(result)}
             </span>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-1">
@@ -1555,15 +1557,15 @@ function formatConfidence(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
 }
 
-function formatGeminiMode(result: GeminiOcrDmcFormResponse): string {
+function formatOcrMode(result: OcrDocumentResponse): string {
   const modelLabel = result.model === "gemini-3-pro-preview" ? "Gemini 3 Pro Preview" : "Gemini 3.5 Flash";
   const modeLabel = result.processing_mode === "batch" ? "Batch" : "Standard";
   return ` · ${modelLabel} ${modeLabel}`;
 }
 
-function formatGeminiUsage(result: GeminiOcrDmcFormResponse): string {
+function formatOcrUsage(result: OcrDocumentResponse): string {
   const usage = result.usage_metadata;
-  if (!usage?.total_token_count) {
+  if (typeof usage?.total_token_count !== "number" || !Number.isFinite(usage.total_token_count) || usage.total_token_count <= 0) {
     return "";
   }
   const total = usage.total_token_count.toLocaleString("en-US");

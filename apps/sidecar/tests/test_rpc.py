@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from dmc_sidecar import config
 from ai_fakes import InMemorySecretStore
 from dmc_sidecar.ai.base import AiConnectionTestResponse, OcrDocumentRequest, OcrDocumentResponse
@@ -14,7 +16,6 @@ from dmc_sidecar.errors import DomainError
 from dmc_sidecar.job_store import JobStore
 from dmc_sidecar.rpc import RpcServer
 from dmc_sidecar.runtime import build_event_notification, finalize_job_credits
-from dmc_sidecar.gemini_ocr import GeminiOcrDmcFormResponse
 
 
 def _rpc_call(server: RpcServer, method: str, params: dict[str, object]) -> dict[str, object]:
@@ -213,116 +214,6 @@ def test_ai_rpc_validation_and_unexpected_errors_never_echo_secrets(capsys) -> N
         assert secret not in visible_output
 
 
-def test_ocr_dmc_form_with_gemini_rpc(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
-    captured: dict[str, object] = {}
-    source_path = tmp_path / "form.pdf"
-    source_path.write_bytes(b"%PDF-1.7\n1 0 obj << /Type /Page >> endobj\n%%EOF")
-
-    def fake_ocr(request) -> GeminiOcrDmcFormResponse:  # noqa: ANN001
-        captured["request"] = request
-        return GeminiOcrDmcFormResponse(
-            model="gemini-3.5-flash",
-            source_path=request.source_path,
-            markdown_path="C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\form.json",
-            structured_json_path="C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\form.json",
-            cached=False,
-            pages_processed=1,
-            pages_estimated=1,
-            average_confidence=None,
-            file_sha256="abc123",
-            created_at="2026-05-11T00:00:00+00:00",
-        )
-
-    reservations: list[dict[str, object]] = []
-    captures: list[dict[str, object]] = []
-
-    def fake_reserve(*args: object, **kwargs: object) -> SimpleNamespace:
-        reservations.append(dict(kwargs))
-        return SimpleNamespace(reservation_id="reservation-ocr-1")
-
-    def fake_capture(*args: object, **kwargs: object) -> SimpleNamespace:
-        captures.append(dict(kwargs))
-        return SimpleNamespace(reservation_id=kwargs["reservation_id"])
-
-    monkeypatch.setattr("dmc_sidecar.rpc.ocr_dmc_form_with_gemini", fake_ocr)
-    monkeypatch.setattr("dmc_sidecar.rpc.reserve_credits", fake_reserve)
-    monkeypatch.setattr("dmc_sidecar.rpc.capture_credits", fake_capture)
-    server = RpcServer(emit_notification=lambda payload: None)
-
-    response = _rpc_call(
-        server,
-        "ocr_dmc_form_with_gemini",
-        {
-            "source_path": str(source_path),
-            "api_key": None,
-            "model": "gemini-3.5-flash",
-            "force_refresh": False,
-        },
-    )
-
-    assert response["result"]["engine"] == "gemini"
-    assert response["result"]["markdown_path"].endswith("form.json")
-    assert response["result"]["output_format"] == "structured_json"
-    assert response["result"]["credits_charged"] == 3
-    assert response["result"]["charged"] is True
-    assert captured["request"].source_path == str(source_path)
-    assert reservations[0]["module"] == "formConverter"
-    assert reservations[0]["units"] == 3
-    assert captures[0]["units"] == 3
-
-
-def test_ocr_dmc_form_with_gemini_rpc_falls_back_when_cloud_is_unavailable(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:  # noqa: ANN001
-    captured: dict[str, object] = {}
-    source_path = tmp_path / "form.pdf"
-    source_path.write_bytes(b"%PDF-1.7\n1 0 obj << /Type /Page >> endobj\n%%EOF")
-
-    def fake_ocr(request) -> GeminiOcrDmcFormResponse:  # noqa: ANN001
-        captured["request"] = request
-        return GeminiOcrDmcFormResponse(
-            model="gemini-3.5-flash",
-            source_path=request.source_path,
-            markdown_path="C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\form.json",
-            structured_json_path="C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\form.json",
-            cached=False,
-            pages_processed=1,
-            pages_estimated=1,
-            average_confidence=None,
-            file_sha256="abc123",
-            created_at="2026-05-11T00:00:00+00:00",
-        )
-
-    monkeypatch.setattr("dmc_sidecar.rpc.ocr_dmc_form_with_gemini", fake_ocr)
-    monkeypatch.setattr(
-        "dmc_sidecar.rpc.reserve_credits",
-        lambda *args, **kwargs: (_ for _ in ()).throw(DomainError("ACCOUNT_CLOUD_UNAVAILABLE")),
-    )
-    monkeypatch.setattr(
-        "dmc_sidecar.rpc.capture_credits",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("capture should not run without reservation")),
-    )
-    server = RpcServer(emit_notification=lambda payload: None)
-
-    response = _rpc_call(
-        server,
-        "ocr_dmc_form_with_gemini",
-        {
-            "source_path": str(source_path),
-            "api_key": None,
-            "model": "gemini-3.5-flash",
-            "force_refresh": False,
-        },
-    )
-
-    assert response["result"]["engine"] == "gemini"
-    assert response["result"]["markdown_path"].endswith("form.json")
-    assert response["result"]["credits_per_page"] == 3
-    assert response["result"]["credits_charged"] == 0
-    assert response["result"]["charged"] is False
-    assert response["result"]["credit_reservation_id"] is None
-    assert captured["request"].source_path == str(source_path)
 
 
 def test_list_jobs_rpc(monkeypatch, tmp_path: Path) -> None:
@@ -1369,3 +1260,9 @@ def test_resume_stopped_on_review_job_re_reserves_and_starts(monkeypatch, tmp_pa
     status = server.job_store.get_status("job-review-stopped")
     assert status is not None
     assert status["credit_status"] == "reserved"
+
+@pytest.mark.parametrize("method", ["ocr_dmc_form_with_gemini", "ocr_dmc_form_with_akson", "ocr_dmc_form_with_typhoon"])
+def test_legacy_ocr_rpc_is_unsupported(method: str) -> None:
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
+    response = _rpc_call(server, method, {"source_path": "missing.pdf"})
+    assert response["error"]["code"] == "RPC_METHOD_NOT_FOUND"

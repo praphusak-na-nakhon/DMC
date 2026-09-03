@@ -9,7 +9,8 @@ const mockRpc = vi.hoisted(() => ({
   openCsvDialog: vi.fn(),
   openMarkdownDialog: vi.fn(),
   openOcrSourceDialog: vi.fn(),
-  ocrDmcFormWithGemini: vi.fn(),
+  ocrDocument: vi.fn(),
+  getAiSettings: vi.fn(),
   saveOcrMarkdownDialog: vi.fn(),
   copyOcrMarkdownFile: vi.fn(),
 }));
@@ -20,6 +21,7 @@ beforeEach(() => {
   for (const mock of Object.values(mockRpc)) {
     mock.mockReset();
   }
+  mockRpc.getAiSettings.mockResolvedValue({ provider: "gemini", configured: true });
 });
 
 const summary = {
@@ -706,25 +708,21 @@ describe("FormConverterPage", () => {
     expect(onRetryRuntime).toHaveBeenCalled();
   });
 
-  it("creates Gemini structured JSON and adds it to the DMC OCR file list", async () => {
+  it.each([false, true])("creates provider OCR JSON for DMC and preserves cache metadata (cached=%s)", async (cached) => {
     const onRevealPath = vi.fn();
     mockRpc.openOcrSourceDialog.mockResolvedValue("C:\\dmc\\uploadTest\\dmc-form.pdf");
-    mockRpc.ocrDmcFormWithGemini.mockResolvedValue({
+    mockRpc.ocrDocument.mockResolvedValue({
       module: "formConverter",
-      engine: "gemini",
+      provider: "gemini",
       model: "gemini-3.5-flash",
       processing_mode: "batch",
       source_path: "C:\\dmc\\uploadTest\\dmc-form.pdf",
       markdown_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\dmc-form-gemini-3-5-flash-batch.json",
       structured_json_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\dmc-form-gemini-3-5-flash-batch.json",
       output_format: "structured_json",
-      cached: false,
+      cached,
       pages_processed: 2,
       pages_estimated: 2,
-      credits_per_page: 3,
-      credits_charged: 6,
-      charged: true,
-      credit_reservation_id: "reservation-dmc",
       average_confidence: 91.5,
       usage_metadata: {
         prompt_token_count: 1400,
@@ -736,8 +734,8 @@ describe("FormConverterPage", () => {
         output_tokens_per_page: 250,
         total_tokens_per_page: 950,
       },
-      batch_job_name: "batches/dmc",
-      batch_state: "JOB_STATE_SUCCEEDED",
+      provider_job_id: "batches/dmc",
+      provider_job_state: "JOB_STATE_SUCCEEDED",
       file_sha256: "abc123",
       created_at: "2026-05-11T00:00:00+00:00",
     });
@@ -747,24 +745,24 @@ describe("FormConverterPage", () => {
     const dmcOcrCard = screen.getByText("ไฟล์ OCR จากแบบฟอร์ม DMC").closest("section") as HTMLElement;
     fireEvent.click(within(dmcOcrCard).getByRole("tab", { name: "มีไฟล์สแกน PDF/รูปภาพ" }));
     expect(within(dmcOcrCard).queryByRole("button", { name: /เลือกไฟล์ OCR จากแบบฟอร์ม DMC/ })).not.toBeInTheDocument();
-    fireEvent.click(within(dmcOcrCard).getByRole("button", { name: /เลือกไฟล์ PDF หรือรูปภาพสำหรับ Gemini/ }));
+    fireEvent.click(within(dmcOcrCard).getByRole("button", { name: /เลือกไฟล์ PDF หรือรูปภาพสำหรับ OCR/ }));
     await waitFor(() => {
       expect(screen.getByDisplayValue("C:\\dmc\\uploadTest\\dmc-form.pdf")).toBeInTheDocument();
     });
     fireEvent.click(within(dmcOcrCard).getByRole("button", { name: /สร้างไฟล์ OCR/ }));
 
-    await waitFor(() => expect(mockRpc.ocrDmcFormWithGemini).toHaveBeenCalled());
-    expect(mockRpc.ocrDmcFormWithGemini).toHaveBeenCalledWith({
+    await waitFor(() => expect(mockRpc.ocrDocument).toHaveBeenCalled());
+    expect(mockRpc.ocrDocument).toHaveBeenCalledWith({
       sourcePath: "C:\\dmc\\uploadTest\\dmc-form.pdf",
-      apiKey: null,
+      provider: "gemini",
       model: "gemini-3.5-flash",
       processingMode: "batch",
       forceRefresh: false,
     });
-    expect(within(dmcOcrCard).getByText("สร้างไฟล์ OCR แล้ว")).toBeInTheDocument();
+    expect(within(dmcOcrCard).getByText(cached ? "ใช้ไฟล์ OCR ที่เคยสร้างแล้ว" : "สร้างไฟล์ OCR แล้ว")).toBeInTheDocument();
     expect(
       within(dmcOcrCard).getByText(
-        "2 หน้า · Gemini 3.5 Flash Batch · confidence 91.5 · 1,900 tokens (950/หน้า) · ใช้ 6 เครดิต (3 เครดิต/หน้า)",
+        "2 หน้า · Gemini 3.5 Flash Batch · confidence 91.5 · 1,900 tokens (950/หน้า)",
       ),
     ).toBeInTheDocument();
 
@@ -785,24 +783,20 @@ describe("FormConverterPage", () => {
     expect(within(dmcOcrCard).getByDisplayValue("D:\\DMC\\OCR\\dmc-form-ocr.json")).toBeInTheDocument();
   });
 
-  it("creates Gemini structured JSON and adds it to the civil registration OCR file list", async () => {
+  it.each([false, true])("creates provider OCR JSON for civil registration and preserves cache metadata (cached=%s)", async (cached) => {
     mockRpc.openOcrSourceDialog.mockResolvedValue("C:\\dmc\\uploadTest\\civil-registration.pdf");
-    mockRpc.ocrDmcFormWithGemini.mockResolvedValue({
+    mockRpc.ocrDocument.mockResolvedValue({
       module: "formConverter",
-      engine: "gemini",
+      provider: "gemini",
       model: "gemini-3.5-flash",
       processing_mode: "batch",
       source_path: "C:\\dmc\\uploadTest\\civil-registration.pdf",
       markdown_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\civil-registration-gemini-3-5-flash-batch.json",
       structured_json_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\civil-registration-gemini-3-5-flash-batch.json",
       output_format: "structured_json",
-      cached: false,
+      cached,
       pages_processed: 1,
       pages_estimated: 1,
-      credits_per_page: 3,
-      credits_charged: 3,
-      charged: true,
-      credit_reservation_id: "reservation-civil",
       average_confidence: 94,
       usage_metadata: {
         prompt_token_count: 800,
@@ -814,8 +808,8 @@ describe("FormConverterPage", () => {
         output_tokens_per_page: 300,
         total_tokens_per_page: 1100,
       },
-      batch_job_name: "batches/civil",
-      batch_state: "JOB_STATE_SUCCEEDED",
+      provider_job_id: "batches/civil",
+      provider_job_state: "JOB_STATE_SUCCEEDED",
       file_sha256: "civil123",
       created_at: "2026-05-12T00:00:00+00:00",
     });
@@ -827,24 +821,24 @@ describe("FormConverterPage", () => {
     expect(
       within(civilCard).queryByRole("button", { name: /เลือกไฟล์ OCR จากสำเนาทะเบียนบ้านนักเรียน/ }),
     ).not.toBeInTheDocument();
-    fireEvent.click(within(civilCard).getByRole("button", { name: /เลือกไฟล์ PDF หรือรูปภาพสำหรับ Gemini/ }));
+    fireEvent.click(within(civilCard).getByRole("button", { name: /เลือกไฟล์ PDF หรือรูปภาพสำหรับ OCR/ }));
     await waitFor(() => {
       expect(screen.getByDisplayValue("C:\\dmc\\uploadTest\\civil-registration.pdf")).toBeInTheDocument();
     });
     fireEvent.click(within(civilCard).getByRole("button", { name: /สร้างไฟล์ OCR/ }));
 
-    await waitFor(() => expect(mockRpc.ocrDmcFormWithGemini).toHaveBeenCalled());
-    expect(mockRpc.ocrDmcFormWithGemini).toHaveBeenCalledWith({
+    await waitFor(() => expect(mockRpc.ocrDocument).toHaveBeenCalled());
+    expect(mockRpc.ocrDocument).toHaveBeenCalledWith({
       sourcePath: "C:\\dmc\\uploadTest\\civil-registration.pdf",
-      apiKey: null,
+      provider: "gemini",
       model: "gemini-3.5-flash",
       processingMode: "batch",
       forceRefresh: false,
     });
-    expect(within(civilCard).getByText("สร้างไฟล์ OCR แล้ว")).toBeInTheDocument();
+    expect(within(civilCard).getByText(cached ? "ใช้ไฟล์ OCR ที่เคยสร้างแล้ว" : "สร้างไฟล์ OCR แล้ว")).toBeInTheDocument();
     expect(
       within(civilCard).getByText(
-        "1 หน้า · Gemini 3.5 Flash Batch · confidence 94 · 1,100 tokens (1,100/หน้า) · ใช้ 3 เครดิต (3 เครดิต/หน้า)",
+        "1 หน้า · Gemini 3.5 Flash Batch · confidence 94 · 1,100 tokens (1,100/หน้า)",
       ),
     ).toBeInTheDocument();
 
@@ -861,4 +855,57 @@ describe("FormConverterPage", () => {
     fireEvent.click(within(civilCard).getByRole("tab", { name: "มีไฟล์ OCR แล้ว" }));
     expect(within(civilCard).getByDisplayValue("D:\\DMC\\OCR\\civil-registration-ocr.json")).toBeInTheDocument();
   });
+});
+
+describe("local AI readiness", () => {
+  function showBothOcrTools() {
+    render(<FormConverterPage onBackHome={vi.fn()} onRevealPath={vi.fn()} />);
+    for (const button of screen.getAllByRole("tab", { name: "มีไฟล์สแกน PDF/รูปภาพ" })) {
+      if (button.textContent?.includes("PDF")) fireEvent.click(button);
+    }
+  }
+
+  it("blocks both OCR workflows while settings load", () => {
+    mockRpc.getAiSettings.mockReturnValue(new Promise(() => {}));
+    showBothOcrTools();
+    expect(screen.getByText("กำลังตรวจสอบการตั้งค่า AI")).toBeInTheDocument();
+    for (const input of screen.getAllByLabelText("ไฟล์ PDF หรือรูปภาพสำหรับ OCR")) fireEvent.change(input, { target: { value: "C:\\form.pdf" } });
+    expect(screen.getAllByRole("button", { name: "สร้างไฟล์ OCR" })).toHaveLength(2);
+    for (const button of screen.getAllByRole("button", { name: "สร้างไฟล์ OCR" })) expect(button).toBeDisabled();
+  });
+
+  it("blocks OCR until a Gemini key is configured and directs to Home", async () => {
+    mockRpc.getAiSettings.mockResolvedValue({ provider: "gemini", configured: false });
+    const onBackHome = vi.fn();
+    render(<FormConverterPage onBackHome={onBackHome} onRevealPath={vi.fn()} />);
+    expect(await screen.findByText("กรุณาตั้งค่า Gemini API key ก่อนใช้ OCR")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "ไปตั้งค่า AI ที่หน้าหลัก" }));
+    expect(onBackHome).toHaveBeenCalledOnce();
+    for (const tab of screen.getAllByRole("tab", { name: "มีไฟล์สแกน PDF/รูปภาพ" })) fireEvent.click(tab);
+    for (const input of screen.getAllByLabelText("ไฟล์ PDF หรือรูปภาพสำหรับ OCR")) fireEvent.change(input, { target: { value: "C:/form.pdf" } });
+    for (const button of screen.getAllByRole("button", { name: "สร้างไฟล์ OCR" })) expect(button).toBeDisabled();
+  });
+
+  it("keeps OCR blocked when settings fail without exposing raw details", async () => {
+    mockRpc.getAiSettings.mockRejectedValue(new Error("AI_CREDENTIAL_STORE_UNAVAILABLE secret-key"));
+    showBothOcrTools();
+    expect(await screen.findByText(/ไม่สามารถเข้าถึงที่เก็บ API key/)).toBeInTheDocument();
+    for (const input of screen.getAllByLabelText("ไฟล์ PDF หรือรูปภาพสำหรับ OCR")) fireEvent.change(input, { target: { value: "C:\\form.pdf" } });
+    for (const button of screen.getAllByRole("button", { name: "สร้างไฟล์ OCR" })) expect(button).toBeDisabled();
+    expect(screen.queryByText(/secret-key/)).not.toBeInTheDocument();
+    expect(mockRpc.ocrDocument).not.toHaveBeenCalled();
+  });
+});
+
+it.each(["ไฟล์ OCR จากแบบฟอร์ม DMC", "ไฟล์ OCR จากสำเนาทะเบียนบ้านนักเรียน"])("redacts unexpected OCR failures for %s", async (title) => {
+  mockRpc.ocrDocument.mockRejectedValue(new Error("provider failed secret-key"));
+  render(<FormConverterPage onBackHome={vi.fn()} onRevealPath={vi.fn()} />);
+  const card = screen.getByText(title).closest("section") as HTMLElement;
+  fireEvent.click(within(card).getByRole("tab", { name: "มีไฟล์สแกน PDF/รูปภาพ" }));
+  fireEvent.change(within(card).getByLabelText("ไฟล์ PDF หรือรูปภาพสำหรับ OCR"), { target: { value: "C:/form.pdf" } });
+  const button = within(card).getByRole("button", { name: "สร้างไฟล์ OCR" });
+  await waitFor(() => expect(button).toBeEnabled());
+  fireEvent.click(button);
+  expect(await screen.findByText("AI ประมวลผลเอกสารไม่สำเร็จ กรุณาลองใหม่")).toBeInTheDocument();
+  expect(screen.queryByText(/secret-key/)).not.toBeInTheDocument();
 });

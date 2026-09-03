@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   parseAiConnectionTest,
   parseAiSettings,
-  parseGeminiOcrDmcFormResponse,
   parseJobStatusSnapshot,
   parseOcrDocumentResponse,
 } from "./contracts";
@@ -172,11 +171,11 @@ describe("AI contracts", () => {
   });
 });
 
-describe("Gemini contracts", () => {
+describe("OCR metadata contracts", () => {
   it("parses the generated structured OCR response with usage metadata", () => {
-    const parsed = parseGeminiOcrDmcFormResponse({
+    const parsed = parseOcrDocumentResponse({
       module: "formConverter",
-      engine: "gemini",
+      provider: "gemini",
       model: "gemini-3.5-flash",
       processing_mode: "batch",
       source_path: "C:\\dmc\\uploadTest\\dmc-form.pdf",
@@ -186,10 +185,6 @@ describe("Gemini contracts", () => {
       cached: false,
       pages_processed: 2,
       pages_estimated: 2,
-      credits_per_page: 3,
-      credits_charged: 6,
-      charged: true,
-      credit_reservation_id: "reservation-1",
       average_confidence: null,
       usage_metadata: {
         prompt_token_count: 1300,
@@ -199,23 +194,21 @@ describe("Gemini contracts", () => {
         output_tokens_per_page: 350,
         total_tokens_per_page: 1000,
       },
-      batch_job_name: "batches/test",
-      batch_state: "JOB_STATE_SUCCEEDED",
+      provider_job_id: "batches/test",
+      provider_job_state: "JOB_STATE_SUCCEEDED",
       file_sha256: "abc123",
       created_at: "2026-05-11T00:00:00+00:00",
     });
 
     expect(parsed).toMatchObject({
-      engine: "gemini",
+      provider: "gemini",
       model: "gemini-3.5-flash",
       processing_mode: "batch",
       pages_processed: 2,
       structured_json_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\dmc-form.json",
-      credits_charged: 6,
-      charged: true,
       average_confidence: null,
-      batch_job_name: "batches/test",
-      batch_state: "JOB_STATE_SUCCEEDED",
+      provider_job_id: "batches/test",
+      provider_job_state: "JOB_STATE_SUCCEEDED",
     });
     expect(parsed.usage_metadata?.total_token_count).toBe(2000);
     expect(parsed.usage_metadata?.total_tokens_per_page).toBe(1000);

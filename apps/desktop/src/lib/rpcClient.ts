@@ -6,9 +6,6 @@ import type {
   AiConnectionTest,
   AiProviderId,
   AiSettings,
-  GeminiOcrDmcFormResponse,
-  GeminiOcrModel,
-  GeminiOcrProcessingMode,
   ArchiveJobsResponse,
   BackupCreateResponse,
   BrowserRuntimeStatus,
@@ -36,7 +33,6 @@ import type {
   ValidateExcelResponse,
 } from "../types/contracts";
 import {
-  parseGeminiOcrDmcFormResponse,
   parseAiConnectionTest,
   parseAiSettings,
   parseAvailableUpdate,
@@ -359,24 +355,6 @@ export async function ocrDocument(input: OcrDocumentInput): Promise<OcrDocumentR
   });
   return parseOcrDocumentResponse(result);
 }
-
-export async function ocrDmcFormWithGemini(input: {
-  sourcePath: string;
-  apiKey: string | null;
-  model?: GeminiOcrModel;
-  processingMode?: GeminiOcrProcessingMode;
-  forceRefresh?: boolean;
-}): Promise<GeminiOcrDmcFormResponse> {
-  const result = await sidecarRequest<unknown>("ocr_dmc_form_with_gemini", {
-    source_path: input.sourcePath,
-    api_key: input.apiKey,
-    model: input.model ?? "gemini-3.5-flash",
-    processing_mode: input.processingMode ?? "batch",
-    force_refresh: input.forceRefresh ?? false,
-  });
-  return parseGeminiOcrDmcFormResponse(result);
-}
-
 
 export async function exportCurrentStudentBlankForm(
   outputPath: string,

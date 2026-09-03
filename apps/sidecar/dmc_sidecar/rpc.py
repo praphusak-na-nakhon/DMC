@@ -11,7 +11,6 @@ from pydantic import ValidationError
 from .account_client import (
     build_account_snapshot,
     cached_module_catalog,
-    capture_credits,
     get_module_catalog,
     refresh_wallet,
     release_credits,
@@ -25,13 +24,6 @@ from . import __version__
 from .ai.base import AiSettingsResponse, OcrDocumentRequest, SecretStore
 from .ai.credentials import WindowsCredentialStore
 from .ai.registry import ProviderRegistry, build_provider_registry
-from .gemini_ocr import (
-    GEMINI_OCR_CREDITS_PER_PAGE,
-    GeminiOcrDmcFormRequest,
-    GeminiOcrDmcFormResponse,
-    ocr_dmc_form_with_gemini,
-    prepare_gemini_ocr_request,
-)
 from .backup import create_backup_archive, restore_backup_archive
 from .browser_runtime import bootstrap_browser_runtime, get_browser_runtime_status
 from .checkpoint import JobCheckpoint
@@ -79,7 +71,6 @@ from .student_basic_info import export_student_basic_info_form
 from .telemetry import TelemetryClient
 
 
-GEMINI_OCR_CREDIT_BYPASS_CODES = {"ACCOUNT_CLOUD_UNAVAILABLE", "ACCOUNT_CLOUD_REQUIRED"}
 _AI_RPC_METHODS = {"get_ai_settings", "save_ai_api_key", "test_ai_connection", "delete_ai_api_key", "ocr_document"}
 _SAFE_RUNTIME_ERROR_CODES = {"DEVICE_ID_UNAVAILABLE", "TELEMETRY_QUEUE_INSERT_FAILED"}
 
@@ -210,11 +201,6 @@ class RpcServer:
             if request.method == "export_dmc_form_json":
                 form_json_export_params = ExportDmcFormJsonRequest.model_validate(request.params)
                 result = export_dmc_form_json(form_json_export_params).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
-
-            if request.method in {"ocr_dmc_form_with_gemini", "ocr_dmc_form_with_akson", "ocr_dmc_form_with_typhoon"}:
-                gemini_ocr_params = GeminiOcrDmcFormRequest.model_validate(request.params)
-                result = self._ocr_dmc_form_with_gemini(gemini_ocr_params).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "export_current_student_blank_form":
@@ -470,65 +456,6 @@ class RpcServer:
             self.job_manager.cancel_job(job_id)
 
         return RpcSuccessResponse(id=request_id, result={"job_id": job_id, "status": status})
-
-    def _ocr_dmc_form_with_gemini(self, request: GeminiOcrDmcFormRequest) -> GeminiOcrDmcFormResponse:
-        prepared = prepare_gemini_ocr_request(request)
-        if prepared.cached_response is not None:
-            return prepared.cached_response
-
-        credits_required = prepared.pages_estimated * GEMINI_OCR_CREDITS_PER_PAGE
-        job_id = f"form-ocr-gemini-{prepared.file_sha256[:16]}-{uuid.uuid4().hex[:8]}"
-        try:
-            reservation = reserve_credits(
-                self.account_store,
-                job_id=job_id,
-                module="formConverter",
-                units=credits_required,
-                idempotency_key=f"{job_id}:reserve:{request.model}:{request.processing_mode}",
-            )
-        except DomainError as exc:
-            if exc.code not in GEMINI_OCR_CREDIT_BYPASS_CODES:
-                raise
-            response = ocr_dmc_form_with_gemini(request)
-            return response.model_copy(
-                update={
-                    "pages_estimated": prepared.pages_estimated,
-                    "credits_per_page": GEMINI_OCR_CREDITS_PER_PAGE,
-                    "credits_charged": 0,
-                    "charged": False,
-                    "credit_reservation_id": None,
-                }
-            )
-        captured = False
-        try:
-            response = ocr_dmc_form_with_gemini(request)
-            capture_credits(
-                self.account_store,
-                reservation_id=reservation.reservation_id,
-                units=credits_required,
-                idempotency_key=f"{job_id}:capture:{request.model}:{request.processing_mode}",
-            )
-            captured = True
-            return response.model_copy(
-                update={
-                    "pages_estimated": prepared.pages_estimated,
-                    "credits_per_page": GEMINI_OCR_CREDITS_PER_PAGE,
-                    "credits_charged": credits_required,
-                    "charged": True,
-                    "credit_reservation_id": reservation.reservation_id,
-                }
-            )
-        finally:
-            if not captured:
-                try:
-                    release_credits(
-                        self.account_store,
-                        reservation_id=reservation.reservation_id,
-                        units=credits_required,
-                        idempotency_key=f"{job_id}:release:{request.model}:{request.processing_mode}",
-                    )
-                except DomainError:
-                    pass
 
     def _estimate_credit_units(self, start_params: StartJobRequest) -> int:
         raw_units = start_params.options.get("estimated_credits")

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeUserFacingError, getRuntimeConnectionErrorKind } from "./errorMessages";
+import { describeAiError, describeUserFacingError, getRuntimeConnectionErrorKind } from "./errorMessages";
 
 describe("error message mapping", () => {
   it("classifies missing Tauri IPC as a desktop runtime error", () => {
@@ -42,9 +42,18 @@ describe("error message mapping", () => {
 
   it("does not classify domain messages that mention sidecar as runtime failures", () => {
     const raw =
-      "GEMINIOCR_API_KEY_REQUIRED: Gemini API key is required. Enter one in the app or set GOOGLE_API_KEY or GEMINI_API_KEY.";
+      "AI_API_KEY_REQUIRED: secret-key";
 
     expect(getRuntimeConnectionErrorKind(raw)).toBeNull();
-    expect(describeUserFacingError(raw)).toBe(raw);
+    expect(describeUserFacingError(raw)).toContain("หน้าหลัก");
+    expect(describeUserFacingError(raw)).not.toContain("secret-key");
   });
+});
+
+it.each(["AI_API_KEY_REQUIRED", "AI_API_KEY_INVALID", "AI_CREDENTIAL_STORE_UNAVAILABLE", "AI_PROVIDER_UNAVAILABLE", "AI_RATE_LIMITED", "AI_REQUEST_TIMEOUT", "AI_RESPONSE_INVALID", "AI_INPUT_UNSUPPORTED", "AI_JOB_FAILED"])("safely translates %s into Thai", (code) => {
+  const message = describeUserFacingError(new Error(code + ": secret-key"));
+  expect(message).toMatch(/[ก-๙]/);
+  expect(message).not.toContain("secret-key");
+  expect(describeAiError(new Error(code + ": secret-key"))).toBe(message);
+  if (code === "AI_RATE_LIMITED" || code === "AI_REQUEST_TIMEOUT") expect(message).toContain("ลองใหม่");
 });

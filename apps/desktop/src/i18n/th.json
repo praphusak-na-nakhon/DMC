@@ -249,6 +249,9 @@
       "openFolder": "เปิดโฟลเดอร์ report"
     },
     "formConverter": {
+      "aiLoading": "กำลังตรวจสอบการตั้งค่า AI",
+      "aiKeyRequired": "กรุณาตั้งค่า Gemini API key ก่อนใช้ OCR",
+      "aiSettingsHome": "ไปตั้งค่า AI ที่หน้าหลัก",
       "backHome": "กลับหน้าหลัก",
       "readyBadge": "พร้อมทดสอบ",
       "title": "แปลงแบบฟอร์มนักเรียนเป็น JSON",

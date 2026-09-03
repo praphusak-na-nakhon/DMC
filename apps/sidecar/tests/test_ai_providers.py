@@ -40,8 +40,9 @@ def test_gemini_provider_maps_engine_response_without_legacy_credit_fields(tmp_p
     store.set("gemini", "secret-value")
     captured: dict[str, object] = {}
 
-    def fake_engine(request: object) -> GeminiOcrDmcFormResponse:
+    def fake_engine(request: object, *, api_key: str) -> GeminiOcrDmcFormResponse:
         captured["request"] = request
+        captured["api_key"] = api_key
         return GeminiOcrDmcFormResponse(
             model="gemini-3.5-flash",
             processing_mode="batch",
@@ -62,7 +63,10 @@ def test_gemini_provider_maps_engine_response_without_legacy_credit_fields(tmp_p
         OcrDocumentRequest(provider="gemini", source_path=str(tmp_path / "form.pdf"))
     )
 
-    assert captured["request"].api_key == "secret-value"  # type: ignore[union-attr]
+    assert captured["api_key"] == "secret-value"
+    assert "api_key" not in captured["request"].model_dump()  # type: ignore[union-attr]
+    assert response.pages_processed == response.pages_estimated == 2
+    assert response.average_confidence == 0.92
     assert response.provider == "gemini"
     assert response.provider_job_id == "batches/123"
     assert response.provider_job_state == "JOB_STATE_SUCCEEDED"
@@ -137,7 +141,7 @@ def test_gemini_provider_translates_and_redacts_vendor_failures(vendor_code: str
     store = InMemorySecretStore()
     store.set("gemini", "secret-value")
 
-    def failing_engine(_: object) -> GeminiOcrDmcFormResponse:
+    def failing_engine(_: object, *, api_key: str) -> GeminiOcrDmcFormResponse:
         raise DomainError(vendor_code, "Authorization: Bearer secret-value student document")
 
     with pytest.raises(DomainError) as exc_info:

@@ -423,44 +423,6 @@ export type ExportDmcFormJsonResponse = {
   records: DmcFormJsonRecord[];
 };
 
-export type GeminiOcrModel = "gemini-3.5-flash" | "gemini-3-pro-preview";
-export type GeminiOcrProcessingMode = "standard" | "batch";
-
-export type GeminiOcrUsageMetadata = Record<string, unknown> & {
-  prompt_token_count: number | null;
-  candidates_token_count: number | null;
-  total_token_count: number | null;
-  cached_content_token_count: number | null;
-  thoughts_token_count: number | null;
-  input_tokens_per_page: number | null;
-  output_tokens_per_page: number | null;
-  total_tokens_per_page: number | null;
-};
-
-export type GeminiOcrDmcFormResponse = {
-  module: "formConverter";
-  engine: "gemini";
-  model: GeminiOcrModel;
-  processing_mode: GeminiOcrProcessingMode;
-  source_path: string;
-  markdown_path: string;
-  structured_json_path: string | null;
-  output_format: "structured_json";
-  cached: boolean;
-  pages_processed: number;
-  pages_estimated: number;
-  credits_per_page: number;
-  credits_charged: number;
-  charged: boolean;
-  credit_reservation_id: string | null;
-  average_confidence: number | null;
-  usage_metadata: GeminiOcrUsageMetadata | null;
-  batch_job_name: string | null;
-  batch_state: string | null;
-  file_sha256: string;
-  created_at: string;
-};
-
 export type AiProviderId = "gemini";
 
 export type AiSettings = {
@@ -1447,81 +1409,6 @@ export function parseOcrDocumentResponse(value: unknown): OcrDocumentResponse {
     created_at: readString(record, "created_at", context),
   };
 }
-
-export function parseGeminiOcrDmcFormResponse(value: unknown): GeminiOcrDmcFormResponse {
-  const record = asRecord(value, "gemini_ocr_dmc_form_response");
-  const module = readString(record, "module", "gemini_ocr_dmc_form_response");
-  if (module !== "formConverter") {
-    throw new Error("gemini_ocr_dmc_form_response.module must be formConverter");
-  }
-  const engine = readString(record, "engine", "gemini_ocr_dmc_form_response");
-  if (engine !== "gemini") {
-    throw new Error("gemini_ocr_dmc_form_response.engine must be gemini");
-  }
-  const model = readString(record, "model", "gemini_ocr_dmc_form_response");
-  if (model !== "gemini-3.5-flash" && model !== "gemini-3-pro-preview") {
-    throw new Error("gemini_ocr_dmc_form_response.model must be a supported Gemini model");
-  }
-  const processingMode =
-    record.processing_mode === undefined
-      ? "standard"
-      : readString(record, "processing_mode", "gemini_ocr_dmc_form_response");
-  if (processingMode !== "standard" && processingMode !== "batch") {
-    throw new Error("gemini_ocr_dmc_form_response.processing_mode must be standard or batch");
-  }
-  const markdownPath = readString(record, "markdown_path", "gemini_ocr_dmc_form_response");
-  const outputFormat =
-    record.output_format === undefined
-      ? "structured_json"
-      : readString(record, "output_format", "gemini_ocr_dmc_form_response");
-  if (outputFormat !== "structured_json") {
-    throw new Error("gemini_ocr_dmc_form_response.output_format must be structured_json");
-  }
-  return {
-    module,
-    engine,
-    model,
-    processing_mode: processingMode,
-    source_path: readString(record, "source_path", "gemini_ocr_dmc_form_response"),
-    markdown_path: markdownPath,
-    structured_json_path:
-      readOptionalString(record, "structured_json_path", "gemini_ocr_dmc_form_response") ?? markdownPath,
-    output_format: outputFormat,
-    cached: readBoolean(record, "cached", "gemini_ocr_dmc_form_response"),
-    pages_processed: readNumber(record, "pages_processed", "gemini_ocr_dmc_form_response"),
-    pages_estimated: readNumber(record, "pages_estimated", "gemini_ocr_dmc_form_response"),
-    credits_per_page: readNumber(record, "credits_per_page", "gemini_ocr_dmc_form_response"),
-    credits_charged: readNumber(record, "credits_charged", "gemini_ocr_dmc_form_response"),
-    charged: readBoolean(record, "charged", "gemini_ocr_dmc_form_response"),
-    credit_reservation_id: readOptionalString(record, "credit_reservation_id", "gemini_ocr_dmc_form_response"),
-    average_confidence: readOptionalNumber(record, "average_confidence", "gemini_ocr_dmc_form_response"),
-    usage_metadata: parseGeminiOcrUsageMetadata(record, "gemini_ocr_dmc_form_response"),
-    batch_job_name: readOptionalString(record, "batch_job_name", "gemini_ocr_dmc_form_response"),
-    batch_state: readOptionalString(record, "batch_state", "gemini_ocr_dmc_form_response"),
-    file_sha256: readString(record, "file_sha256", "gemini_ocr_dmc_form_response"),
-    created_at: readString(record, "created_at", "gemini_ocr_dmc_form_response"),
-  };
-}
-
-
-function parseGeminiOcrUsageMetadata(record: UnknownRecord, context: string): GeminiOcrUsageMetadata | null {
-  const usage = readObjectOrNull(record, "usage_metadata", context);
-  if (usage === null) {
-    return null;
-  }
-  return {
-    ...usage,
-    prompt_token_count: readOptionalNumber(usage, "prompt_token_count", `${context}.usage_metadata`),
-    candidates_token_count: readOptionalNumber(usage, "candidates_token_count", `${context}.usage_metadata`),
-    total_token_count: readOptionalNumber(usage, "total_token_count", `${context}.usage_metadata`),
-    cached_content_token_count: readOptionalNumber(usage, "cached_content_token_count", `${context}.usage_metadata`),
-    thoughts_token_count: readOptionalNumber(usage, "thoughts_token_count", `${context}.usage_metadata`),
-    input_tokens_per_page: readOptionalNumber(usage, "input_tokens_per_page", `${context}.usage_metadata`),
-    output_tokens_per_page: readOptionalNumber(usage, "output_tokens_per_page", `${context}.usage_metadata`),
-    total_tokens_per_page: readOptionalNumber(usage, "total_tokens_per_page", `${context}.usage_metadata`),
-  };
-}
-
 
 export function parseExportCurrentStudentsImportExcelResponse(
   value: unknown,

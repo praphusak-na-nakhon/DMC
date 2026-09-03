@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from httpx import TimeoutException
 
@@ -11,7 +11,9 @@ from ..errors import DomainError
 from ..gemini_ocr import GEMINI_OCR_MODEL, GeminiOcrDmcFormRequest, GeminiOcrDmcFormResponse, ocr_dmc_form_with_gemini
 
 
-GeminiOcrEngine = Callable[[GeminiOcrDmcFormRequest], GeminiOcrDmcFormResponse]
+class GeminiOcrEngine(Protocol):
+    def __call__(self, request: GeminiOcrDmcFormRequest, *, api_key: str) -> GeminiOcrDmcFormResponse: ...
+
 GeminiClientFactory = Callable[..., Any]
 
 
@@ -55,11 +57,11 @@ class GeminiProvider:
             engine_response = self._ocr_engine(
                 GeminiOcrDmcFormRequest(
                     source_path=request.source_path,
-                    api_key=api_key,
                     model=request.model,
                     processing_mode=request.processing_mode,
                     force_refresh=request.force_refresh,
-                )
+                ),
+                api_key=api_key,
             )
         except Exception as exc:
             raise _safe_ai_error(exc) from None
