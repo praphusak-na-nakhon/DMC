@@ -7,7 +7,7 @@ import pandas as pd
 from playwright.sync_api import BrowserContext, Error as PlaywrightError, Page, sync_playwright
 
 from ..checkpoint import JobCheckpoint
-from ..config import profile_dir_for_account, profiles_dir, reports_dir
+from ..config import automation_profile_dir, profiles_dir, reports_dir
 from ..errors import DomainError
 from ..module_config import ModuleConfigState, load_effective_config, sync_module_config
 from ..runtime import JobContext, utc_now
@@ -129,8 +129,7 @@ class GraduationModule(AutomationModule):
             started_at=utc_now(),
         )
 
-        account_session = context.account_store.get_session()
-        profile_dir = profile_dir_for_account(account_session.user_id if account_session is not None else None)
+        profile_dir = automation_profile_dir()
 
         report_dir = reports_dir() / job_id
         report_dir.mkdir(parents=True, exist_ok=True)

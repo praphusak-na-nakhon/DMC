@@ -23,21 +23,16 @@ class JobStore:
         job_id: str,
         module: str,
         source_file: str,
-        *,
-        credit_reservation_id: str | None = None,
-        credits_reserved: int = 0,
-        credit_status: str | None = None,
     ) -> None:
         with connect() as connection:
             connection.execute(
                 """
                 INSERT INTO job (
-                    id, module, status, source_file, credit_reservation_id,
-                    credits_reserved, credit_status
+                    id, module, status, source_file
                 )
-                VALUES (?, ?, 'pending', ?, ?, ?, ?)
+                VALUES (?, ?, 'pending', ?)
                 """,
-                (job_id, module, source_file, credit_reservation_id, credits_reserved, credit_status),
+                (job_id, module, source_file),
             )
 
     def mark_running(
@@ -112,38 +107,7 @@ class JobStore:
             )
             return cursor.rowcount == 1
 
-    def update_credit_status(
-        self,
-        job_id: str,
-        *,
-        credit_reservation_id: str | None = None,
-        credits_reserved: int | None = None,
-        credits_captured: int | None = None,
-        credits_refunded: int | None = None,
-        credit_status: str | None = None,
-    ) -> None:
-        with connect(immediate=True) as connection:
-            connection.execute(
-                """
-                UPDATE job
-                SET credit_reservation_id = COALESCE(?, credit_reservation_id),
-                    credits_reserved = COALESCE(?, credits_reserved),
-                    credits_captured = COALESCE(?, credits_captured),
-                    credits_refunded = COALESCE(?, credits_refunded),
-                    credit_status = COALESCE(?, credit_status)
-                WHERE id = ?
-                """,
-                (
-                    credit_reservation_id,
-                    credits_reserved,
-                    credits_captured,
-                    credits_refunded,
-                    credit_status,
-                    job_id,
-                ),
-            )
-
-    def mark_start_failed(self, job_id: str, *, code: str, finished_at: str) -> None:
+    def mark_start_failed(self, job_id: str, *, finished_at: str) -> None:
         with connect(immediate=True) as connection:
             run_summary = self._run_summary(connection, job_id, self._total_records(connection, job_id))
             connection.execute(
@@ -154,102 +118,15 @@ class JobStore:
                     succeeded = 0,
                     failed = 0,
                     finished_at = ?,
-                    run_summary_json = ?,
-                    credit_status = ?
+                    run_summary_json = ?
                 WHERE id = ?
                 """,
                 (
                     finished_at,
                     json.dumps(run_summary, ensure_ascii=False, sort_keys=True) if run_summary is not None else "{}",
-                    f"start_failed:{code}",
                     job_id,
                 ),
             )
-
-    def list_reserving_jobs(self) -> list[dict[str, Any]]:
-        with connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT id, module, credit_reservation_id, credits_reserved
-                FROM job
-                WHERE status = 'pending' AND credit_status = 'reserving'
-                ORDER BY id ASC
-                """
-            ).fetchall()
-        return [dict(row) for row in rows]
-
-    def mark_reserving_jobs_failed(
-        self,
-        job_ids: list[str],
-        *,
-        code: str = "RESTART_DURING_RESERVATION",
-    ) -> int:
-        if not job_ids:
-            return 0
-        placeholders = ", ".join(["?"] * len(job_ids))
-        with connect(immediate=True) as connection:
-            cursor = connection.execute(
-                f"""
-                UPDATE job
-                SET status = 'failed',
-                    finished_at = ?,
-                    run_summary_json = COALESCE(run_summary_json, '{{}}'),
-                    credit_status = ?
-                WHERE status = 'pending'
-                    AND credit_status = 'reserving'
-                    AND id IN ({placeholders})
-                """,
-                (utc_now(), f"start_failed:{code}", *job_ids),
-            )
-            return int(cursor.rowcount)
-
-    def list_stale_credit_jobs(self) -> list[dict[str, Any]]:
-        """Jobs with an unsettled credit reservation that are not actively running.
-
-        Covers crashes between reserve and run start (``reserving``/``reserved``), a failed
-        start whose release never completed (``start_failed:*``), and a finalize that raised
-        (``finalize_failed:*``). Running/paused jobs are resumable and must be left alone.
-        """
-        with connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT *
-                FROM job
-                WHERE status NOT IN ('running', 'paused')
-                  AND credit_status IS NOT NULL
-                  AND credit_status != 'finalized'
-                ORDER BY id ASC
-                """
-            ).fetchall()
-        return [dict(row) for row in rows]
-
-    def mark_stale_credit_jobs_failed(
-        self,
-        job_ids: list[str],
-        *,
-        code: str = "RESTART_DURING_RESERVATION",
-    ) -> int:
-        if not job_ids:
-            return 0
-        placeholders = ", ".join(["?"] * len(job_ids))
-        with connect(immediate=True) as connection:
-            cursor = connection.execute(
-                f"""
-                UPDATE job
-                SET status = 'failed',
-                    finished_at = ?,
-                    run_summary_json = COALESCE(run_summary_json, '{{}}'),
-                    credit_status = ?
-                WHERE status = 'pending'
-                  AND id IN ({placeholders})
-                """,
-                (utc_now(), f"start_failed:{code}", *job_ids),
-            )
-            return int(cursor.rowcount)
-
-    def reap_reserving_jobs(self, *, code: str = "RESTART_DURING_RESERVATION") -> int:
-        jobs = self.list_reserving_jobs()
-        return self.mark_reserving_jobs_failed([str(job["id"]) for job in jobs], code=code)
 
     def save_checkpoint(self, job_id: str, checkpoint: JobCheckpoint) -> None:
         with connect() as connection:
@@ -412,7 +289,16 @@ class JobStore:
 
     def get_job_record(self, job_id: str) -> dict[str, Any] | None:
         with connect() as connection:
-            row = connection.execute("SELECT * FROM job WHERE id = ?", (job_id,)).fetchone()
+            row = connection.execute(
+                """
+                SELECT id, module, status, source_file, total_records, processed,
+                       succeeded, failed, started_at, finished_at, current_page,
+                       awaiting_auth, auth_reason, report_path, review_report_path,
+                       stopped_item_json, level_label, checkpoint_json, run_summary_json
+                FROM job WHERE id = ?
+                """,
+                (job_id,),
+            ).fetchone()
         if row is None:
             return None
         return dict(row)
@@ -492,11 +378,6 @@ class JobStore:
             "run_summary": self._run_summary_from_row(row, connection),
             "summary_report_path": summary_report_path,
             "completion_summary": completion_summary,
-            "credit_reservation_id": row["credit_reservation_id"],
-            "credits_reserved": row["credits_reserved"],
-            "credits_captured": row["credits_captured"],
-            "credits_refunded": row["credits_refunded"],
-            "credit_status": row["credit_status"],
         }
 
     def _run_summary(

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import os
 from pathlib import Path
 from urllib.parse import urlparse
@@ -84,10 +83,8 @@ def playwright_browsers_dir() -> Path:
     return ensure_data_dir() / "ms-playwright"
 
 
-def profile_dir_for_account(user_id: str | None) -> Path:
-    seed = user_id or "dev-account"
-    profile_hash = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
-    path = profiles_dir() / profile_hash
+def automation_profile_dir() -> Path:
+    path = profiles_dir() / "default"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

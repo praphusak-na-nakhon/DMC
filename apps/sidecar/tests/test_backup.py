@@ -5,23 +5,9 @@ import zipfile
 from pathlib import Path
 
 from dmc_sidecar import config
-from dmc_sidecar.account_store import AccountSessionStore
+from dmc_sidecar.job_store import JobStore
 from dmc_sidecar.backup import create_backup_archive, restore_backup_archive
 from dmc_sidecar.db import get_database_metadata, migrate_database
-from dmc_sidecar.schemas import WalletSnapshot
-
-
-def seed_account(store: AccountSessionStore, *, token: str) -> None:
-    store.save_session(
-        token=token,
-        user_id="user-1",
-        email="teacher@example.test",
-        display_name="Teacher",
-        status="active",
-        token_expires_at="2026-05-20T00:00:00Z",
-        checked_at="2026-04-22T00:00:00Z",
-        wallet=WalletSnapshot(user_id="user-1", balance=10, reserved=0, available=10),
-    )
 
 
 def test_sidecar_migrations_report_latest_version(monkeypatch, tmp_path: Path) -> None:
@@ -38,8 +24,8 @@ def test_sidecar_migrations_report_latest_version(monkeypatch, tmp_path: Path) -
 
 def test_sidecar_backup_archive_round_trip(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    store = AccountSessionStore()
-    seed_account(store, token="token-original")
+    store = JobStore()
+    store.create_pending_job("backup-job", "graduation", "source.xlsx")
     sample_report = config.reports_dir() / "report.json"
     sample_report.write_text('{"ok":true}', encoding="utf-8")
     sample_config = config.configs_dir() / "graduation.json"
@@ -58,13 +44,13 @@ def test_sidecar_backup_archive_round_trip(monkeypatch, tmp_path: Path) -> None:
         assert "reports/report.json" in manifest["files"]
         assert all(not item.startswith("profiles/") for item in manifest["files"])
 
-    seed_account(store, token="token-changed")
+    store.set_status("backup-job", "failed")
     sample_report.write_text('{"ok":false}', encoding="utf-8")
 
     result = restore_backup_archive(archive_path)
-    restored = store.get_session()
+    restored = store.get_status("backup-job")
 
     assert restored is not None
-    assert restored.token == "token-original"
+    assert restored["status"] == "pending"
     assert sample_report.read_text(encoding="utf-8") == '{"ok":true}'
     assert Path(result["safety_backup_path"]).exists()

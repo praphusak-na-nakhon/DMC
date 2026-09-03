@@ -9,7 +9,7 @@ from typing import Any, Protocol
 from playwright.sync_api import BrowserContext, Error as PlaywrightError, Page, TimeoutError, sync_playwright
 
 from ..checkpoint import JobCheckpoint
-from ..config import profile_dir_for_account, profiles_dir, reports_dir
+from ..config import automation_profile_dir, profiles_dir, reports_dir
 from ..current_students import (
     DMC_TRANSFER_IN_URL,
     DmcTransferInImportRecord,
@@ -222,8 +222,7 @@ class CurrentStudentsModule(AutomationModule):
         report_csv = report_dir / "dmc-transfer-in-report.csv"
         review_csv = report_dir / "dmc-transfer-in-review.csv"
 
-        account_session = context.account_store.get_session()
-        profile_dir = profile_dir_for_account(account_session.user_id if account_session is not None else None)
+        profile_dir = automation_profile_dir()
 
         with sync_playwright() as playwright:
             browser_context = self._launch_browser_context(
