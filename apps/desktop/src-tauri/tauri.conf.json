@@ -21,21 +21,13 @@
   },
   "bundle": {
     "active": true,
-    "createUpdaterArtifacts": true,
     "resources": [
       "bundled-sidecar",
-      "release-config",
       "templates"
     ],
     "icon": [
       "icons/icon.ico"
     ],
     "targets": "msi"
-  },
-  "plugins": {
-    "updater": {
-      "endpoints": [],
-      "pubkey": ""
-    }
   }
 }

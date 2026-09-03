@@ -92,18 +92,6 @@
       "systemStatusTitle": "สถานะระบบ",
       "sidecarStatus": "ตัวเชื่อมระบบ",
       "databaseStatus": "ฐานข้อมูลในเครื่อง",
-      "updatesTitle": "อัปเดตระบบ",
-      "updatesDescription": "เช็กและติดตั้งอัปเดตของ DMC Assistant ทั้งระบบ ไม่ผูกกับโมดูลใดโมดูลหนึ่ง",
-      "updatesReady": "พร้อมใช้งาน",
-      "updatesNotConfigured": "ยังไม่ตั้งค่า",
-      "currentVersion": "เวอร์ชันปัจจุบัน",
-      "endpoint": "จุดเชื่อมต่ออัปเดต",
-      "checkUpdates": "เช็กอัปเดตทั้งระบบ",
-      "installUpdate": "ติดตั้งอัปเดต",
-      "updateAvailable": "พบเวอร์ชันใหม่",
-      "publishedAt": "เผยแพร่เมื่อ",
-      "updateDetails": "รายละเอียด",
-      "downloadProgress": "ดาวน์โหลดแล้ว",
       "modules": {
         "formConverter": {
           "title": "แปลงเอกสารแบบฟอร์ม DMC เป็น JSON",

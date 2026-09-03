@@ -1,6 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use serde::Deserialize;
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -12,9 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::oneshot;
-use url::Url;
 
 type PendingMap = Arc<StdMutex<HashMap<String, oneshot::Sender<Result<Value, String>>>>>;
 const RPC_TIMEOUT_STANDARD_SECS: u64 = 30;
@@ -49,38 +46,10 @@ struct SidecarState {
     runtime: tauri::async_runtime::Mutex<SidecarRuntime>,
 }
 
-#[derive(Default)]
-struct PendingUpdate(StdMutex<Option<tauri_plugin_updater::Update>>);
-
 fn lock_mutex<T>(mutex: &StdMutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-#[derive(serde::Serialize)]
-struct UpdaterStatus {
-    configured: bool,
-    endpoint: Option<String>,
-    current_version: String,
-    pubkey_configured: bool,
-}
-
-#[derive(serde::Serialize)]
-struct UpdateMetadata {
-    version: String,
-    current_version: String,
-    date: Option<String>,
-    body: Option<String>,
-}
-
-#[derive(Clone, Default, Deserialize)]
-#[serde(default)]
-struct ReleaseConfig {
-    environment: String,
-    cloud_base_url: String,
-    updater_endpoint: String,
-    updater_public_key: String,
 }
 
 struct SidecarLaunchSpec {
@@ -89,80 +58,6 @@ struct SidecarLaunchSpec {
     current_dir: Option<PathBuf>,
     envs: Vec<(String, String)>,
     mode: &'static str,
-}
-
-fn trim_to_option(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
-fn release_config_path(app: &AppHandle) -> Option<PathBuf> {
-    let resource_dir = app.path().resource_dir().ok()?;
-    let candidate = resource_dir.join("release-config").join("app-config.json");
-    if candidate.exists() {
-        Some(candidate)
-    } else {
-        None
-    }
-}
-
-fn load_release_config(app: &AppHandle) -> ReleaseConfig {
-    let mut config = release_config_path(app)
-        .and_then(|path| fs::read_to_string(path).ok())
-        .and_then(|content| serde_json::from_str::<ReleaseConfig>(&content).ok())
-        .unwrap_or_default();
-
-    if let Ok(value) = env::var("DMC_UPDATER_ENDPOINT") {
-        if let Some(endpoint) = trim_to_option(&value) {
-            config.updater_endpoint = endpoint;
-        }
-    }
-    if let Ok(value) = env::var("DMC_UPDATER_PUBLIC_KEY") {
-        if let Some(pubkey) = trim_to_option(&value) {
-            config.updater_public_key = pubkey;
-        }
-    }
-    if let Ok(value) = env::var("DMC_CLOUD_BASE_URL") {
-        if let Some(base_url) = trim_to_option(&value) {
-            config.cloud_base_url = base_url;
-        }
-    }
-    if let Ok(value) = env::var("DMC_RELEASE_ENVIRONMENT") {
-        if let Some(environment) = trim_to_option(&value) {
-            config.environment = environment;
-        }
-    }
-
-    config
-}
-
-fn configured_cloud_base_url(app: &AppHandle) -> Option<String> {
-    let config = load_release_config(app);
-    let trimmed = config.cloud_base_url.trim().trim_end_matches('/');
-    if trimmed.is_empty() {
-        return None;
-    }
-    Some(trimmed.to_string())
-}
-
-fn updater_endpoint(app: &AppHandle) -> Option<String> {
-    let config = load_release_config(app);
-    if let Some(endpoint) = trim_to_option(&config.updater_endpoint) {
-        return Some(endpoint);
-    }
-
-    let base_url = configured_cloud_base_url(app)?;
-    Some(format!(
-        "{base_url}/v1/updates/manifest?current_version={{current_version}}&target={{target}}&arch={{arch}}"
-    ))
-}
-
-fn updater_pubkey(app: &AppHandle) -> Option<String> {
-    trim_to_option(&load_release_config(app).updater_public_key)
 }
 
 fn repo_root() -> Result<PathBuf, String> {
@@ -255,9 +150,6 @@ fn bundled_sidecar_launch_spec(app: &AppHandle) -> Result<Option<SidecarLaunchSp
             resources_dir.to_string_lossy().to_string(),
         ));
     }
-    if let Some(cloud_base_url) = configured_cloud_base_url(app) {
-        envs.push(("DMC_CLOUD_BASE_URL".to_string(), cloud_base_url));
-    }
     Ok(Some(SidecarLaunchSpec {
         program,
         args: Vec::new(),
@@ -272,7 +164,7 @@ fn python_sidecar_launch_specs(app: &AppHandle) -> Result<Vec<SidecarLaunchSpec>
     let python_path = combined_python_path(&repo_root)?;
     let data_dir = app_data_sidecar_dir(app)?;
     let browser_dir = data_dir.join("ms-playwright");
-    let mut shared_envs = vec![
+    let shared_envs = vec![
         ("PYTHONPATH".to_string(), python_path),
         (
             "DMC_REPO_ROOT".to_string(),
@@ -287,9 +179,6 @@ fn python_sidecar_launch_specs(app: &AppHandle) -> Result<Vec<SidecarLaunchSpec>
             browser_dir.to_string_lossy().to_string(),
         ),
     ];
-    if let Some(cloud_base_url) = configured_cloud_base_url(app) {
-        shared_envs.push(("DMC_CLOUD_BASE_URL".to_string(), cloud_base_url));
-    }
     let mut program_candidates: Vec<(String, Vec<String>)> = Vec::new();
     if let Ok(custom) = env::var("DMC_PYTHON") {
         program_candidates.push((custom, vec!["-m".to_string(), "dmc_sidecar".to_string()]));
@@ -702,7 +591,7 @@ fn rpc_timeout_secs(method: &str) -> u64 {
         "ping" => RPC_TIMEOUT_STANDARD_SECS,
         "start_job"
         | "resume_existing_job"
-        | "install_browser_runtime"
+        | "bootstrap_browser_runtime"
         | "export_student_basic_info_form"
         | "validate_current_student_sources"
         | "export_current_student_import_excel"
@@ -718,8 +607,12 @@ mod rpc_timeout_tests {
     use super::{rpc_timeout_secs, RPC_TIMEOUT_LONG_SECS, RPC_TIMEOUT_STANDARD_SECS};
 
     #[test]
-    fn form_converter_rpc_methods_use_long_timeout() {
+    fn long_running_local_rpc_methods_use_long_timeout() {
         for method in [
+            "start_job",
+            "resume_existing_job",
+            "bootstrap_browser_runtime",
+            "export_student_basic_info_form",
             "validate_current_student_sources",
             "export_current_student_import_excel",
             "preview_dmc_form_json",
@@ -735,6 +628,7 @@ mod rpc_timeout_tests {
         for method in [
             "ping",
             "get_account_status",
+            "install_browser_runtime",
             "get_ai_settings",
             "save_ai_api_key",
             "test_ai_connection",
@@ -813,32 +707,6 @@ async fn perform_rpc_request(
     }
 
     Err(last_write_error.unwrap_or_else(|| "Failed writing to sidecar stdin.".to_string()))
-}
-
-fn current_app_version(app: &AppHandle) -> String {
-    app.package_info().version.to_string()
-}
-
-fn build_updater_status(app: &AppHandle) -> UpdaterStatus {
-    let endpoint = updater_endpoint(app);
-    let pubkey = updater_pubkey(app);
-    UpdaterStatus {
-        configured: endpoint.is_some() && pubkey.is_some(),
-        endpoint,
-        current_version: current_app_version(app),
-        pubkey_configured: pubkey.is_some(),
-    }
-}
-
-fn build_runtime_updater(app: &AppHandle) -> Result<tauri_plugin_updater::UpdaterBuilder, String> {
-    let endpoint = updater_endpoint(app).ok_or_else(|| "UPDATER_NOT_CONFIGURED".to_string())?;
-    let pubkey = updater_pubkey(app).ok_or_else(|| "UPDATER_NOT_CONFIGURED".to_string())?;
-    let url =
-        Url::parse(&endpoint).map_err(|error| format!("UPDATER_ENDPOINT_INVALID: {error}"))?;
-    app.updater_builder()
-        .pubkey(pubkey)
-        .endpoints(vec![url])
-        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1101,102 +969,9 @@ fn reveal_path(path: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-fn get_updater_status(app: AppHandle) -> UpdaterStatus {
-    build_updater_status(&app)
-}
-
-#[tauri::command]
-async fn check_for_app_update(
-    app: AppHandle,
-    pending_update: State<'_, PendingUpdate>,
-) -> Result<Value, String> {
-    let update = build_runtime_updater(&app)?
-        .build()
-        .map_err(|error| error.to_string())?
-        .check()
-        .await
-        .map_err(|error| error.to_string())?;
-
-    let metadata = update.as_ref().map(|item| UpdateMetadata {
-        version: item.version.clone(),
-        current_version: item.current_version.clone(),
-        date: item.date.map(|value| value.to_string()),
-        body: item.body.clone(),
-    });
-
-    *lock_mutex(&pending_update.0) = update;
-    serde_json::to_value(metadata).map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-async fn install_app_update(
-    app: AppHandle,
-    pending_update: State<'_, PendingUpdate>,
-) -> Result<(), String> {
-    let update = lock_mutex(&pending_update.0)
-        .take()
-        .ok_or_else(|| "NO_PENDING_UPDATE".to_string())?;
-
-    let app_for_progress = app.clone();
-    let mut downloaded: u64 = 0;
-    update
-        .download_and_install(
-            move |chunk_length, content_length| {
-                downloaded += chunk_length as u64;
-                let event_type = if downloaded == chunk_length as u64 {
-                    "started"
-                } else {
-                    "progress"
-                };
-                let _ = app_for_progress.emit(
-                    "updater-event",
-                    serde_json::json!({
-                        "type": event_type,
-                        "downloaded": downloaded,
-                        "contentLength": content_length,
-                    }),
-                );
-            },
-            {
-                let app_for_finish = app.clone();
-                move || {
-                    let _ = app_for_finish.emit(
-                        "updater-event",
-                        serde_json::json!({
-                            "type": "finished",
-                        }),
-                    );
-                }
-            },
-        )
-        .await
-        .map_err(|error| {
-            let message = error.to_string();
-            let _ = app.emit(
-                "updater-event",
-                serde_json::json!({
-                    "type": "error",
-                    "message": message,
-                }),
-            );
-            message
-        })?;
-
-    let _ = app.emit(
-        "updater-event",
-        serde_json::json!({
-            "type": "installed",
-        }),
-    );
-    Ok(())
-}
-
 fn main() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(SidecarState::default())
-        .manage(PendingUpdate::default())
         .invoke_handler(tauri::generate_handler![
             initialize_sidecar,
             rpc_request,
@@ -1215,45 +990,7 @@ fn main() {
             copy_template_file,
             write_text_file,
             reveal_path,
-            get_updater_status,
-            check_for_app_update,
-            install_app_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{UpdateMetadata, UpdaterStatus};
-
-    #[test]
-    fn updater_status_serializes_with_frontend_contract_keys() {
-        let value = serde_json::to_value(UpdaterStatus {
-            configured: false,
-            endpoint: None,
-            current_version: "0.1.0".to_string(),
-            pubkey_configured: false,
-        })
-        .expect("updater status should serialize");
-
-        assert_eq!(value["current_version"], "0.1.0");
-        assert_eq!(value["pubkey_configured"], false);
-        assert!(value.get("currentVersion").is_none());
-        assert!(value.get("pubkeyConfigured").is_none());
-    }
-
-    #[test]
-    fn update_metadata_serializes_with_frontend_contract_keys() {
-        let value = serde_json::to_value(UpdateMetadata {
-            version: "0.2.0".to_string(),
-            current_version: "0.1.0".to_string(),
-            date: None,
-            body: None,
-        })
-        .expect("update metadata should serialize");
-
-        assert_eq!(value["current_version"], "0.1.0");
-        assert!(value.get("currentVersion").is_none());
-    }
 }

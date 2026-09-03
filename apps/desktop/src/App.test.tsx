@@ -20,7 +20,6 @@ beforeEach(() => {
   vi.mocked(listen).mockResolvedValue(() => {});
   vi.mocked(invoke).mockImplementation(async (command, args) => {
     if (command === "initialize_sidecar") { calls.push(command); return; }
-    if (command === "get_updater_status") return { configured: false, endpoint: null, current_version: "0.1.0", pubkey_configured: false };
     if (command !== "rpc_request") throw new Error("Unexpected native command: " + command);
     const { method } = JSON.parse((args as { requestJson: string }).requestJson);
     calls.push(method);
@@ -35,7 +34,7 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-it("starts locally with four visible modules and AI settings without account, catalog or wallet RPCs", async () => {
+it("starts locally with four visible modules and AI settings using only retained native commands", async () => {
   await act(async () => { render(<App />); });
   await waitFor(() => expect(calls).toContain("get_browser_runtime_status"));
   expect(useJobStore.getState().connectionState).toBe("ready");
@@ -44,6 +43,7 @@ it("starts locally with four visible modules and AI settings without account, ca
     expect(screen.getByRole("button", { name: messages.app.home.moduleActions[id] })).toBeVisible();
   }
   expect(screen.getByText(messages.app.home.aiSettings.title)).toBeVisible();
+  expect(vi.mocked(listen).mock.calls.map(([event]) => event)).toEqual(["sidecar-event"]);
   expect(calls).toEqual(expect.arrayContaining(["initialize_sidecar", "get_database_status", "list_jobs", "get_ai_settings"]));
   expect(calls).not.toEqual(expect.arrayContaining(["get_account_status"]));
   expect(calls.some((method) => /account|catalog|wallet|sign_in|module_config/.test(method))).toBe(false);

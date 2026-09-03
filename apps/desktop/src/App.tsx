@@ -1,20 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import messages from "./i18n/th.json";
 import {
   archiveOldJobs,
   bootstrapBrowserRuntime,
-  checkForAppUpdate,
   copyTemplateFile,
   createBackup,
   getBrowserRuntimeStatus,
   getDatabaseStatus,
   getJobStatus,
-  getUpdaterStatus,
   initializeSidecar,
-  installAppUpdate,
   listJobs,
   listenSidecarEvents,
-  listenUpdaterEvents,
   openBackupArchiveDialog,
   openExcelDialog,
   restoreBackup,
@@ -43,11 +40,9 @@ import { StudentBasicInfoPage } from "./components/StudentBasicInfoPage";
 import { AlertDialog } from "./components/ui/alert-dialog";
 import type { ModuleId } from "./lib/moduleCatalog";
 import type {
-  AvailableUpdate,
   BrowserRuntimeStatus,
   DatabaseStatus,
   JobStatusSnapshot,
-  UpdaterStatus,
 } from "./types/contracts";
 
 function toUserError(error: unknown): string {
@@ -123,10 +118,6 @@ export function App() {
 
   const [minScore, setMinScore] = useState(72);
   const [stopOnReview, setStopOnReview] = useState(true);
-  const [updaterStatus, setUpdaterStatus] = useState<UpdaterStatus | null>(null);
-  const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null);
-  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
-  const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
   const [validatedExcelPath, setValidatedExcelPath] = useState<string | null>(null);
   const [browserRuntimeStatus, setBrowserRuntimeStatus] = useState<BrowserRuntimeStatus | null>(null);
   const [databaseStatus, setDatabaseStatus] = useState<DatabaseStatus | null>(null);
@@ -143,10 +134,6 @@ export function App() {
   const [isDownloadingTemplate, setIsDownloadingTemplate] = useState(false);
   const [isArchivingJobs, setIsArchivingJobs] = useState(false);
   const [supportMessage, setSupportMessage] = useState<string | null>(null);
-  const [updateMessage, setUpdateMessage] = useState<string | null>(null);
-  const [updateProgress, setUpdateProgress] = useState<{ downloaded: number; contentLength: number | null } | null>(
-    null,
-  );
   const [activeModule, setActiveModule] = useState<"home" | ModuleId>("home");
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const mountedRef = useRef(false);
@@ -171,14 +158,6 @@ export function App() {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
   }, [setErrorMessage, setExistingJobs]);
-
-  const handleLoadUpdaterStatus = useCallback(async () => {
-    try {
-      setUpdaterStatus(await getUpdaterStatus());
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }, [setErrorMessage]);
 
   const handleLoadDatabaseStatus = useCallback(async () => {
     try {
@@ -228,10 +207,6 @@ export function App() {
         return;
       }
       setConnectionState("ready");
-      await handleLoadUpdaterStatus();
-      if (!isActive()) {
-        return;
-      }
       await handleLoadDatabaseStatus();
       if (!isActive()) {
         return;
@@ -255,7 +230,6 @@ export function App() {
     handleLoadBrowserRuntime,
     handleLoadDatabaseStatus,
     handleLoadJobs,
-    handleLoadUpdaterStatus,
     setConnectionState,
     setErrorMessage,
   ]);
@@ -312,13 +286,11 @@ export function App() {
         return;
       }
       const diagnostics = buildSupportDiagnostics({
-        appVersion: updaterStatus?.current_version ?? "0.1.0",
+        appVersion: await getVersion().catch(() => "0.1.0"),
         platform: typeof navigator !== "undefined" ? navigator.userAgent : "unknown",
         connectionState,
         databaseStatus,
         browserRuntimeStatus,
-        updaterStatus,
-        availableUpdate,
         currentJob,
         existingJobs,
         sidecarMessageCount: sidecarMessages.length,
@@ -478,7 +450,6 @@ export function App() {
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    let unlistenUpdater: (() => void) | undefined;
 
     async function bootstrap() {
       try {
@@ -500,32 +471,6 @@ export function App() {
           }
           applySidecarEvent(event);
         });
-        unlistenUpdater = await listenUpdaterEvents((event) => {
-          if (disposed) {
-            return;
-          }
-          if (event.type === "started" || event.type === "progress") {
-            setUpdateProgress({
-              downloaded: event.downloaded,
-              contentLength: event.contentLength,
-            });
-            setUpdateMessage("กำลังดาวน์โหลดอัปเดต...");
-            return;
-          }
-          if (event.type === "finished") {
-            setUpdateMessage("ดาวน์โหลดอัปเดตเสร็จแล้ว กำลังติดตั้ง...");
-            return;
-          }
-          if (event.type === "installed") {
-            setIsInstallingUpdate(false);
-            setUpdateMessage("ติดตั้งอัปเดตเสร็จแล้ว กรุณาปิดแล้วเปิดแอปใหม่");
-            return;
-          }
-          if (event.type === "error") {
-            setIsInstallingUpdate(false);
-            setUpdateMessage(event.message);
-          }
-        });
       } catch (error) {
         if (!disposed) {
           const message = toUserError(error);
@@ -541,9 +486,6 @@ export function App() {
       disposed = true;
       if (unlisten) {
         void unlisten();
-      }
-      if (unlistenUpdater) {
-        void unlistenUpdater();
       }
     };
   }, [applySidecarEvent, handleConnect, setConnectionState, setErrorMessage]);
@@ -853,39 +795,6 @@ export function App() {
       upsertExistingJob(status);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function handleCheckForUpdates() {
-    setUpdateMessage(null);
-    setIsCheckingUpdate(true);
-    try {
-      const status = await getUpdaterStatus();
-      setUpdaterStatus(status);
-      if (!status.configured) {
-        setAvailableUpdate(null);
-        setUpdateMessage("ยังไม่ได้ตั้งค่า updater endpoint/public key");
-        return;
-      }
-      const update = await checkForAppUpdate();
-      setAvailableUpdate(update);
-      setUpdateMessage(update ? `พบเวอร์ชันใหม่ ${update.version}` : "ยังไม่มีอัปเดตใหม่");
-    } catch (error) {
-      setUpdateMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setIsCheckingUpdate(false);
-    }
-  }
-
-  async function handleInstallUpdate() {
-    setUpdateMessage(null);
-    setUpdateProgress(null);
-    setIsInstallingUpdate(true);
-    try {
-      await installAppUpdate();
-    } catch (error) {
-      setIsInstallingUpdate(false);
-      setUpdateMessage(error instanceof Error ? error.message : String(error));
     }
   }
 

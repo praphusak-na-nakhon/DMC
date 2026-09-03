@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
-  AvailableUpdate,
   AiConnectionTest,
   AiProviderId,
   AiSettings,
@@ -22,8 +21,6 @@ import type {
   OcrDocumentResponse,
   RestoreBackupResponse,
   SidecarEvent,
-  UpdaterEvent,
-  UpdaterStatus,
   StartJobResponse,
   ExportStudentBasicInfoFormResponse,
   ValidateCurrentStudentsImportFormResponse,
@@ -32,7 +29,6 @@ import type {
 import {
   parseAiConnectionTest,
   parseAiSettings,
-  parseAvailableUpdate,
   parseArchiveJobsResponse,
   parseBackupCreateResponse,
   parseBrowserRuntimeStatus,
@@ -51,8 +47,6 @@ import {
   parseResumeExistingJobResponse,
   parseSidecarEvent,
   parseStartJobResponse,
-  parseUpdaterEvent,
-  parseUpdaterStatus,
   parseValidateCurrentStudentsImportFormResponse,
   parseValidateExcelResponse,
 } from "../types/contracts";
@@ -189,20 +183,6 @@ export async function writeTextFile(path: string, contents: string): Promise<voi
 
 export async function revealPath(path: string): Promise<void> {
   await desktopInvoke("reveal_path", { path });
-}
-
-export async function getUpdaterStatus(): Promise<UpdaterStatus> {
-  const result = await desktopInvoke<unknown>("get_updater_status");
-  return parseUpdaterStatus(result);
-}
-
-export async function checkForAppUpdate(): Promise<AvailableUpdate | null> {
-  const result = await desktopInvoke<unknown>("check_for_app_update");
-  return parseAvailableUpdate(result);
-}
-
-export async function installAppUpdate(): Promise<void> {
-  await desktopInvoke("install_app_update");
 }
 
 export async function validateExcel(
@@ -481,13 +461,5 @@ export async function listenSidecarEvents(
         message: error instanceof Error ? error.message : String(error),
       });
     }
-  });
-}
-
-export async function listenUpdaterEvents(
-  callback: (event: UpdaterEvent) => void,
-): Promise<UnlistenFn> {
-  return listen<unknown>("updater-event", (event) => {
-    callback(parseUpdaterEvent(event.payload));
   });
 }

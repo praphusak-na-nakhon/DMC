@@ -1,6 +1,0 @@
-{
-  "environment": "development",
-  "cloud_base_url": "http://127.0.0.1:8000",
-  "updater_endpoint": "",
-  "updater_public_key": ""
-}

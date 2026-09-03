@@ -1,10 +1,8 @@
 import type { CSSProperties } from "react";
 import type {
-  AvailableUpdate,
   BrowserRuntimeStatus,
   DatabaseStatus,
   JobStatusSnapshot,
-  UpdaterStatus,
 } from "../types/contracts";
 
 export function formatSummary(template: string, accepted: number, total: number): string {
@@ -155,8 +153,6 @@ type DiagnosticsInput = {
   connectionState: string;
   databaseStatus: DatabaseStatus | null;
   browserRuntimeStatus: BrowserRuntimeStatus | null;
-  updaterStatus: UpdaterStatus | null;
-  availableUpdate: AvailableUpdate | null;
   currentJob: JobStatusSnapshot | null;
   existingJobs: JobStatusSnapshot[];
   sidecarMessageCount: number;
@@ -204,8 +200,6 @@ export function buildSupportDiagnostics(input: DiagnosticsInput): Record<string,
     connection_state: input.connectionState,
     database_status: input.databaseStatus,
     browser_runtime_status: input.browserRuntimeStatus,
-    updater_status: input.updaterStatus,
-    available_update: input.availableUpdate,
     current_job: sanitizeJobForDiagnostics(input.currentJob),
     existing_jobs: input.existingJobs.map(sanitizeJobForDiagnostics),
     sidecar_message_count: input.sidecarMessageCount,
