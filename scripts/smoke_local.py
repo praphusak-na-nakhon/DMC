@@ -1,4 +1,4 @@
-"""Disposable source-sidecar smoke. Requires Chromium; never auto-installs it.
+"""Disposable Windows source-sidecar smoke. Requires Chromium; never installs it.
 
 Portal traffic is localhost-only. Browser status may probe Playwright's CDN.
 Builds and typechecks belong to ci:verify, not this smoke.
@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 from openpyxl import Workbook
 from dmc_sidecar.module_config import GraduationConfig
 from smoke_portal import synthetic_portal
+from smoke_process import WindowsProcessJob
 
 ROOT = Path(__file__).resolve().parents[1]
 JOB_ID = "smoke-synthetic-graduation"
@@ -79,11 +80,8 @@ class SidecarProcess:
         self.events: list[dict[str, Any]] = []
         self.stderr_lines: deque[str] = deque(maxlen=30)
         self.lines: queue.Queue[str | None] = queue.Queue()
-        self.process = subprocess.Popen(
-            command, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, encoding="utf-8", errors="replace",
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
+        self.ownership = WindowsProcessJob(command, env=env, cwd=cwd)
+        self.process = self.ownership.process
         self.readers = [threading.Thread(target=self._read_stdout, daemon=True),
                         threading.Thread(target=self._read_stderr, daemon=True)]
         for reader in self.readers:
@@ -114,19 +112,23 @@ class SidecarProcess:
         try:
             self.process.wait(timeout=3)
         except subprocess.TimeoutExpired:
-            # This owned PID's tree only, never a global image-name sweep.
-            if os.name == "nt" and self.process.poll() is None:
-                subprocess.run(["taskkill", "/PID", str(self.process.pid), "/T", "/F"],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                               timeout=10, check=False, creationflags=subprocess.CREATE_NO_WINDOW)
-            elif self.process.poll() is None:
-                self.process.kill()
-            self.process.wait(timeout=10)
-        for reader in self.readers:
-            reader.join(timeout=3)
-        for stream in (self.process.stdout, self.process.stderr):
+            pass
+        finally:
+            # The Job Object still owns descendants if the direct parent exited.
+            self.ownership.close()
+        self.process.wait(timeout=5)
+        stuck = False
+        deadline = time.monotonic() + 3
+        for reader, stream in zip(self.readers, (self.process.stdout, self.process.stderr)):
+            reader.join(timeout=max(0, deadline - time.monotonic()))
             assert stream is not None
-            stream.close()
+            if reader.is_alive():
+                # TextIOWrapper.close() can wait forever on a reader's lock.
+                # Do not acquire it after a timed join; fail within the bound.
+                stuck = True
+            else:
+                stream.close()
+        require(not stuck, "Owned pipe readers did not stop within the cleanup deadline")
 
     def rpc(self, method: str, params: dict[str, Any] | None = None, *, timeout: float = 45) -> Any:
         request_id = f"smoke-{time.monotonic_ns()}"

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -60,6 +63,97 @@ def test_rpc_timeout_closes_only_owned_process_and_readers(tmp_path):
             client.rpc("never-replies", timeout=0.1)
     assert client.process.poll() is not None
     assert all(not reader.is_alive() for reader in client.readers)
+
+
+def test_exited_parent_live_descendant_does_not_block_cleanup(tmp_path):
+    # The descendant inherits both pipes and self-exits, so RED cannot leak it.
+    image = ctypes.create_unicode_buffer(32768)
+    assert ctypes.windll.kernel32.GetModuleFileNameW(None, image, len(image))
+    code = f"import subprocess; subprocess.Popen([{image.value!r},'-c','import time; time.sleep(14)'])"
+    client = smoke.SidecarProcess([sys.executable, "-u", "-c", code], env=os.environ.copy(), cwd=tmp_path)
+    client.process.wait(timeout=5)
+    assert client.process.poll() is not None
+    assert all(reader.is_alive() for reader in client.readers)
+    errors = []
+
+    def close():
+        try:
+            client.close()
+        except Exception as exc:
+            errors.append(exc)
+
+    closer = threading.Thread(target=close, daemon=True)
+    started = time.monotonic()
+    closer.start()
+    closer.join(timeout=8)
+    finished_in_time = not closer.is_alive()
+    # Let the finite RED probe retire naturally instead of killing a stale PID.
+    closer.join(timeout=16)
+    assert finished_in_time, f"cleanup blocked for {time.monotonic() - started:.1f}s after parent exited"
+    assert not errors
+    assert all(not reader.is_alive() for reader in client.readers)
+    assert all(stream.closed for stream in (client.process.stdin, client.process.stdout, client.process.stderr))
+
+
+def test_store_alias_descendant_fails_boundedly_if_broker_escapes_job(tmp_path):
+    # Store aliases may launch via a broker, not as an OS descendant. Never
+    # chase/kill these by PID. A finite child allows observing bounded failure.
+    code = "import subprocess,sys; subprocess.Popen([sys.executable,'-u','-c','import os,time; print(os.getpid(),flush=True); time.sleep(7)'])"
+    client = smoke.SidecarProcess([sys.executable, "-u", "-c", code], env=os.environ.copy(), cwd=tmp_path)
+    child_pid = int(client.lines.get(timeout=5))
+    client.process.wait(timeout=5)
+    api = client.ownership.api
+    api.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    api.OpenProcess.restype = ctypes.c_void_p
+    api.IsProcessInJob.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
+    api.IsProcessInJob.restype = ctypes.c_int
+    # Query/synchronize rights only; this test never terminates by process ID.
+    handle = api.OpenProcess(0x1000 | 0x100000, False, child_pid)
+    assert handle
+    in_job = ctypes.c_int()
+    assert api.IsProcessInJob(handle, client.ownership.handle, ctypes.byref(in_job))
+    api.CloseHandle(handle)
+    errors = []
+
+    def close():
+        try:
+            client.close()
+        except Exception as exc:
+            errors.append(exc)
+
+    closer = threading.Thread(target=close, daemon=True)
+    closer.start()
+    closer.join(timeout=5)
+    finished_in_time = not closer.is_alive()
+    # Any unrelated finite broker process retires naturally; then reap readers.
+    for reader in client.readers:
+        reader.join(timeout=10)
+    closer.join(timeout=2)
+    client.close()
+    assert finished_in_time, "Alias cleanup hung instead of succeeding or failing within its bound"
+    if in_job.value:
+        assert not errors  # Ordinary Python has no broker escape to exercise.
+    else:
+        assert len(errors) == 1 and isinstance(errors[0], smoke.SmokeFailure)
+        assert "pipe readers did not stop" in str(errors[0])
+    assert all(not reader.is_alive() for reader in client.readers)
+    assert all(stream.closed for stream in (client.process.stdin, client.process.stdout, client.process.stderr))
+
+
+def test_failed_job_assignment_never_launches_command_and_reaps_gate(monkeypatch, tmp_path):
+    processes = []
+
+    def fail_assignment(self, process):
+        processes.append(process)
+        raise OSError("injected assignment failure")
+
+    monkeypatch.setattr(smoke.WindowsProcessJob, "_assign", fail_assignment)
+    code = "from pathlib import Path; Path('must-not-run').touch()"
+    with pytest.raises(OSError, match="injected assignment failure"):
+        smoke.SidecarProcess([sys.executable, "-c", code], env=os.environ.copy(), cwd=tmp_path)
+    assert not (tmp_path / "must-not-run").exists()
+    assert len(processes) == 1 and processes[0].poll() is not None
+    assert all(stream.closed for stream in (processes[0].stdin, processes[0].stdout, processes[0].stderr))
 
 
 def test_real_localhost_dry_run_persists_reports_without_saving():
