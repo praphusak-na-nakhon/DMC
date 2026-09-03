@@ -72,6 +72,12 @@ function readArray(record: UnknownRecord, key: string, context: string): unknown
   return value;
 }
 
+function assertExactKeys(record: UnknownRecord, keys: readonly string[], context: string): void {
+  if (Object.keys(record).some((key) => !keys.includes(key))) {
+    throw new Error(`${context} contains unexpected fields`);
+  }
+}
+
 export type ValidationWarning = {
   code: string;
   row_index: number;
@@ -451,6 +457,48 @@ export type GeminiOcrDmcFormResponse = {
   usage_metadata: GeminiOcrUsageMetadata | null;
   batch_job_name: string | null;
   batch_state: string | null;
+  file_sha256: string;
+  created_at: string;
+};
+
+export type AiProviderId = "gemini";
+
+export type AiSettings = {
+  provider: AiProviderId;
+  configured: boolean;
+};
+
+export type AiConnectionTest = {
+  provider: AiProviderId;
+  ok: boolean;
+  tested_at: string;
+  message: string;
+};
+
+export type OcrDocumentInput = {
+  provider: AiProviderId;
+  sourcePath: string;
+  model: "gemini-3.5-flash" | "gemini-3-pro-preview";
+  processingMode: "standard" | "batch";
+  forceRefresh: boolean;
+};
+
+export type OcrDocumentResponse = {
+  module: "formConverter";
+  provider: AiProviderId;
+  model: OcrDocumentInput["model"];
+  processing_mode: OcrDocumentInput["processingMode"];
+  source_path: string;
+  markdown_path: string;
+  structured_json_path: string | null;
+  output_format: "structured_json";
+  cached: boolean;
+  pages_processed: number;
+  pages_estimated: number;
+  average_confidence: number | null;
+  usage_metadata: Record<string, unknown> | null;
+  provider_job_id: string | null;
+  provider_job_state: string | null;
   file_sha256: string;
   created_at: string;
 };
@@ -1271,6 +1319,132 @@ export function parseExportDmcFormJsonResponse(value: unknown): ExportDmcFormJso
     warnings: readArray(record, "warnings", "export_dmc_form_json_response").map(parseCurrentStudentsWarning),
     conflicts: readArray(record, "conflicts", "export_dmc_form_json_response").map(parseCurrentStudentsFieldConflict),
     records: readArray(record, "records", "export_dmc_form_json_response").map(parseDmcFormJsonRecord),
+  };
+}
+
+function parseAiProviderId(record: UnknownRecord, key: string, context: string): AiProviderId {
+  const provider = readString(record, key, context);
+  if (provider !== "gemini") {
+    throw new Error(`${context}.${key} must be 'gemini'`);
+  }
+  return provider;
+}
+
+export function parseAiSettings(value: unknown): AiSettings {
+  const context = "ai_settings";
+  const record = asRecord(value, context);
+  assertExactKeys(record, ["provider", "configured"], context);
+  return {
+    provider: parseAiProviderId(record, "provider", context),
+    configured: readBoolean(record, "configured", context),
+  };
+}
+
+function readNullableString(record: UnknownRecord, key: string, context: string): string | null {
+  const value = record[key];
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`${context}.${key} must be a string or null`);
+  }
+  return value;
+}
+
+function readNullableNumber(record: UnknownRecord, key: string, context: string): number | null {
+  const value = record[key];
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    throw new Error(`${context}.${key} must be a number or null`);
+  }
+  return value;
+}
+
+function readNullableObject(record: UnknownRecord, key: string, context: string): Record<string, unknown> | null {
+  const value = record[key];
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${context}.${key} must be an object or null`);
+  }
+  return value as Record<string, unknown>;
+}
+
+export function parseAiConnectionTest(value: unknown): AiConnectionTest {
+  const context = "ai_connection_test";
+  const record = asRecord(value, context);
+  assertExactKeys(record, ["provider", "ok", "tested_at", "message"], context);
+  return {
+    provider: parseAiProviderId(record, "provider", context),
+    ok: readBoolean(record, "ok", context),
+    tested_at: readString(record, "tested_at", context),
+    message: readString(record, "message", context),
+  };
+}
+
+export function parseOcrDocumentResponse(value: unknown): OcrDocumentResponse {
+  const context = "ocr_document_response";
+  const record = asRecord(value, context);
+  assertExactKeys(
+    record,
+    [
+      "module",
+      "provider",
+      "model",
+      "processing_mode",
+      "source_path",
+      "markdown_path",
+      "structured_json_path",
+      "output_format",
+      "cached",
+      "pages_processed",
+      "pages_estimated",
+      "average_confidence",
+      "usage_metadata",
+      "provider_job_id",
+      "provider_job_state",
+      "file_sha256",
+      "created_at",
+    ],
+    context,
+  );
+  const module = readString(record, "module", context);
+  if (module !== "formConverter") {
+    throw new Error(`${context}.module must be 'formConverter'`);
+  }
+  const model = readString(record, "model", context);
+  if (model !== "gemini-3.5-flash" && model !== "gemini-3-pro-preview") {
+    throw new Error(`${context}.model is unsupported`);
+  }
+  const processingMode = readString(record, "processing_mode", context);
+  if (processingMode !== "standard" && processingMode !== "batch") {
+    throw new Error(`${context}.processing_mode is unsupported`);
+  }
+  const outputFormat = readString(record, "output_format", context);
+  if (outputFormat !== "structured_json") {
+    throw new Error(`${context}.output_format must be 'structured_json'`);
+  }
+  return {
+    module,
+    provider: parseAiProviderId(record, "provider", context),
+    model,
+    processing_mode: processingMode,
+    source_path: readString(record, "source_path", context),
+    markdown_path: readString(record, "markdown_path", context),
+    structured_json_path: readNullableString(record, "structured_json_path", context),
+    output_format: outputFormat,
+    cached: readBoolean(record, "cached", context),
+    pages_processed: readNumber(record, "pages_processed", context),
+    pages_estimated: readNumber(record, "pages_estimated", context),
+    average_confidence: readNullableNumber(record, "average_confidence", context),
+    usage_metadata: readNullableObject(record, "usage_metadata", context),
+    provider_job_id: readNullableString(record, "provider_job_id", context),
+    provider_job_state: readNullableString(record, "provider_job_state", context),
+    file_sha256: readString(record, "file_sha256", context),
+    created_at: readString(record, "created_at", context),
   };
 }
 

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { parseJobStatusSnapshot, parseGeminiOcrDmcFormResponse } from "./contracts";
+import {
+  parseAiConnectionTest,
+  parseAiSettings,
+  parseGeminiOcrDmcFormResponse,
+  parseJobStatusSnapshot,
+  parseOcrDocumentResponse,
+} from "./contracts";
 
 const baseJob = {
   job_id: "job-empty-summary",
@@ -99,6 +105,70 @@ describe("job status contracts", () => {
     expect(parsed.summary_report_path).toContain("job-completion-summary.xlsx");
     expect(parsed.completion_summary?.succeeded).toBe(1);
     expect(parsed.completion_summary?.failure_items[0].full_name).toBe("Student Two");
+  });
+});
+
+describe("AI contracts", () => {
+  it("parses AI settings without accepting a secret field", () => {
+    expect(parseAiSettings({ provider: "gemini", configured: true })).toEqual({
+      provider: "gemini",
+      configured: true,
+    });
+
+    let error: unknown;
+    try {
+      parseAiSettings({ provider: "gemini", configured: true, api_key: "secret-value" });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).not.toContain("secret-value");
+  });
+
+  it("parses provider-neutral connection and OCR response metadata", () => {
+    expect(
+      parseAiConnectionTest({
+        provider: "gemini",
+        ok: true,
+        tested_at: "2026-09-04T00:00:00+00:00",
+        message: "Connection succeeded.",
+      }),
+    ).toEqual({
+      provider: "gemini",
+      ok: true,
+      tested_at: "2026-09-04T00:00:00+00:00",
+      message: "Connection succeeded.",
+    });
+
+    expect(
+      parseOcrDocumentResponse({
+        module: "formConverter",
+        provider: "gemini",
+        model: "gemini-3.5-flash",
+        processing_mode: "batch",
+        source_path: "C:\\dmc\\source.pdf",
+        markdown_path: "C:\\dmc\\output.md",
+        structured_json_path: null,
+        output_format: "structured_json",
+        cached: true,
+        pages_processed: 2,
+        pages_estimated: 3,
+        average_confidence: null,
+        usage_metadata: { total_token_count: 2000 },
+        provider_job_id: "batches/test",
+        provider_job_state: "JOB_STATE_SUCCEEDED",
+        file_sha256: "abc123",
+        created_at: "2026-09-04T00:00:00+00:00",
+      }),
+    ).toMatchObject({
+      provider: "gemini",
+      processing_mode: "batch",
+      pages_processed: 2,
+      pages_estimated: 3,
+      usage_metadata: { total_token_count: 2000 },
+      provider_job_id: "batches/test",
+    });
   });
 });
 

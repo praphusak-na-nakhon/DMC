@@ -3,6 +3,9 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AvailableUpdate,
   AccountStatus,
+  AiConnectionTest,
+  AiProviderId,
+  AiSettings,
   GeminiOcrDmcFormResponse,
   GeminiOcrModel,
   GeminiOcrProcessingMode,
@@ -21,6 +24,8 @@ import type {
   ListJobsResponse,
   ModuleCatalogResponse,
   ModuleConfigStatus,
+  OcrDocumentInput,
+  OcrDocumentResponse,
   RestoreBackupResponse,
   SidecarEvent,
   UpdaterEvent,
@@ -32,6 +37,8 @@ import type {
 } from "../types/contracts";
 import {
   parseGeminiOcrDmcFormResponse,
+  parseAiConnectionTest,
+  parseAiSettings,
   parseAvailableUpdate,
   parseAccountStatus,
   parseArchiveJobsResponse,
@@ -49,6 +56,7 @@ import {
   parseListJobsResponse,
   parseModuleCatalogResponse,
   parseModuleConfigStatus,
+  parseOcrDocumentResponse,
   parseRestoreBackupResponse,
   parseResumeExistingJobResponse,
   parseSidecarEvent,
@@ -316,6 +324,40 @@ export async function exportDmcFormJson(input: {
     excluded_record_ids: input.excludedRecordIds ?? [],
   });
   return parseExportDmcFormJsonResponse(result);
+}
+
+export async function getAiSettings(provider: AiProviderId): Promise<AiSettings> {
+  const result = await sidecarRequest<unknown>("get_ai_settings", { provider });
+  return parseAiSettings(result);
+}
+
+export async function saveAiApiKey(provider: AiProviderId, apiKey: string): Promise<AiSettings> {
+  const result = await sidecarRequest<unknown>("save_ai_api_key", {
+    provider,
+    api_key: apiKey,
+  });
+  return parseAiSettings(result);
+}
+
+export async function testAiConnection(provider: AiProviderId): Promise<AiConnectionTest> {
+  const result = await sidecarRequest<unknown>("test_ai_connection", { provider });
+  return parseAiConnectionTest(result);
+}
+
+export async function deleteAiApiKey(provider: AiProviderId): Promise<AiSettings> {
+  const result = await sidecarRequest<unknown>("delete_ai_api_key", { provider });
+  return parseAiSettings(result);
+}
+
+export async function ocrDocument(input: OcrDocumentInput): Promise<OcrDocumentResponse> {
+  const result = await sidecarRequest<unknown>("ocr_document", {
+    provider: input.provider,
+    source_path: input.sourcePath,
+    model: input.model,
+    processing_mode: input.processingMode,
+    force_refresh: input.forceRefresh,
+  });
+  return parseOcrDocumentResponse(result);
 }
 
 export async function ocrDmcFormWithGemini(input: {
