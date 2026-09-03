@@ -14,6 +14,7 @@ dependencies = [
   "rapidfuzz>=3.9,<4",
   "playwright>=1.52,<2",
   "cryptography>=46,<47",
+  "keyring>=25.6,<26",
   "google-genai>=1,<2",
   "pypdf>=5,<7"
 ]
