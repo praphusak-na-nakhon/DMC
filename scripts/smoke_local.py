@@ -1,327 +1,250 @@
+"""Disposable source-sidecar smoke. Requires Chromium; never auto-installs it.
+
+Portal traffic is localhost-only. Browser status may probe Playwright's CDN.
+Builds and typechecks belong to ci:verify, not this smoke.
+"""
 from __future__ import annotations
 
-import argparse
 import json
 import os
-import shutil
+import queue
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+from collections import deque
+from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
+from urllib.parse import urlparse
 
+from openpyxl import Workbook
+from dmc_sidecar.module_config import GraduationConfig
+from smoke_portal import synthetic_portal
 
 ROOT = Path(__file__).resolve().parents[1]
-DESKTOP_TAURI = ROOT / "apps" / "desktop" / "src-tauri"
-BUNDLED_SIDECAR = DESKTOP_TAURI / "bundled-sidecar"
-DEBUG_SIDECAR = DESKTOP_TAURI / "target" / "debug" / "bundled-sidecar"
-SIDECAR_EXE = DEBUG_SIDECAR / "dmc-sidecar.exe"
-SAMPLE_EXCEL = ROOT / "m3-obec-study-form.xlsx"
-PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
+JOB_ID = "smoke-synthetic-graduation"
 
 
 class SmokeFailure(RuntimeError):
     pass
 
 
-def info(message: str) -> None:
-    print(f"[smoke] {message}", flush=True)
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise SmokeFailure(message)
 
 
-def run_command(command: list[str], *, timeout: int = 300, retries: int = 1) -> None:
-    resolved_command = command.copy()
-    resolved_executable = shutil.which(resolved_command[0])
-    if resolved_executable is not None:
-        resolved_command[0] = resolved_executable
-    completed: subprocess.CompletedProcess[str] | None = None
-    for attempt in range(1, retries + 1):
-        info(f"running: {' '.join(command)}" + (f" (attempt {attempt}/{retries})" if retries > 1 else ""))
-        completed = subprocess.run(
-            resolved_command,
-            cwd=ROOT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            capture_output=True,
-            timeout=timeout,
-        )
-        combined_output = f"{completed.stdout}\n{completed.stderr}".lower()
-        if completed.returncode == 0:
-            break
-        if attempt < retries and "being used by another process" in combined_output:
-            stop_desktop_processes()
-            time.sleep(2)
-            continue
-        break
-    if completed is None:
-        raise SmokeFailure(f"command did not run: {' '.join(command)}")
-    if completed.returncode != 0:
-        raise SmokeFailure(
-            "\n".join(
-                [
-                    f"command failed with exit code {completed.returncode}: {' '.join(command)}",
-                    "--- stdout ---",
-                    completed.stdout,
-                    "--- stderr ---",
-                    completed.stderr,
-                ]
-            )
-        )
-    if completed.stdout.strip():
-        print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
-    if completed.stderr.strip():
-        print(completed.stderr, end="" if completed.stderr.endswith("\n") else "\n")
-
-
-def stop_desktop_processes() -> None:
-    for image_name in ("dmc-desktop.exe", "dmc-sidecar.exe"):
-        subprocess.run(
-            ["taskkill", "/F", "/IM", image_name],
-            cwd=ROOT,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    deadline = time.monotonic() + 15
-    while time.monotonic() < deadline:
-        running = False
-        for image_name in ("dmc-desktop.exe", "dmc-sidecar.exe"):
-            completed = subprocess.run(
-                ["tasklist", "/FI", f"IMAGENAME eq {image_name}"],
-                cwd=ROOT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                capture_output=True,
-                check=False,
-            )
-            running = running or image_name.lower() in completed.stdout.lower()
-        if not running:
-            return
-        time.sleep(0.5)
-
-
-def sync_debug_sidecar() -> None:
-    if not BUNDLED_SIDECAR.exists():
-        raise SmokeFailure(f"bundled sidecar directory does not exist: {BUNDLED_SIDECAR}")
-    DEBUG_SIDECAR.mkdir(parents=True, exist_ok=True)
-    for source in BUNDLED_SIDECAR.iterdir():
-        target = DEBUG_SIDECAR / source.name
-        for attempt in range(1, 8):
-            try:
-                if source.is_dir():
-                    shutil.copytree(source, target, dirs_exist_ok=True)
-                else:
-                    shutil.copy2(source, target)
-                break
-            except PermissionError:
-                if attempt == 7:
-                    raise
-                stop_desktop_processes()
-                time.sleep(1)
-    if not SIDECAR_EXE.exists():
-        raise SmokeFailure(f"debug sidecar executable does not exist after sync: {SIDECAR_EXE}")
-
-
-def app_data_sidecar_dir() -> Path:
-    appdata = os.environ.get("APPDATA")
-    if not appdata:
-        return ROOT / ".dmc-assistant-data"
-    return Path(appdata) / "info.bopp.dmcassistant" / "sidecar"
+@contextmanager
+def smoke_environment(base_url: str) -> Iterator[tuple[Path, dict[str, str], Path]]:
+    parsed = urlparse(base_url)
+    require(parsed.scheme == "http" and parsed.hostname == "127.0.0.1" and bool(parsed.port)
+            and not any((parsed.username, parsed.password, parsed.path, parsed.query, parsed.fragment)),
+            "Smoke requires an explicit loopback portal origin")
+    # Validate real shipped bytes before changing only URLs in a temporary copy.
+    payload = GraduationConfig.model_validate_json(
+        (ROOT / "packages/module-configs/graduation/v1.json").read_bytes()
+    ).model_dump()
+    with tempfile.TemporaryDirectory(prefix="dmc-local-smoke-") as directory:
+        root = Path(directory).resolve()
+        resources = root / "resources"
+        config_path = resources / "module-configs/graduation/v1.json"
+        config_path.parent.mkdir(parents=True)
+        payload["login_url"] = f"{base_url}/obec68/auth/login"
+        payload["target_url_template"] = f"{base_url}/obec68/studentpendingupl/add?levelDtlCode={{level_code}}&action=search"
+        config_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        excel = root / "synthetic.xlsx"
+        workbook = Workbook()
+        sheet = workbook.active
+        assert sheet is not None
+        sheet.append(["order", "level", "room", "student_no", "first_name", "last_name", "status"])
+        for order, first, last in [(1, "สมชาย", "ใจดี"), (2, "สมหญิง", "ดีใจ")]:
+            sheet.append([order, "ม.6", 1, str(1000 + order), first, last, "(ม.6) ไม่ศึกษาต่อ รับจ้างทั่วไป"])
+        workbook.save(excel)
+        workbook.close()
+        env = os.environ.copy()
+        env.update({"DMC_DATA_DIR": str(root / "data"), "DMC_BUNDLED_RESOURCES_DIR": str(resources),
+                    "DMC_REPO_ROOT": str(ROOT), "PYTHONPATH": str(ROOT / "apps/sidecar"), "PYTHONIOENCODING": "utf-8"})
+        if env.get("PLAYWRIGHT_BROWSERS_PATH"):
+            env["PLAYWRIGHT_BROWSERS_PATH"] = str(Path(env["PLAYWRIGHT_BROWSERS_PATH"]).resolve())
+        yield root, env, excel
 
 
 class SidecarProcess:
-    def __init__(self) -> None:
-        self.stderr_lines: list[str] = []
-        data_dir = app_data_sidecar_dir()
-        env = os.environ.copy()
-        env["DMC_DATA_DIR"] = str(data_dir)
-        env["PLAYWRIGHT_BROWSERS_PATH"] = str(data_dir / "ms-playwright")
-        env["DMC_BUNDLED_RESOURCES_DIR"] = str(DEBUG_SIDECAR / "sidecar-resources")
-        env["DMC_CLOUD_BASE_URL"] = "http://127.0.0.1:8000"
-        env["DMC_ALLOW_UNLICENSED_JOBS"] = "1"
-        self.process = subprocess.Popen(
-            [str(SIDECAR_EXE)],
-            cwd=DEBUG_SIDECAR,
-            env=env,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        threading.Thread(target=self._drain_stderr, daemon=True).start()
+    """One stdout reader, bounded requests, and ownership-scoped cleanup."""
 
-    def _drain_stderr(self) -> None:
+    def __init__(self, command: list[str], *, env: dict[str, str], cwd: Path) -> None:
+        self.events: list[dict[str, Any]] = []
+        self.stderr_lines: deque[str] = deque(maxlen=30)
+        self.lines: queue.Queue[str | None] = queue.Queue()
+        self.process = subprocess.Popen(
+            command, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding="utf-8", errors="replace",
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        self.readers = [threading.Thread(target=self._read_stdout, daemon=True),
+                        threading.Thread(target=self._read_stderr, daemon=True)]
+        for reader in self.readers:
+            reader.start()
+
+    def __enter__(self) -> SidecarProcess:
+        return self
+
+    def __exit__(self, *_args: Any) -> None:
+        self.close()
+
+    def _read_stdout(self) -> None:
+        assert self.process.stdout is not None
+        try:
+            for line in self.process.stdout:
+                self.lines.put(line)
+        finally:
+            self.lines.put(None)
+
+    def _read_stderr(self) -> None:
         assert self.process.stderr is not None
-        for raw in self.process.stderr:
-            self.stderr_lines.append(raw.decode("utf-8", "replace").rstrip())
+        for line in self.process.stderr:
+            self.stderr_lines.append(line.rstrip())
 
     def close(self) -> None:
-        if self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-
-    def rpc(self, method: str, params: dict[str, Any] | None = None, *, timeout: int = 45) -> Any:
-        request = {
-            "jsonrpc": "2.0",
-            "id": f"smoke-{method}-{time.monotonic_ns()}",
-            "method": method,
-            "params": params or {},
-        }
         assert self.process.stdin is not None
-        assert self.process.stdout is not None
-        self.process.stdin.write((json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8"))
+        self.process.stdin.close()
+        try:
+            self.process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            # This owned PID's tree only, never a global image-name sweep.
+            if os.name == "nt" and self.process.poll() is None:
+                subprocess.run(["taskkill", "/PID", str(self.process.pid), "/T", "/F"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               timeout=10, check=False, creationflags=subprocess.CREATE_NO_WINDOW)
+            elif self.process.poll() is None:
+                self.process.kill()
+            self.process.wait(timeout=10)
+        for reader in self.readers:
+            reader.join(timeout=3)
+        for stream in (self.process.stdout, self.process.stderr):
+            assert stream is not None
+            stream.close()
+
+    def rpc(self, method: str, params: dict[str, Any] | None = None, *, timeout: float = 45) -> Any:
+        request_id = f"smoke-{time.monotonic_ns()}"
+        request = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}}
+        assert self.process.stdin is not None
+        self.process.stdin.write(json.dumps(request) + "\n")
         self.process.stdin.flush()
-
-        line_holder: list[bytes] = []
-
-        def read_line() -> None:
-            assert self.process.stdout is not None
-            line_holder.append(self.process.stdout.readline())
-
-        reader = threading.Thread(target=read_line, daemon=True)
-        reader.start()
-        reader.join(timeout)
-
-        if not line_holder:
-            raise SmokeFailure(self._diagnostic(f"timed out waiting for sidecar response to {method}"))
-        raw_line = line_holder[0]
-        if raw_line == b"":
-            raise SmokeFailure(self._diagnostic(f"sidecar stdout closed while waiting for {method}"))
-        try:
-            text = raw_line.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise SmokeFailure(self._diagnostic(f"sidecar stdout was not valid UTF-8 for {method}: {exc}")) from exc
-        if any(byte >= 128 for byte in raw_line):
-            raise SmokeFailure(self._diagnostic(f"sidecar stdout for {method} contained non-ASCII protocol bytes"))
-        try:
-            payload = json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise SmokeFailure(self._diagnostic(f"sidecar stdout was not JSON for {method}: {text[:500]}")) from exc
-        if "error" in payload:
-            raise SmokeFailure(self._diagnostic(f"sidecar RPC {method} failed: {json.dumps(payload['error'], ensure_ascii=False)}"))
-        if payload.get("id") != request["id"]:
-            raise SmokeFailure(self._diagnostic(f"sidecar RPC {method} returned unexpected id: {payload.get('id')}"))
-        return payload.get("result")
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                line = self.lines.get(timeout=max(0, deadline - time.monotonic()))
+            except queue.Empty as exc:
+                raise SmokeFailure(self._diagnostic(f"timed out waiting for {method}")) from exc
+            if line is None:
+                raise SmokeFailure(self._diagnostic(f"stdout closed waiting for {method}"))
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise SmokeFailure(self._diagnostic(f"non-JSON stdout: {line[:200]}")) from exc
+            require(isinstance(payload, dict), "Invalid JSON-RPC message")
+            if payload.get("method") == "event" and "id" not in payload:
+                self.events.append(payload["params"])
+            elif payload.get("id") == request_id:
+                if "error" in payload:
+                    raise SmokeFailure(self._diagnostic(f"{method}: {payload['error']}"))
+                return payload.get("result")
+            if time.monotonic() >= deadline:
+                raise SmokeFailure(self._diagnostic(f"timed out waiting for {method}"))
 
     def _diagnostic(self, message: str) -> str:
-        poll = self.process.poll()
-        tail = "\n".join(self.stderr_lines[-30:])
-        return "\n".join(
-            [
-                message,
-                f"process_status={poll if poll is not None else 'running'}",
-                "--- sidecar stderr tail ---",
-                tail or "(empty)",
-            ]
-        )
+        return f"{message}\nprocess_status={self.process.poll()}\n" + "\n".join(self.stderr_lines)
 
 
-def assert_sidecar_smoke() -> None:
-    if not SAMPLE_EXCEL.exists():
-        raise SmokeFailure(f"sample Excel file not found: {SAMPLE_EXCEL}")
-    sidecar = SidecarProcess()
-    try:
-        ping = sidecar.rpc("ping", timeout=60)
-        if ping.get("value") != "pong":
-            raise SmokeFailure(f"unexpected ping payload: {ping}")
+def run_smoke() -> dict[str, Any]:
+    with synthetic_portal() as (base_url, portal), smoke_environment(base_url) as (root, env, excel):
+        with SidecarProcess([sys.executable, "-u", "-m", "dmc_sidecar"], env=env, cwd=root) as sidecar:
+            require(sidecar.rpc("ping").get("value") == "pong", "Ping did not return pong")
+            database = sidecar.rpc("get_database_status")
+            require(database["schema_generation"] == 2, f"Wrong database generation: {database}")
+            require(set(database["tables"]) == {"job", "job_record", "schema_metadata"}, "Unexpected local tables")
+            db_path = Path(database["path"]).resolve()
+            require(db_path == root / "data/desktop.sqlite3", "Database escaped temporary data directory")
+            require("checkpoint_json" in database["job_columns"], "Missing local checkpoint persistence")
+            runtime = sidecar.rpc("get_browser_runtime_status", timeout=60)
+            require(runtime.get("installed") and runtime.get("state") == "ready",
+                    "Chromium runtime missing/not ready. Install via sidecar Python's `-m playwright install chromium` "
+                    "and set PLAYWRIGHT_BROWSERS_PATH. No automatic download attempted. " + str(runtime))
+            validation = sidecar.rpc("validate_excel", {"module": "graduation", "path": str(excel)})
+            require(validation["rows_total"] == validation["rows_accepted"] == 2, f"Unexpected validation: {validation}")
+            require(validation["detected_level"] == "ม.6" and not validation["warnings"], "Invalid synthetic Graduation input")
+            require([row["first_name"] for row in validation["preview"]] == ["สมชาย", "สมหญิง"], "Thai preview mismatch")
+            started = False
+            try:
+                accepted = sidecar.rpc("start_job", {"job_id": JOB_ID, "module": "graduation", "excel_path": str(excel),
+                                      "options": {"dry_run": True, "headless": True, "stop_on_review": False}}, timeout=60)
+                started = True
+                require(accepted.get("accepted") is True, f"Job not accepted: {accepted}")
+                deadline = time.monotonic() + 90
+                resumed = False
+                while time.monotonic() < deadline:
+                    status = sidecar.rpc("get_job_status", {"job_id": JOB_ID})
+                    if not resumed and any(e.get("type") == "needs_auth" and e.get("job_id") == JOB_ID for e in sidecar.events):
+                        sidecar.rpc("resume_job", {"job_id": JOB_ID})
+                        resumed = True
+                    # Completion notification follows database/report persistence.
+                    if any(e.get("type") == "job_done" and e.get("job_id") == JOB_ID for e in sidecar.events):
+                        break
+                    require(status["status"] not in {"failed", "cancelled", "stopped_on_review"}, f"Job failed: {status}")
+                    time.sleep(0.1)
+                else:
+                    raise SmokeFailure(f"Timed out completing local dry run: {status}")
+                require(resumed, "Synthetic job never requested authentication")
+            finally:
+                if started:
+                    status = sidecar.rpc("get_job_status", {"job_id": JOB_ID}, timeout=5)
+                    if status["status"] not in {"done", "failed", "cancelled", "stopped_on_review"}:
+                        sidecar.rpc("cancel_job", {"job_id": JOB_ID}, timeout=5)
+                        end = time.monotonic() + 5
+                        while time.monotonic() < end:
+                            if sidecar.rpc("get_job_status", {"job_id": JOB_ID}, timeout=5)["status"] == "cancelled":
+                                break
+                            time.sleep(0.1)
 
-        runtime = sidecar.rpc("get_browser_runtime_status", timeout=60)
-        if not runtime.get("installed") or runtime.get("state") != "ready":
-            raise SmokeFailure(
-                "browser runtime is not ready:\n"
-                + json.dumps(runtime, ensure_ascii=False, indent=2)
-            )
-
-        config = sidecar.rpc("get_module_config_status", {"module": "graduation"}, timeout=60)
-        if config.get("module") != "graduation" or not config.get("version"):
-            raise SmokeFailure(f"unexpected module config payload: {config}")
-
-        license_status = sidecar.rpc("get_license_status", timeout=60)
-        if "status" not in license_status:
-            raise SmokeFailure(f"unexpected license payload: {license_status}")
-        if not license_status.get("can_start_jobs"):
-            raise SmokeFailure(f"development license gate blocked job start: {license_status}")
-
-        validation = sidecar.rpc(
-            "validate_excel",
-            {"path": str(SAMPLE_EXCEL), "module": "graduation"},
-            timeout=120,
-        )
-        preview = validation.get("preview") or []
-        if validation.get("detected_level") != "ม.3":
-            raise SmokeFailure(f"unexpected detected level: {validation.get('detected_level')}")
-        if validation.get("rows_total", 0) <= 0 or validation.get("rows_accepted", 0) <= 0:
-            raise SmokeFailure(f"unexpected validation counts: {validation}")
-        if not preview or preview[0].get("first_name") != "ทวีศักดิ์":
-            raise SmokeFailure(f"Thai preview did not decode correctly: {preview[:1]}")
-
-        info(
-            "sidecar executable smoke passed: "
-            f"runtime={runtime.get('state')} "
-            f"rows={validation.get('rows_accepted')}/{validation.get('rows_total')} "
-            f"first_name={preview[0].get('first_name')}"
-        )
-    finally:
-        sidecar.close()
-
-
-def run_all(args: argparse.Namespace) -> None:
-    stop_desktop_processes()
-    if not args.skip_build:
-        run_command(["corepack", "pnpm", "run", "sidecar:bundle"], timeout=300)
-    sync_debug_sidecar()
-    assert_sidecar_smoke()
-    stop_desktop_processes()
-
-    run_command(["corepack", "pnpm", "run", "sidecar:typecheck"], timeout=240)
-    run_command(
-        [
-            str(PYTHON),
-            "-m",
-            "pytest",
-            "apps/sidecar/tests/test_account_client.py",
-            "apps/sidecar/tests/test_rpc.py",
-            "apps/sidecar/tests/test_browser_runtime.py",
-            "apps/sidecar/tests/test_graduation_module.py",
-            "apps/sidecar/tests/test_workflow_e2e.py",
-        ],
-        timeout=300,
-    )
-    run_command(["corepack", "pnpm", "run", "desktop:typecheck"], timeout=240)
-    stop_desktop_processes()
-    run_command(["corepack", "pnpm", "run", "desktop:cargo-check"], timeout=240, retries=3)
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run local DMC Assistant smoke checks.")
-    parser.add_argument(
-        "--skip-build",
-        action="store_true",
-        help="Use the existing staged sidecar bundle instead of rebuilding it first.",
-    )
-    return parser.parse_args()
+        # Read persisted state after the actual subprocess exits.
+        with closing(sqlite3.connect(db_path)) as connection:
+            connection.row_factory = sqlite3.Row
+            row = connection.execute("SELECT * FROM job WHERE id = ?", (JOB_ID,)).fetchone()
+            require(row is not None and row["status"] == "done", "Completion was not persisted")
+            require(row["processed"] == row["succeeded"] == 2 and row["failed"] == 0, "Incorrect persisted counts")
+            summary = json.loads(row["run_summary_json"])
+            require(summary["dry_run_rows"] == 2 and summary["applied_rows"] == 0, f"Incorrect dry run summary: {summary}")
+            records = connection.execute("SELECT result_json FROM job_record WHERE job_id = ? ORDER BY portal_row_index", (JOB_ID,)).fetchall()
+            require(len(records) == 2, "Missing persisted job results")
+            report = Path(row["report_path"]).resolve()
+            review = Path(row["review_report_path"]).resolve()
+        for path in (report, review, report.with_suffix(".json")):
+            require(path.is_relative_to(root / "data/reports") and path.is_file(), f"Missing or unisolated report: {path}")
+        report_rows = json.loads(report.with_suffix(".json").read_text(encoding="utf-8"))
+        require(report_rows == [json.loads(record["result_json"]) for record in records], "Report differs from persisted results")
+        notes = [item["note"] for item in report_rows]
+        require(notes == ["dry_run", "dry_run"] and all(item["applied"] is False for item in report_rows), "Report is not a dry run")
+        require(portal.post_saves == 0, "Dry run sent a portal POST save")
+        result = {"schema_generation": 2, "rows_accepted": 2, "status": "done", "dry_run_rows": 2,
+                  "post_saves": portal.post_saves, "report_notes": notes, "temporary_root": str(root)}
+    return result
 
 
 def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    if hasattr(sys.stderr, "reconfigure"):
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    args = parse_args()
-    started_at = time.monotonic()
+    if len(sys.argv) != 1:
+        print("Usage: smoke_local.py (source mode; builds/typechecks run separately via ci:verify)", file=sys.stderr)
+        return 2
     try:
-        run_all(args)
-    except (SmokeFailure, subprocess.TimeoutExpired) as exc:
-        print("\n[smoke] FAILED", file=sys.stderr)
-        print(str(exc), file=sys.stderr)
+        result = run_smoke()
+    except Exception as exc:
+        print(f"[smoke] FAILED: {exc}", file=sys.stderr)
         return 1
-    elapsed = time.monotonic() - started_at
-    info(f"all local smoke checks passed in {elapsed:.1f}s")
+    print("[smoke] PASS " + json.dumps(result, ensure_ascii=True))
+    print("[smoke] Temporary data removed. Browser status may contact the official Playwright CDN.")
     return 0
 
 

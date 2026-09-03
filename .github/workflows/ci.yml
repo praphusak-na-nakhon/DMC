@@ -9,6 +9,9 @@ on:
 jobs:
   verify-windows:
     runs-on: windows-latest
+    env:
+      DMC_DATA_DIR: ${{ runner.temp }}\dmc-ci-data
+      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}\dmc-playwright
 
     steps:
       - name: Checkout
@@ -19,16 +22,16 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.8.1
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "pnpm"
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.8.1
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -36,26 +39,14 @@ jobs:
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install cloud and sidecar test dependencies
+      - name: Install sidecar test dependencies
         run: |
           python -m venv .venv
           .\.venv\Scripts\python -m pip install --upgrade pip
-          .\.venv\Scripts\python -m pip install -e .\apps\cloud[dev] -e .\apps\sidecar[dev]
+          .\.venv\Scripts\python -m pip install -e .\apps\sidecar[dev]
 
-      - name: Desktop TypeScript
-        run: pnpm run desktop:typecheck
+      - name: Install Chromium and headless shell for localhost integration tests
+        run: .\.venv\Scripts\python -m playwright install chromium
 
-      - name: Desktop Web Build
-        run: pnpm run desktop:build
-
-      - name: Desktop Cargo Check
-        run: pnpm run desktop:cargo-check
-
-      - name: Sidecar Typecheck
-        run: pnpm run sidecar:typecheck
-
-      - name: Sidecar Tests
-        run: pnpm run sidecar:test
-
-      - name: Cloud Tests
-        run: pnpm run cloud:test
+      - name: Verify desktop, native, sidecar, and release readiness
+        run: pnpm run ci:verify
