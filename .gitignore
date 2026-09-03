@@ -34,3 +34,4 @@ apps/desktop/src-tauri/release-config/*.json
 !apps/desktop/src-tauri/release-config/.gitkeep
 apps/sidecar/build/
 release-artifacts/
+.worktrees/
