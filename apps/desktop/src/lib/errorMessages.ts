@@ -1,6 +1,5 @@
 import messages from "../i18n/th.json";
 
-const accountErrors = messages.app.account.errors as Record<string, string>;
 const formConverterErrors = messages.app.formConverter.errors as Record<string, string>;
 const generalErrors: Record<string, string> = {
   AI_API_KEY_REQUIRED: "กรุณาตั้งค่า Gemini API key ที่หน้าหลักก่อนใช้ OCR",
@@ -19,7 +18,7 @@ const generalErrors: Record<string, string> = {
   OCR_PROVIDER_RESPONSE_INVALID: "ผลลัพธ์จาก AI อยู่ในรูปแบบที่ระบบอ่านไม่ได้ กรุณาลองใหม่หรือส่ง diagnostics",
 };
 
-const errorMaps = [accountErrors, formConverterErrors, generalErrors];
+const errorMaps = [formConverterErrors, generalErrors];
 const desktopRuntimeRecoveryMessage =
   "Desktop runtime ยังไม่เชื่อมต่อ ฟังก์ชันนี้ต้องเปิดผ่านหน้าต่าง DMC Assistant desktop ไม่ใช่ browser preview/localhost หากกำลังทดสอบให้รัน `corepack pnpm --dir apps/desktop exec tauri dev` แล้วใช้หน้าต่างแอปที่เด้งขึ้นมา หรือกดลองเชื่อมต่อใหม่";
 const sidecarRecoveryMessage =
@@ -80,13 +79,6 @@ export function getRuntimeConnectionErrorKind(error: unknown): RuntimeConnection
 
 export function isRuntimeConnectionError(error: unknown): boolean {
   return getRuntimeConnectionErrorKind(error) !== null;
-}
-
-export function describeAccountCode(code: string | null | undefined): string | null {
-  if (!code) {
-    return null;
-  }
-  return accountErrors[code] ?? null;
 }
 
 export function describeErrorCode(code: string | null | undefined): string | null {

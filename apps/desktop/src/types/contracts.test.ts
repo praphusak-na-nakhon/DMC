@@ -3,9 +3,22 @@ import {
   parseAiConnectionTest,
   parseAiSettings,
   parseDatabaseStatus,
+  parseExportStudentBasicInfoFormResponse,
   parseJobStatusSnapshot,
+  parseStartJobResponse,
   parseOcrDocumentResponse,
 } from "./contracts";
+
+describe("retained StudentBasicInfo contract", () => {
+  it("parses nonempty exported class summaries", () => {
+    const result = parseExportStudentBasicInfoFormResponse({
+      module: "studentBasicInfo", source_path: "students.xlsx", output_path: "output.xlsx",
+      school_name: null, school_year: null, term: null, rows_total: 2, students_exported: 2,
+      classes_exported: 1, classes: [{ level: "ม.3", room: "1", sheet_name: "ม.3-1", students: 2 }],
+    });
+    expect(result.classes).toEqual([{ level: "ม.3", room: "1", sheet_name: "ม.3-1", students: 2 }]);
+  });
+});
 
 describe("database status contract", () => {
   it("parses generation two metadata from the sidecar", () => {
@@ -43,14 +56,12 @@ const baseJob = {
   level_label: null,
   summary_report_path: null,
   completion_summary: null,
-  credit_reservation_id: null,
-  credits_reserved: 0,
-  credits_captured: 0,
-  credits_refunded: 0,
-  credit_status: null,
 };
 
 describe("job status contracts", () => {
+  it("accepts a local job start without a credit reservation", () => {
+    expect(parseStartJobResponse({ accepted: true, job_id: "local" })).toEqual({ accepted: true, job_id: "local" });
+  });
   it("treats an empty legacy run summary as absent", () => {
     const parsed = parseJobStatusSnapshot({
       ...baseJob,

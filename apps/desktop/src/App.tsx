@@ -6,11 +6,9 @@ import {
   checkForAppUpdate,
   copyTemplateFile,
   createBackup,
-  getAccountStatus,
   getBrowserRuntimeStatus,
   getDatabaseStatus,
   getJobStatus,
-  getModuleCatalog,
   getModuleConfigStatus,
   getUpdaterStatus,
   initializeSidecar,
@@ -20,14 +18,11 @@ import {
   listenUpdaterEvents,
   openBackupArchiveDialog,
   openExcelDialog,
-  refreshWallet,
   restoreBackup,
   revealPath,
   saveBackupDialog,
   saveDiagnosticsDialog,
   saveTemplateDialog,
-  signIn,
-  signOut,
   startCurrentStudentsImportJob,
   startGraduationJob,
   syncModuleConfig,
@@ -47,8 +42,6 @@ import { FormConverterPage } from "./components/FormConverterPage";
 import { CurrentStudentsPage } from "./components/CurrentStudentsPage";
 import { ModuleHome } from "./components/ModuleHome";
 import { StudentBasicInfoPage } from "./components/StudentBasicInfoPage";
-import { AccountSignInPage } from "./components/AccountSignInPage";
-import { CreditTopupPage } from "./components/CreditTopupPage";
 import { AlertDialog } from "./components/ui/alert-dialog";
 import type { ModuleId } from "./lib/moduleCatalog";
 import type {
@@ -63,11 +56,6 @@ function toUserError(error: unknown): string {
   return describeUserFacingError(error);
 }
 
-function errorHasCode(error: unknown, code: string): boolean {
-  const raw = error instanceof Error ? error.message : String(error);
-  return raw.includes(code);
-}
-
 type ConfirmDialogState = {
   type: "archive_old_jobs" | "start_live" | "start_current_students_live" | "cancel_job" | "close_active_job";
   title: string;
@@ -75,10 +63,6 @@ type ConfirmDialogState = {
   confirmLabel: string;
   cancelLabel?: string;
   variant?: "default" | "destructive";
-};
-
-type RefreshAccountOptions = {
-  surfaceError?: boolean;
 };
 
 async function requestWindowAttention(): Promise<void> {
@@ -117,7 +101,6 @@ export function App() {
   const {
     preview,
     currentJob,
-    accountStatus,
     moduleConfigStatus,
     existingJobs,
     excelPath,
@@ -130,7 +113,6 @@ export function App() {
     setExcelPath,
     setPreview,
     setCurrentJob,
-    setAccountStatus,
     setModuleConfigStatus,
     setExistingJobs,
     upsertExistingJob,
@@ -149,11 +131,7 @@ export function App() {
   const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
-  const [accountEmail, setAccountEmail] = useState("");
-  const [accountPassword, setAccountPassword] = useState("");
-  const [deviceName, setDeviceName] = useState("dmc-desktop");
   const [validatedExcelPath, setValidatedExcelPath] = useState<string | null>(null);
-  const [isSigningIn, setIsSigningIn] = useState(false);
   const [browserRuntimeStatus, setBrowserRuntimeStatus] = useState<BrowserRuntimeStatus | null>(null);
   const [databaseStatus, setDatabaseStatus] = useState<DatabaseStatus | null>(null);
   const [browserRuntimeProgress, setBrowserRuntimeProgress] = useState<{
@@ -173,7 +151,7 @@ export function App() {
   const [updateProgress, setUpdateProgress] = useState<{ downloaded: number; contentLength: number | null } | null>(
     null,
   );
-  const [activeModule, setActiveModule] = useState<"home" | "signIn" | "credits" | ModuleId>("home");
+  const [activeModule, setActiveModule] = useState<"home" | ModuleId>("home");
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const mountedRef = useRef(false);
   const activeJobRef = useRef(false);
@@ -186,12 +164,7 @@ export function App() {
     !preview || preview.rows_accepted <= 0 || validatedExcelPath !== excelPath.trim();
   const preflightRowsAccepted = validationBlocksStart ? null : preview.rows_accepted;
   const preflightRowsTotal = validationBlocksStart ? null : preview.rows_total;
-  const estimatedCredits = preflightRowsAccepted ?? preview?.rows_accepted ?? 0;
   const browserRuntimeBlocksStart = browserRuntimeStatus !== null && !browserRuntimeStatus.installed;
-  const accountBlocksStart =
-    !accountStatus?.signed_in ||
-    !accountStatus.can_start_credit_jobs ||
-    (estimatedCredits > 0 && (accountStatus.wallet?.available ?? 0) < estimatedCredits);
   const hasActiveJob = Boolean(currentJob && isActiveJobStatus(currentJob.status));
 
   const handleLoadJobs = useCallback(async () => {
@@ -231,36 +204,6 @@ export function App() {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
   }, [pushSidecarMessage, setErrorMessage, setModuleConfigStatus]);
-
-  const handleRefreshAccount = useCallback(
-    async (forceWallet: boolean, options: RefreshAccountOptions = {}): Promise<void> => {
-      const surfaceError = options.surfaceError ?? true;
-      try {
-        const status = forceWallet ? await refreshWallet() : await getAccountStatus();
-        setAccountStatus(status);
-        pushSidecarMessage(
-          status.signed_in
-            ? `account: ${status.email ?? status.user_id ?? "signed in"} | available credits ${status.wallet?.available ?? "-"}`
-            : "account: signed out",
-        );
-      } catch (error) {
-        if (surfaceError) {
-          setErrorMessage(toUserError(error));
-        }
-        throw error;
-      }
-    },
-    [pushSidecarMessage, setAccountStatus, setErrorMessage],
-  );
-
-  const handleLoadModuleCatalog = useCallback(async () => {
-    try {
-      const catalog = await getModuleCatalog();
-      pushSidecarMessage(`module catalog loaded: ${catalog.modules.length} modules`);
-    } catch (error) {
-      setErrorMessage(toUserError(error));
-    }
-  }, [pushSidecarMessage, setErrorMessage]);
 
   const handleLoadBrowserRuntime = useCallback(async (): Promise<BrowserRuntimeStatus> => {
     try {
@@ -302,10 +245,6 @@ export function App() {
         return;
       }
       setConnectionState("ready");
-      await handleRefreshAccount(false);
-      if (!isActive()) {
-        return;
-      }
       const configStatus = await getModuleConfigStatus("graduation");
       if (!isActive()) {
         return;
@@ -327,10 +266,6 @@ export function App() {
       if (!isActive()) {
         return;
       }
-      await handleLoadModuleCatalog();
-      if (!isActive()) {
-        return;
-      }
       await handleSyncConfig();
     } catch (error) {
       if (!isActive()) {
@@ -343,51 +278,12 @@ export function App() {
     handleLoadBrowserRuntime,
     handleLoadDatabaseStatus,
     handleLoadJobs,
-    handleLoadModuleCatalog,
     handleLoadUpdaterStatus,
-    handleRefreshAccount,
     handleSyncConfig,
     setConnectionState,
     setErrorMessage,
     setModuleConfigStatus,
   ]);
-
-  async function handleSignIn() {
-    if (!accountEmail.trim() || !accountPassword) {
-      setErrorMessage(messages.app.account.missingCredentials);
-      return;
-    }
-    try {
-      setIsSigningIn(true);
-      setErrorMessage(null);
-      const status = await signIn({
-        email: accountEmail.trim(),
-        password: accountPassword,
-        deviceName: deviceName.trim() || "dmc-desktop",
-        appVersion: updaterStatus?.current_version ?? "0.1.0",
-      });
-      setAccountStatus(status);
-      setAccountPassword("");
-      pushSidecarMessage(`signed in: ${status.email ?? status.user_id ?? "-"}`);
-      await handleLoadModuleCatalog();
-      setActiveModule("home");
-    } catch (error) {
-      setErrorMessage(toUserError(error));
-    } finally {
-      setIsSigningIn(false);
-    }
-  }
-
-  async function handleSignOut() {
-    try {
-      setErrorMessage(null);
-      const status = await signOut();
-      setAccountStatus(status);
-      pushSidecarMessage("signed out");
-    } catch (error) {
-      setErrorMessage(toUserError(error));
-    }
-  }
 
   async function handleCreateBackup() {
     try {
@@ -424,7 +320,6 @@ export function App() {
       pushSidecarMessage(`restore completed from ${result.restored_from}`);
       await handleLoadDatabaseStatus();
       await handleLoadJobs();
-      await handleRefreshAccount(false);
       await handleLoadBrowserRuntime();
       await handleSyncConfig();
     } catch (error) {
@@ -447,7 +342,6 @@ export function App() {
         platform: typeof navigator !== "undefined" ? navigator.userAgent : "unknown",
         connectionState,
         databaseStatus,
-        accountStatus,
         moduleConfigStatus,
         browserRuntimeStatus,
         updaterStatus,
@@ -609,13 +503,6 @@ export function App() {
   }, [currentJob]);
 
   useEffect(() => {
-    if (typeof navigator === "undefined") {
-      return;
-    }
-    setDeviceName((current) => (current !== "dmc-desktop" ? current : `desktop-${navigator.platform || "windows"}`));
-  }, []);
-
-  useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
     let unlistenUpdater: (() => void) | undefined;
@@ -688,35 +575,12 @@ export function App() {
     };
   }, [applySidecarEvent, handleConnect, setConnectionState, setErrorMessage]);
 
-  const refreshAccountAfterStart = useCallback(async () => {
-    try {
-      await handleRefreshAccount(true, { surfaceError: false });
-    } catch (error) {
-      if (errorHasCode(error, "ACCOUNT_CLOUD_UNAVAILABLE")) {
-        pushSidecarMessage(
-          "account cloud unavailable while refreshing credits after job start; keeping cached wallet snapshot",
-        );
-        return;
-      }
-      pushSidecarMessage(`account refresh after job start failed: ${toUserError(error)}`);
-    }
-  }, [handleRefreshAccount, pushSidecarMessage]);
-
   const handleJobReconciled = useCallback(
     (status: JobStatusSnapshot) => {
       setCurrentJob(status);
       upsertExistingJob(status);
-      if (status.credit_status === "finalized") {
-        void handleRefreshAccount(true, { surfaceError: false }).catch((error) => {
-          if (errorHasCode(error, "ACCOUNT_CLOUD_UNAVAILABLE")) {
-            pushSidecarMessage("account cloud unavailable while refreshing finalized credits; keeping cached account snapshot");
-            return;
-          }
-          setErrorMessage(toUserError(error));
-        });
-      }
     },
-    [handleRefreshAccount, pushSidecarMessage, setCurrentJob, setErrorMessage, upsertExistingJob],
+    [setCurrentJob, upsertExistingJob],
   );
 
   const handleJobReconcileError = useCallback(
@@ -787,14 +651,6 @@ export function App() {
 
     const rowsToWrite = preview?.rows_accepted ?? 0;
     if (!dryRun) {
-      if (!accountStatus?.signed_in) {
-        setErrorMessage(messages.app.account.signInBeforeLive);
-        return;
-      }
-      if ((accountStatus.wallet?.available ?? 0) < rowsToWrite) {
-        setErrorMessage(messages.app.account.insufficientCredits);
-        return;
-      }
       const rowsTotal = preview?.rows_total ?? rowsToWrite;
       if (!confirmed) {
         setConfirmDialog({
@@ -803,9 +659,6 @@ export function App() {
           description: [
             `ไฟล์: ${selectedExcelPath}`,
             `ระบบจะส่งข้อมูล ${rowsToWrite} จาก ${rowsTotal} รายการเข้า DMC`,
-            `เครดิตที่จะกันไว้: ${rowsToWrite}`,
-            "",
-            messages.app.account.reserveNotice,
           ].join("\n"),
           confirmLabel: "เริ่มงานจริง",
           cancelLabel: "ตรวจอีกครั้ง",
@@ -823,19 +676,6 @@ export function App() {
         setErrorMessage(browserStatus.message ?? "ยังไม่ได้ติดตั้ง Chromium runtime");
         return;
       }
-      if (!dryRun) {
-        await handleRefreshAccount(true);
-        const latestAccount = await getAccountStatus();
-        setAccountStatus(latestAccount);
-        if (!latestAccount.signed_in || !latestAccount.can_start_credit_jobs) {
-          setErrorMessage(latestAccount.message ?? messages.app.account.signInBeforeLive);
-          return;
-        }
-        if ((latestAccount.wallet?.available ?? 0) < rowsToWrite) {
-          setErrorMessage(messages.app.account.insufficientCredits);
-          return;
-        }
-      }
       await handleSyncConfig();
       const result = await startGraduationJob({
         jobId: buildJobId(),
@@ -843,19 +683,12 @@ export function App() {
         dryRun,
         stopOnReview,
         minScore,
-        estimatedCredits: rowsToWrite,
       });
       const draft = buildDraftJob(selectedExcelPath, rowsToWrite, result.job_id);
-      draft.credit_reservation_id = result.credit_reservation_id;
-      draft.credits_reserved = result.credits_reserved;
-      draft.credit_status = result.credit_reservation_id ? "reserved" : dryRun ? null : "reserving";
       setActiveJobId(result.job_id);
       setCurrentJob(draft);
       upsertExistingJob(draft);
       pushSidecarMessage(`${dryRun ? "เริ่ม dry run" : "เริ่มงานจริง"} แล้ว: ${result.job_id}`);
-      if (!dryRun) {
-        await refreshAccountAfterStart();
-      }
       await handleLoadJobs();
     } catch (error) {
       setErrorMessage(toUserError(error));
@@ -888,14 +721,6 @@ export function App() {
       return;
     }
     if (!dryRun) {
-      if (!accountStatus?.signed_in) {
-        setErrorMessage(messages.app.account.signInBeforeLive);
-        return;
-      }
-      if ((accountStatus.wallet?.available ?? 0) < rowsToWrite) {
-        setErrorMessage(messages.app.account.insufficientCredits);
-        return;
-      }
       if (!confirmed) {
         pendingCurrentStudentsStartRef.current = { jsonPath: selectedJsonPath, rowsToWrite };
         setConfirmDialog({
@@ -904,9 +729,6 @@ export function App() {
           description: [
             `ไฟล์: ${selectedJsonPath}`,
             `ระบบจะกรอกและบันทึกหน้า DMC จำนวน ${rowsToWrite} รายการ`,
-            `เครดิตที่จะกันไว้: ${rowsToWrite}`,
-            "",
-            messages.app.account.reserveNotice,
           ].join("\n"),
           confirmLabel: "เริ่มงานจริง",
           cancelLabel: "ตรวจอีกครั้ง",
@@ -924,37 +746,17 @@ export function App() {
         setErrorMessage(browserStatus.message ?? "ยังไม่ได้ติดตั้ง Chromium runtime");
         return;
       }
-      if (!dryRun) {
-        await handleRefreshAccount(true);
-        const latestAccount = await getAccountStatus();
-        setAccountStatus(latestAccount);
-        if (!latestAccount.signed_in || !latestAccount.can_start_credit_jobs) {
-          setErrorMessage(latestAccount.message ?? messages.app.account.signInBeforeLive);
-          return;
-        }
-        if ((latestAccount.wallet?.available ?? 0) < rowsToWrite) {
-          setErrorMessage(messages.app.account.insufficientCredits);
-          return;
-        }
-      }
       const result = await startCurrentStudentsImportJob({
         jobId: buildJobId(),
         jsonPath: selectedJsonPath,
         dryRun,
-        estimatedCredits: rowsToWrite,
       });
       const draft = buildDraftJob(selectedJsonPath, rowsToWrite, result.job_id);
       draft.module = "currentStudents";
-      draft.credit_reservation_id = result.credit_reservation_id;
-      draft.credits_reserved = result.credits_reserved;
-      draft.credit_status = result.credit_reservation_id ? "reserved" : dryRun ? null : "reserving";
       setActiveJobId(result.job_id);
       setCurrentJob(draft);
       upsertExistingJob(draft);
       pushSidecarMessage(`${dryRun ? "เริ่ม dry run ย้ายเข้า" : "เริ่มงานย้ายเข้า DMC จริง"}: ${result.job_id}`);
-      if (!dryRun) {
-        await refreshAccountAfterStart();
-      }
       await handleLoadJobs();
     } catch (error) {
       setErrorMessage(toUserError(error));
@@ -1052,7 +854,7 @@ export function App() {
       setConfirmDialog({
         type: "cancel_job",
         title: "ยกเลิกงานนี้",
-        description: "งานที่กำลังทำอยู่จะหยุดที่ checkpoint ล่าสุด และระบบจะสรุปเครดิตตามรายการที่ทำไปแล้ว",
+        description: "งานที่กำลังทำอยู่จะหยุดที่ checkpoint ล่าสุด โดยเก็บรายการที่ทำไปแล้วไว้ในเครื่อง",
         confirmLabel: "ยกเลิกงาน",
         cancelLabel: "ทำงานต่อ",
         variant: "destructive",
@@ -1064,9 +866,6 @@ export function App() {
       const status = await getJobStatus(activeJobId);
       setCurrentJob(status);
       upsertExistingJob(status);
-      if (status.credit_status === "finalized") {
-        await handleRefreshAccount(true);
-      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
@@ -1080,9 +879,6 @@ export function App() {
       const status = await getJobStatus(activeJobId);
       setCurrentJob(status);
       upsertExistingJob(status);
-      if (status.credit_status === "finalized") {
-        await handleRefreshAccount(true);
-      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
@@ -1174,32 +970,8 @@ export function App() {
           <ModuleHome
             onOpenModule={(moduleId) => setActiveModule(moduleId)}
             connectionState={connectionState}
-            accountStatus={accountStatus}
             errorMessage={errorMessage}
-            onOpenSignIn={() => setActiveModule("signIn")}
-            onOpenTopup={() => setActiveModule("credits")}
-            onSignOut={() => void handleSignOut()}
             onRetryRuntime={() => void handleConnect()}
-          />
-        ) : activeModule === "credits" ? (
-          <CreditTopupPage
-            accountStatus={accountStatus}
-            onBackHome={() => setActiveModule("home")}
-            onOpenSignIn={() => setActiveModule("signIn")}
-          />
-        ) : activeModule === "signIn" ? (
-          <AccountSignInPage
-            accountStatus={accountStatus}
-            accountEmail={accountEmail}
-            accountPassword={accountPassword}
-            errorMessage={errorMessage}
-            isSigningIn={isSigningIn}
-            onBackHome={() => setActiveModule("home")}
-            onAccountEmailChange={setAccountEmail}
-            onAccountPasswordChange={setAccountPassword}
-            onSignIn={() => void handleSignIn()}
-            onSignOut={() => void handleSignOut()}
-            onRefreshWallet={() => void handleRefreshAccount(true)}
           />
         ) : activeModule === "formConverter" ? (
           <FormConverterPage
@@ -1240,7 +1012,6 @@ export function App() {
             activeJobId={activeJobId}
             progressPercent={progressPercent}
             connectionState={connectionState}
-            accountStatus={accountStatus}
             moduleConfigStatus={moduleConfigStatus}
             browserRuntimeStatus={browserRuntimeStatus}
             browserRuntimeProgress={browserRuntimeProgress}
@@ -1254,7 +1025,6 @@ export function App() {
             isDownloadingTemplate={isDownloadingTemplate}
             isArchivingJobs={isArchivingJobs}
             isBootstrappingBrowser={isBootstrappingBrowser}
-            accountBlocksStart={accountBlocksStart}
             browserRuntimeBlocksStart={browserRuntimeBlocksStart}
             validationBlocksStart={validationBlocksStart}
             preflightRowsAccepted={preflightRowsAccepted}
@@ -1270,7 +1040,6 @@ export function App() {
             onStopOnReviewChange={setStopOnReview}
             onConnect={() => void handleConnect()}
             onRefreshJobs={() => void handleLoadJobs()}
-            onRefreshWallet={() => void handleRefreshAccount(true)}
             onSyncConfig={() => void handleSyncConfig()}
             onValidate={() => void handleValidate()}
             onStartDryRun={() => void handleStart(true)}
