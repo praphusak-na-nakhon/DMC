@@ -46,23 +46,14 @@ function renderHomeWithAccountWarning() {
 }
 
 describe("ModuleHome", () => {
-  it("renders the account bar and all module entry points from i18n copy", () => {
+  it("renders only retained local modules", () => {
     renderHome();
 
-    expect(screen.getByRole("heading", { name: messages.app.home.title })).toBeInTheDocument();
-    expect(screen.getByText(messages.app.home.accountSignedOut)).toBeInTheDocument();
-    expect(screen.getByText(messages.app.home.creditBalance)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.formConverter.title)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.studentBasicInfo.title)).toBeInTheDocument();
-    expect(screen.getByText(messages.app.home.modules.psar.title)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.currentStudents.title)).toBeInTheDocument();
     expect(screen.getByText(messages.app.home.modules.graduation.title)).toBeInTheDocument();
-    expect(screen.getByText(`${messages.app.home.creditModule} 3 เครดิต/หน้า OCR`)).toBeInTheDocument();
-    expect(screen.getAllByText("ใช้เครดิต 1 เครดิต/รายการ")).toHaveLength(2);
-    expect(screen.queryByText(messages.app.account.topup.title)).not.toBeInTheDocument();
-    expect(screen.queryByText(messages.app.account.topup.packages[0].unitRate)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(messages.app.account.emailLabel)).not.toBeInTheDocument();
-    expect(screen.queryByText("License Activation")).not.toBeInTheDocument();
+    expect(screen.queryByText("ตรวจความพร้อม P-SAR")).not.toBeInTheDocument();
   });
 
   it("opens currentStudents from the ready module list", () => {

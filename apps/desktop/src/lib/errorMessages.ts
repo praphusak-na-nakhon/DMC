@@ -8,10 +8,6 @@ const generalErrors: Record<string, string> = {
   CONFIG_SYNC_UNAVAILABLE: "เชื่อมต่อ cloud เพื่ออัปเดต config ไม่ได้",
   OCR_PROVIDER_UNSUPPORTED: "ยังไม่รองรับ AI provider ที่ตั้งค่าไว้",
   OCR_PROVIDER_RESPONSE_INVALID: "ผลลัพธ์จาก AI อยู่ในรูปแบบที่ระบบอ่านไม่ได้ กรุณาลองใหม่หรือส่ง diagnostics",
-  PSAR_EVIDENCE_FILE_NOT_FOUND: "ไม่พบไฟล์หลักฐานที่เลือก",
-  PSAR_EVIDENCE_PATH_NOT_FILE: "พาธหลักฐานที่เลือกไม่ใช่ไฟล์",
-  PSAR_EVIDENCE_UNSUPPORTED_TYPE: "หลักฐานต้องเป็นไฟล์ PDF, DOCX, XLSX หรือรูปภาพ",
-  PSAR_PROJECT_ID_INVALID: "รหัสโปรเจกต์ใช้ได้เฉพาะตัวอักษร ตัวเลข ขีดกลาง ขีดล่าง และจุด",
 };
 
 const errorMaps = [accountErrors, formConverterErrors, generalErrors];

@@ -46,7 +46,6 @@ import { GraduationWizard } from "./components/GraduationWizard";
 import { FormConverterPage } from "./components/FormConverterPage";
 import { CurrentStudentsPage } from "./components/CurrentStudentsPage";
 import { ModuleHome } from "./components/ModuleHome";
-import { PsarReadinessPage } from "./components/PsarReadinessPage";
 import { StudentBasicInfoPage } from "./components/StudentBasicInfoPage";
 import { AccountSignInPage } from "./components/AccountSignInPage";
 import { CreditTopupPage } from "./components/CreditTopupPage";
@@ -1213,11 +1212,6 @@ export function App() {
             onBackHome={() => setActiveModule("home")}
             onRevealPath={(path) => void handleRevealPath(path)}
             onRetryRuntime={() => void handleConnect()}
-          />
-        ) : activeModule === "psar" ? (
-          <PsarReadinessPage
-            onBackHome={() => setActiveModule("home")}
-            onRevealPath={(path) => void handleRevealPath(path)}
           />
         ) : activeModule === "currentStudents" ? (
           <CurrentStudentsPage

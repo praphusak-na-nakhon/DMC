@@ -1,6 +1,6 @@
-import { ClipboardCheck, ClipboardList, FileSpreadsheet, GraduationCap, UserPlus } from "lucide-react";
+import { ClipboardList, FileSpreadsheet, GraduationCap, UserPlus } from "lucide-react";
 
-export type ModuleId = "formConverter" | "studentBasicInfo" | "psar" | "currentStudents" | "graduation";
+export type ModuleId = "formConverter" | "studentBasicInfo" | "currentStudents" | "graduation";
 export type ModuleStatus = "skeleton" | "ready";
 
 export type ModuleContract = {
@@ -60,22 +60,6 @@ export const moduleDefinitions: ModuleDefinition[] = [
       validations: ["dmc_header_row", "required_columns_present", "classroom_grouping"],
       outputs: ["student_basic_info_workbook_path", "class_sheets", "export_summary"],
       events: ["export_student_basic_info_form"],
-    },
-  },
-  {
-    id: "psar",
-    status: "ready",
-    icon: ClipboardCheck,
-    requiresCredits: false,
-    pricingMode: "per_billable_record",
-    creditPerUnit: 0,
-    productionDryRunEnabled: false,
-    contract: {
-      version: "0.1",
-      inputs: ["project_id", "uploaded_evidence_path", "p_sar_requirement_matrix"],
-      validations: ["supported_evidence_file", "requirement_mapping_confidence", "readiness_threshold"],
-      outputs: ["readiness_dashboard", "missing_evidence_recommendations", "mapped_files"],
-      events: ["get_psar_readiness", "add_psar_evidence"],
     },
   },
   {
