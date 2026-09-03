@@ -62,6 +62,16 @@ describe("ModuleHome", () => {
     ]);
   });
 
+  it("shows Gemini settings only when the sidecar connection is ready", () => {
+    const { rerender } = render(<ModuleHome {...buildHomeProps({ connectionState: "connecting" })} />);
+
+    expect(screen.queryByText(messages.app.home.aiSettings.title)).not.toBeInTheDocument();
+
+    rerender(<ModuleHome {...buildHomeProps({ connectionState: "ready" })} />);
+
+    expect(screen.getByText(messages.app.home.aiSettings.title)).toBeInTheDocument();
+  });
+
   it("opens currentStudents from the ready module list", () => {
     const onOpenModule = vi.fn();
     renderHome({ onOpenModule });

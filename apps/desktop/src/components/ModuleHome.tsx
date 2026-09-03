@@ -17,6 +17,7 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Alert, AlertDescription } from "./ui/alert";
+import { AiSettingsCard } from "./AiSettingsCard";
 import type { AccountStatus } from "../types/contracts";
 
 type ModuleHomeProps = {
@@ -194,6 +195,8 @@ export function ModuleHome({
           isRetrying={connectionState === "connecting"}
         />
       ) : null}
+
+      {connectionState === "ready" ? <AiSettingsCard connectionReady /> : null}
 
       <section className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
         {moduleDefinitions.length === 0 ? (
