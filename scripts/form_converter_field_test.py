@@ -107,6 +107,8 @@ def run_pdf(provider: GeminiProvider, pdf_path: Path, *, model: str, processing_
         "model": response.model,
         "processing_mode": response.processing_mode,
         "usage_totals": usage_totals,
+        "status": "ok",
+        "error_code": "",
     }
     return summary, _field_rows(response, pdf_path.name)
 
@@ -117,7 +119,16 @@ def write_outputs(output_dir: Path, summaries: list[dict[str, object]], field_ro
     with (output_dir / "quality-summary.csv").open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(
             handle,
-            fieldnames=["file_name", "output_path", "page_count", "model", "processing_mode", "usage_totals"],
+            fieldnames=[
+                "file_name",
+                "output_path",
+                "page_count",
+                "model",
+                "processing_mode",
+                "usage_totals",
+                "status",
+                "error_code",
+            ],
         )
         writer.writeheader()
         for summary in summaries:
@@ -137,6 +148,25 @@ def console_summary(summary: dict[str, object]) -> dict[str, object]:
     return {
         key: summary[key]
         for key in ("output_path", "page_count", "model", "processing_mode", "usage_totals")
+    }
+
+
+def failed_summary(pdf_path: Path, *, model: str, processing_mode: str, error: FieldTestError) -> dict[str, object]:
+    message = str(error)
+    error_code = (
+        message.removeprefix("Gemini OCR failed: ")
+        if message.startswith("Gemini OCR failed: AI_")
+        else "AI_FIELD_TEST_FAILED"
+    )
+    return {
+        "file_name": pdf_path.name,
+        "output_path": "",
+        "page_count": None,
+        "model": model,
+        "processing_mode": processing_mode,
+        "usage_totals": {},
+        "status": "failed",
+        "error_code": error_code,
     }
 
 
@@ -162,12 +192,30 @@ def main() -> None:
     provider = build_gemini_provider(api_key)
     summaries: list[dict[str, object]] = []
     field_rows: list[dict[str, object]] = []
+    failures = 0
     for pdf_path in discover_pdfs(Path(args.pdf_dir), max_files=args.max_files):
-        summary, rows = run_pdf(provider, pdf_path, model=str(args.model), processing_mode=str(args.processing_mode))
+        try:
+            summary, rows = run_pdf(
+                provider,
+                pdf_path,
+                model=str(args.model),
+                processing_mode=str(args.processing_mode),
+            )
+        except FieldTestError as exc:
+            summary = failed_summary(
+                pdf_path,
+                model=str(args.model),
+                processing_mode=str(args.processing_mode),
+                error=exc,
+            )
+            rows = []
+            failures += 1
         summaries.append(summary)
         field_rows.extend(rows)
         print(json.dumps(console_summary(summary), ensure_ascii=False))
     write_outputs(Path(args.output_dir), summaries, field_rows)
+    if failures:
+        raise SystemExit(f"{failures} field test file(s) failed. Review local reports.")
 
 
 if __name__ == "__main__":

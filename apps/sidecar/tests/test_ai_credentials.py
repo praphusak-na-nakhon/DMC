@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Callable
 
 import pytest
@@ -213,3 +214,84 @@ def test_field_tool_console_summary_contains_only_requested_metrics() -> None:
         "processing_mode": "batch",
         "usage_totals": {"total_token_count": 42},
     }
+
+
+def test_field_tool_persists_successful_results_when_a_later_pdf_fails(monkeypatch, tmp_path, capsys) -> None:  # noqa: ANN001
+    script_path = Path(__file__).resolve().parents[3] / "scripts" / "form_converter_field_test.py"
+    spec = importlib.util.spec_from_file_location("form_converter_field_test", script_path)
+    assert spec is not None and spec.loader is not None
+    field_tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(field_tool)
+    first_pdf = tmp_path / "first.pdf"
+    second_pdf = tmp_path / "second.pdf"
+    first_pdf.touch()
+    second_pdf.touch()
+    monkeypatch.setattr(
+        field_tool,
+        "parse_args",
+        lambda: SimpleNamespace(
+            gemini_api_key="secret-value",
+            pdf_dir=str(tmp_path),
+            max_files=None,
+            model="gemini-3.5-flash",
+            processing_mode="batch",
+            output_dir=str(tmp_path / "reports"),
+        ),
+    )
+    monkeypatch.setattr(field_tool, "build_gemini_provider", lambda _api_key: object())
+    monkeypatch.setattr(field_tool, "discover_pdfs", lambda _pdf_dir, *, max_files: [first_pdf, second_pdf])
+
+    def fake_run_pdf(_provider, pdf_path, *, model, processing_mode):  # noqa: ANN001
+        if pdf_path == second_pdf:
+            raise field_tool.FieldTestError("Gemini OCR failed: AI_RATE_LIMITED")
+        return (
+            {
+                "file_name": pdf_path.name,
+                "output_path": "C:\\cache\\first.json",
+                "page_count": 1,
+                "model": model,
+                "processing_mode": processing_mode,
+                "usage_totals": {"total_token_count": 4},
+                "status": "ok",
+                "error_code": "",
+            },
+            [{"file_name": pdf_path.name, "field_name": "student_id", "value": "1"}],
+        )
+
+    monkeypatch.setattr(field_tool, "run_pdf", fake_run_pdf)
+
+    with pytest.raises(SystemExit, match="1 field test file\\(s\\) failed"):
+        field_tool.main()
+
+    summaries = json.loads((tmp_path / "reports" / "summary.json").read_text(encoding="utf-8"))
+    assert [item["file_name"] for item in summaries] == ["first.pdf", "second.pdf"]
+    assert summaries[0]["status"] == "ok"
+    assert summaries[1]["status"] == "failed"
+    assert summaries[1]["error_code"] == "AI_RATE_LIMITED"
+    for line in capsys.readouterr().out.splitlines():
+        assert set(json.loads(line)) == {"output_path", "page_count", "model", "processing_mode", "usage_totals"}
+
+
+def test_field_tool_rejects_a_missing_explicit_key_without_starting_ocr(monkeypatch, capsys) -> None:  # noqa: ANN001
+    script_path = Path(__file__).resolve().parents[3] / "scripts" / "form_converter_field_test.py"
+    spec = importlib.util.spec_from_file_location("form_converter_field_test", script_path)
+    assert spec is not None and spec.loader is not None
+    field_tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(field_tool)
+    monkeypatch.setattr(
+        field_tool,
+        "parse_args",
+        lambda: SimpleNamespace(
+            gemini_api_key="",
+            pdf_dir="C:\\not-used",
+            max_files=None,
+            model="gemini-3.5-flash",
+            processing_mode="batch",
+            output_dir="C:\\not-used",
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="--gemini-api-key or GEMINI_API_KEY is required"):
+        field_tool.main()
+
+    assert capsys.readouterr().out == ""
