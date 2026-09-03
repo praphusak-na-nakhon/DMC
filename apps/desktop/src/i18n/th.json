@@ -176,6 +176,8 @@
         "configured": "ตั้งค่า Gemini API key แล้ว",
         "notConfigured": "ยังไม่ได้ตั้งค่า Gemini API key",
         "loading": "กำลังตรวจสอบสถานะ Gemini API key",
+        "settingsLoadFailure": "ไม่สามารถตรวจสอบสถานะ Gemini API key ได้ กรุณาลองใหม่",
+        "retrySettingsLoad": "ลองตรวจสอบใหม่",
         "connecting": "กำลังเชื่อมต่อระบบ AI",
         "save": "บันทึก API key",
         "test": "ทดสอบการเชื่อมต่อ",

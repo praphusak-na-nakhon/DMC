@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import messages from "../i18n/th.json";
 import { deleteAiApiKey, getAiSettings, saveAiApiKey, testAiConnection } from "../lib/rpcClient";
 import { Button } from "./ui/button";
@@ -16,34 +16,47 @@ export function AiSettingsCard({ connectionReady }: AiSettingsCardProps) {
   const ai = messages.app.home.aiSettings;
   const [apiKey, setApiKey] = useState("");
   const [configured, setConfigured] = useState<boolean | null>(null);
+  const [settingsLoadState, setSettingsLoadState] = useState<"idle" | "loading" | "ready" | "failed">("idle");
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
+  const settingsRequestGeneration = useRef(0);
 
-  useEffect(() => {
-    if (!connectionReady) {
-      setConfigured(null);
-      return;
-    }
+  const loadSettings = useCallback(() => {
+    const generation = settingsRequestGeneration.current + 1;
+    settingsRequestGeneration.current = generation;
+    setSettingsLoadState("loading");
 
-    let active = true;
     void getAiSettings("gemini")
       .then((settings) => {
-        if (active) {
+        if (settingsRequestGeneration.current === generation) {
           setConfigured(settings.configured);
+          setSettingsLoadState("ready");
         }
       })
       .catch(() => {
-        if (active) {
-          setFeedback("actionFailure");
+        if (settingsRequestGeneration.current === generation) {
+          setConfigured(null);
+          setSettingsLoadState("failed");
         }
       });
+  }, []);
+
+  useEffect(() => {
+    if (!connectionReady) {
+      settingsRequestGeneration.current += 1;
+      setConfigured(null);
+      setSettingsLoadState("idle");
+      return;
+    }
+
+    loadSettings();
 
     return () => {
-      active = false;
+      settingsRequestGeneration.current += 1;
     };
-  }, [connectionReady]);
+  }, [connectionReady, loadSettings]);
 
   async function saveKey() {
     const submittedKey = apiKey.trim();
@@ -51,13 +64,20 @@ export function AiSettingsCard({ connectionReady }: AiSettingsCardProps) {
       return;
     }
 
+    const hadPendingSettingsLoad = settingsLoadState === "loading";
+    settingsRequestGeneration.current += 1;
     setIsSaving(true);
     setFeedback(null);
     try {
       const settings = await saveAiApiKey("gemini", submittedKey);
       setConfigured(settings.configured);
+      setSettingsLoadState("ready");
       setApiKey("");
     } catch {
+      if (hadPendingSettingsLoad) {
+        setConfigured(null);
+        setSettingsLoadState("failed");
+      }
       setFeedback("actionFailure");
     } finally {
       setIsSaving(false);
@@ -78,12 +98,19 @@ export function AiSettingsCard({ connectionReady }: AiSettingsCardProps) {
   }
 
   async function removeKey() {
+    const hadPendingSettingsLoad = settingsLoadState === "loading";
+    settingsRequestGeneration.current += 1;
     setIsDeleting(true);
     setFeedback(null);
     try {
       const settings = await deleteAiApiKey("gemini");
       setConfigured(settings.configured);
+      setSettingsLoadState("ready");
     } catch {
+      if (hadPendingSettingsLoad) {
+        setConfigured(null);
+        setSettingsLoadState("failed");
+      }
       setFeedback("actionFailure");
     } finally {
       setIsDeleting(false);
@@ -94,7 +121,11 @@ export function AiSettingsCard({ connectionReady }: AiSettingsCardProps) {
   const actionsDisabled = !connectionReady || isWorking;
   const status = !connectionReady
     ? ai.connecting
-    : configured === true
+    : settingsLoadState === "failed"
+      ? ai.settingsLoadFailure
+      : settingsLoadState === "loading"
+        ? ai.loading
+        : configured === true
       ? ai.configured
       : configured === false
         ? ai.notConfigured
@@ -108,6 +139,11 @@ export function AiSettingsCard({ connectionReady }: AiSettingsCardProps) {
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-950">{status}</div>
+        {connectionReady && settingsLoadState === "failed" ? (
+          <Button variant="outline" className="border-blue-200 text-blue-950 hover:bg-blue-50" onClick={loadSettings} disabled={isWorking}>
+            {ai.retrySettingsLoad}
+          </Button>
+        ) : null}
         <div className="space-y-2">
           <Label htmlFor="gemini-api-key">{ai.apiKeyLabel}</Label>
           <Input

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AiSettingsCard } from "./AiSettingsCard";
 
@@ -12,6 +12,16 @@ const mockRpc = vi.hoisted(() => ({
 vi.mock("../lib/rpcClient", () => mockRpc);
 
 const geminiSettings = (configured: boolean) => ({ provider: "gemini" as const, configured });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
 
 beforeEach(() => {
   for (const mock of Object.values(mockRpc)) {
@@ -40,6 +50,54 @@ describe("AiSettingsCard", () => {
 
     await waitFor(() => expect(mockRpc.saveAiApiKey).toHaveBeenCalledWith("gemini", "secret-value"));
     expect(apiKey).toHaveValue("");
+    expect(document.body.textContent).not.toContain("secret-value");
+  });
+
+  it("keeps a successful save status when an older initial settings response resolves later", async () => {
+    const initialLoad = deferred<ReturnType<typeof geminiSettings>>();
+    mockRpc.getAiSettings.mockReturnValue(initialLoad.promise);
+    mockRpc.saveAiApiKey.mockResolvedValue(geminiSettings(true));
+    render(<AiSettingsCard connectionReady />);
+
+    fireEvent.change(screen.getByLabelText("Gemini API key"), { target: { value: "secret-value" } });
+    fireEvent.click(screen.getByRole("button", { name: "บันทึก API key" }));
+
+    expect(await screen.findByText("ตั้งค่า Gemini API key แล้ว")).toBeInTheDocument();
+    await act(async () => {
+      initialLoad.resolve(geminiSettings(false));
+      await initialLoad.promise;
+    });
+
+    expect(screen.getByText("ตั้งค่า Gemini API key แล้ว")).toBeInTheDocument();
+    expect(screen.queryByText("ยังไม่ได้ตั้งค่า Gemini API key")).not.toBeInTheDocument();
+  });
+
+  it("shows a recoverable settings-load failure instead of remaining in loading", async () => {
+    mockRpc.getAiSettings.mockRejectedValueOnce(new Error("settings secret-value failure"));
+    mockRpc.getAiSettings.mockResolvedValueOnce(geminiSettings(false));
+    render(<AiSettingsCard connectionReady />);
+
+    expect(await screen.findByText("ไม่สามารถตรวจสอบสถานะ Gemini API key ได้ กรุณาลองใหม่")).toBeInTheDocument();
+    expect(screen.queryByText("กำลังตรวจสอบสถานะ Gemini API key")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "ลองตรวจสอบใหม่" }));
+
+    expect(await screen.findByText("ยังไม่ได้ตั้งค่า Gemini API key")).toBeInTheDocument();
+    expect(mockRpc.getAiSettings).toHaveBeenCalledTimes(2);
+    expect(document.body.textContent).not.toContain("secret-value");
+  });
+
+  it("keeps a failed save safe and leaves the key only in its password input", async () => {
+    mockRpc.saveAiApiKey.mockRejectedValue(new Error("save secret-value failure"));
+    render(<AiSettingsCard connectionReady />);
+    await screen.findByText("ยังไม่ได้ตั้งค่า Gemini API key");
+
+    const apiKey = screen.getByLabelText("Gemini API key");
+    fireEvent.change(apiKey, { target: { value: "secret-value" } });
+    fireEvent.click(screen.getByRole("button", { name: "บันทึก API key" }));
+
+    expect(await screen.findByText("ไม่สามารถทำรายการได้ กรุณาลองใหม่")).toBeInTheDocument();
+    expect(apiKey).toHaveValue("secret-value");
     expect(document.body.textContent).not.toContain("secret-value");
   });
 
