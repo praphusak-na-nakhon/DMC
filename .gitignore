@@ -12,6 +12,7 @@ obec-fill-review.csv
 .venv/
 *.egg-info/
 .dmc-assistant-data/
+.dmc-field-tests/
 *.sqlite3
 *.sqlite3-*
 .cloud-state.sqlite3

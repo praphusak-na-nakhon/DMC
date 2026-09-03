@@ -52,10 +52,11 @@ if (Test-Path $pyInstallerExe) {
         --specpath $sidecarBuild `
         --hidden-import playwright.sync_api `
         --hidden-import dmc_sidecar.gemini_ocr `
-        --hidden-import dmc_sidecar.akson_ocr `
-        --hidden-import dmc_sidecar.typhoon_ocr `
+        --hidden-import dmc_sidecar.ai.gemini `
+        --hidden-import keyring.backends.Windows `
         --hidden-import google.genai `
         --hidden-import google.genai.types `
+        --collect-all keyring `
         --collect-data playwright `
         --paths $sidecarRoot `
         $sidecarEntry
@@ -70,10 +71,11 @@ if (Test-Path $pyInstallerExe) {
         --specpath $sidecarBuild `
         --hidden-import playwright.sync_api `
         --hidden-import dmc_sidecar.gemini_ocr `
-        --hidden-import dmc_sidecar.akson_ocr `
-        --hidden-import dmc_sidecar.typhoon_ocr `
+        --hidden-import dmc_sidecar.ai.gemini `
+        --hidden-import keyring.backends.Windows `
         --hidden-import google.genai `
         --hidden-import google.genai.types `
+        --collect-all keyring `
         --collect-data playwright `
         --paths $sidecarRoot `
         $sidecarEntry

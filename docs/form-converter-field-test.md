@@ -1,54 +1,57 @@
 # Form Converter Field Test Runbook
 
-This runbook covers the remaining manual validation for the scanned PDF form
-converter. It is intentionally separate from unit tests because it requires real
-school forms and, when `DMC_OCR_PROVIDER=openai`, a real AI API key.
+This is an explicit, manual field test for scanned DMC forms. It submits each
+PDF directly from the local sidecar to Gemini and is not part of automated
+testing. Never commit PDFs, generated reports, or API keys.
 
 ## Inputs Needed
 
-- One blank DMC student-history form.
+- One blank DMC student-history form for template review.
 - 10-20 scanned PDFs with real handwriting for the first accuracy pass.
-- Larger scan batches for performance: 100 pages, 1,000 pages, and later 5,000 pages.
-- A cloud staging user with enough credits.
-- `DMC_OCR_OPENAI_API_KEY` when testing the OpenAI provider.
-- `DMC_OCR_GEMINI_API_KEY` when testing the Gemini provider.
+- Larger real-scan batches for 100, 1,000, and 5,000-page performance checks.
+- A Gemini API key supplied only for the current field-test process.
 
-## 1. Real Document Test
+The field-test script does not read, write, or delete Windows Credential
+Manager entries. Prefer `GEMINI_API_KEY` over `--gemini-api-key`, because
+command-line arguments can be visible to other local processes and shell
+history.
 
-Put scanned PDFs in a local folder that is not committed, for example:
+## 1. Prepare Local Files
+
+Put scanned PDFs in a private folder outside the repository, for example:
 
 ```powershell
 C:\dmc-field-test\form-pdfs
 ```
 
-The field-test script writes local review files only. `field-results.csv` may
-contain student PII, so keep the output folder private and do not commit it.
+The OCR cache is stored locally under `.dmc-assistant-data\ocr\gemini` (or the
+directory selected by `DMC_DATA_DIR`). The field-test review output defaults to
+`.dmc-field-tests\form-converter\<timestamp>`. Both can contain student PII;
+the latter is ignored by Git and must remain private.
 
-## 2. Enable AI Provider
+## 2. Run the Opt-in Gemini Test
 
-In the cloud staging terminal:
-
-```powershell
-cd C:\dmc
-$env:DMC_CLOUD_BASE_URL = "http://127.0.0.1:8000"
-$env:DMC_OCR_PROVIDER = "openai"
-$env:DMC_OCR_OPENAI_API_KEY = "<your-api-key>"
-$env:DMC_OCR_OPENAI_MODEL = "gpt-5.5"
-corepack pnpm run cloud:dev
-```
-
-For mock-only workflow checks, keep `DMC_OCR_PROVIDER=mock`.
-
-Gemini staging example:
+From the repository root, set a process-local environment variable and run the
+tool. Do not paste a real key into a shared terminal transcript.
 
 ```powershell
 cd C:\dmc
-$env:DMC_CLOUD_BASE_URL = "http://127.0.0.1:8000"
-$env:DMC_OCR_PROVIDER = "gemini"
-$env:DMC_OCR_GEMINI_API_KEY = "<key-from-google-ai-studio>"
-$env:DMC_OCR_GEMINI_MODEL = "gemini-2.5-flash-lite"
-corepack pnpm run cloud:dev
+$env:GEMINI_API_KEY = "<key-from-google-ai-studio>"
+corepack pnpm run form-converter:field-test -- `
+  --pdf-dir "C:\dmc-field-test\form-pdfs" `
+  --output-dir "C:\dmc-field-test\results\pilot-001"
+Remove-Item Env:GEMINI_API_KEY
 ```
+
+`--gemini-api-key` is available for a one-off invocation, but the environment
+variable is safer. The runner creates an in-memory credential store only for
+that process; it does not call the desktop credential store or persist the
+field-test key.
+
+For each PDF, standard output contains only the local output path, page count,
+model, processing mode, and Gemini usage totals. It never prints the key or
+raw provider errors. `summary.json` and `quality-summary.csv` carry those
+metrics; `field-results.csv` holds extracted values for manual review.
 
 ## 3. Template Mapping Review
 
@@ -66,35 +69,23 @@ Current v1 mapping is `student_history_v1`:
 After reviewing the blank form, update `apps/sidecar/dmc_sidecar/form_template.py`
 if the real form needs more fields or different validation.
 
-## 4. Run Accuracy/Performance Batch
+## 4. What the Test Preserves
 
-Start cloud staging, then run:
+The local Gemini OCR path retains page estimation, standard or batch processing,
+structured JSON cache reuse, and usage metadata. A cache hit avoids a duplicate
+submission for unchanged input unless the normal OCR request is forced to
+refresh. Review all extracted fields before Excel export; this tool never
+submits data to DMC.
 
-```powershell
-cd C:\dmc
-$env:DMC_FIELD_TEST_EMAIL = "teacher@example.test"
-$env:DMC_FIELD_TEST_PASSWORD = "correct-password"
-corepack pnpm run form-converter:field-test -- `
-  --pdf-dir "C:\dmc-field-test\form-pdfs" `
-  --cloud-base-url "http://127.0.0.1:8000" `
-  --output-dir "C:\dmc-field-test\results\pilot-001"
-```
+## Pass Criteria Before Broad Release
 
-Outputs:
+- At least 10-20 real forms complete without local provider errors.
+- Required fields are usable after review at the agreed accuracy target.
+- Export schema matches the school workflow.
+- 100-page batch has acceptable runtime and memory; larger 1,000 and 5,000-page
+  runs either complete or give an understandable batching limit.
+- No API key is present in local reports, cache files, diagnostics, or console
+  output.
 
-- `quality-summary.csv` has one row per PDF with page count, record count,
-  status counts, and average confidence.
-- `field-results.csv` has OCR field values and alternatives for manual review.
-- `summary.json` has the same quality metrics in JSON.
-
-The script reserves credits before OCR and releases them after each test file.
-Provider costs may still apply when using a real AI provider.
-
-## Pass Criteria Before Production Work
-
-- At least 10-20 real forms processed without OCR gateway errors.
-- Required fields are usable after review for at least the agreed target accuracy.
-- Export schema matches the Excel file expected by the school workflow.
-- 100-page batch completes with acceptable runtime and memory.
-- 1,000-page batch completes or produces a clear batching limit.
-- No PII appears in cloud telemetry, admin audit, or ledger records.
+Automated tests use fakes and never call Gemini. Provider connectivity is
+verified only by this deliberate, key-supplied field-test command.
