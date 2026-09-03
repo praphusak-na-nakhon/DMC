@@ -82,6 +82,22 @@ def test_ping_rpc() -> None:
     assert response["result"]["sidecar_version"] == "0.1.0"
 
 
+def test_unsupported_rpc_returns_method_not_found_envelope() -> None:
+    server = RpcServer(emit_notification=lambda payload: None)
+
+    response = _rpc_call(server, "unsupported_method", {})
+
+    assert response == {
+        "jsonrpc": "2.0",
+        "id": "req-unsupported_method",
+        "error": {
+            "code": "RPC_METHOD_NOT_FOUND",
+            "message": "Unsupported method: unsupported_method",
+            "details": {},
+        },
+    }
+
+
 def test_ocr_dmc_form_with_gemini_rpc(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
     captured: dict[str, object] = {}
     source_path = tmp_path / "form.pdf"

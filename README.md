@@ -17,6 +17,7 @@ sidecar that drives Playwright, a cloud backend for account/credit/OCR, and a Re
 - `graduation` — fill ม.3/ม.6 graduation statuses into the portal from an Excel roster
 - `currentStudents` — reconcile student rosters + Thai-ID CSV + OCR, build a transfer-in import form, and fill it
 - `formConverter` — handwritten PDF forms → AI OCR (mock/openai/gemini) → review → Excel, credit-gated through the cloud
+- `studentBasicInfo` — create a student basic-information workbook from DMC data
 
 ## Local Development
 

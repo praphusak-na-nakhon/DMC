@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
 import messages from "../i18n/th.json";
@@ -49,10 +49,17 @@ describe("ModuleHome", () => {
   it("renders only retained local modules", () => {
     renderHome();
 
-    expect(screen.getByText(messages.app.home.modules.formConverter.title)).toBeInTheDocument();
-    expect(screen.getByText(messages.app.home.modules.studentBasicInfo.title)).toBeInTheDocument();
-    expect(screen.getByText(messages.app.home.modules.currentStudents.title)).toBeInTheDocument();
-    expect(screen.getByText(messages.app.home.modules.graduation.title)).toBeInTheDocument();
+    const moduleCards = screen
+      .getAllByRole("button")
+      .filter((element) => element.getAttribute("tabindex") === "0");
+
+    expect(moduleCards).toHaveLength(4);
+    expect(moduleCards.map((card) => within(card).getByRole("button").textContent)).toEqual([
+      messages.app.home.moduleActions.formConverter,
+      messages.app.home.moduleActions.studentBasicInfo,
+      messages.app.home.moduleActions.currentStudents,
+      messages.app.home.moduleActions.graduation,
+    ]);
   });
 
   it("opens currentStudents from the ready module list", () => {
