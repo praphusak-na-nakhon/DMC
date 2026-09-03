@@ -452,17 +452,6 @@ export type ValidateCurrentStudentsImportFormResponse = {
   warnings: CurrentStudentsWarning[];
 };
 
-export type ModuleConfigStatus = {
-  module: "graduation";
-  version: string;
-  source: "bundled" | "cached" | "cloud";
-  signature_verified: boolean;
-  config_path: string;
-  checked_at: string;
-  updated: boolean;
-  last_error: string | null;
-};
-
 export type BrowserRuntimePackage = {
   name: string;
   install_location: string;
@@ -1391,30 +1380,6 @@ function readStringArray(record: UnknownRecord, key: string, context: string): s
     }
     return item;
   });
-}
-
-export function parseModuleConfigStatus(value: unknown): ModuleConfigStatus {
-  const record = asRecord(value, "module_config_status");
-  const module = readString(record, "module", "module_config_status");
-  if (module !== "graduation") {
-    throw new Error("module_config_status.module must be 'graduation'");
-  }
-
-  const source = readString(record, "source", "module_config_status");
-  if (source !== "bundled" && source !== "cached" && source !== "cloud") {
-    throw new Error("module_config_status.source must be bundled, cached, or cloud");
-  }
-
-  return {
-    module,
-    version: readString(record, "version", "module_config_status"),
-    source,
-    signature_verified: readBoolean(record, "signature_verified", "module_config_status"),
-    config_path: readString(record, "config_path", "module_config_status"),
-    checked_at: readString(record, "checked_at", "module_config_status"),
-    updated: readBoolean(record, "updated", "module_config_status"),
-    last_error: readOptionalString(record, "last_error", "module_config_status"),
-  };
 }
 
 function parseBrowserRuntimePackage(value: unknown, index: number): BrowserRuntimePackage {

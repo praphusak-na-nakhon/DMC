@@ -4,7 +4,6 @@ import type {
   BrowserRuntimeStatus,
   DatabaseStatus,
   JobStatusSnapshot,
-  ModuleConfigStatus,
   UpdaterStatus,
 } from "../types/contracts";
 
@@ -155,7 +154,6 @@ type DiagnosticsInput = {
   platform: string;
   connectionState: string;
   databaseStatus: DatabaseStatus | null;
-  moduleConfigStatus: ModuleConfigStatus | null;
   browserRuntimeStatus: BrowserRuntimeStatus | null;
   updaterStatus: UpdaterStatus | null;
   availableUpdate: AvailableUpdate | null;
@@ -205,7 +203,6 @@ export function buildSupportDiagnostics(input: DiagnosticsInput): Record<string,
     platform: input.platform,
     connection_state: input.connectionState,
     database_status: input.databaseStatus,
-    module_config_status: input.moduleConfigStatus,
     browser_runtime_status: input.browserRuntimeStatus,
     updater_status: input.updaterStatus,
     available_update: input.availableUpdate,

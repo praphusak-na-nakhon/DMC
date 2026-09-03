@@ -26,8 +26,6 @@ beforeEach(() => {
     calls.push(method);
     switch (method) {
       case "get_ai_settings": return { provider: "gemini", configured: false };
-      case "get_module_config_status":
-      case "sync_module_config": return { module: "graduation", version: "local", source: "bundled", signature_verified: true, config_path: "config.json", checked_at: "2026-09-04", updated: false, last_error: null };
       case "get_database_status": return { path: "local.sqlite3", schema_generation: 2, tables: ["job"], job_columns: ["id"] };
       case "list_jobs": return { items: [] };
       case "get_browser_runtime_status": return { state: "ready", installed: true, install_dir: "browser", executable_path: "browser/chrome.exe", bootstrap_supported: true, bootstrap_performed: false, estimated_download_bytes: null, required_components: [], message: null, guidance: null, last_error: null, log_tail: [] };
@@ -48,6 +46,6 @@ it("starts locally with four visible modules and AI settings without account, ca
   expect(screen.getByText(messages.app.home.aiSettings.title)).toBeVisible();
   expect(calls).toEqual(expect.arrayContaining(["initialize_sidecar", "get_database_status", "list_jobs", "get_ai_settings"]));
   expect(calls).not.toEqual(expect.arrayContaining(["get_account_status"]));
-  expect(calls.some((method) => /account|catalog|wallet|sign_in/.test(method))).toBe(false);
+  expect(calls.some((method) => /account|catalog|wallet|sign_in|module_config/.test(method))).toBe(false);
   expect(screen.queryByText(/เครดิต|เข้าสู่ระบบ|License/i)).not.toBeInTheDocument();
 });

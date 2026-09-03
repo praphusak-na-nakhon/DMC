@@ -31,7 +31,6 @@ from .current_students import (
     validate_current_students_import_form,
 )
 from .job_store import JobStore
-from .module_config import load_effective_config, sync_module_config
 from .modules import get_module
 from .runtime import JobManager, build_event_notification, utc_now
 from .schemas import (
@@ -40,8 +39,6 @@ from .schemas import (
     ExportStudentBasicInfoFormRequest,
     FilePathRequest,
     JobIdRequest,
-    ModuleConfigRequest,
-    ModuleConfigStatus,
     PingResponse,
     RpcErrorData,
     RpcErrorResponse,
@@ -182,21 +179,6 @@ class RpcServer:
                 result = validate_current_students_import_form(current_students_import_params).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
-            if request.method == "get_module_config_status":
-                config_params = ModuleConfigRequest.model_validate(request.params)
-                state = load_effective_config(config_params.module)
-                result = ModuleConfigStatus(
-                    module=config_params.module,
-                    version=state.version,
-                    source=state.source,
-                    signature_verified=state.signature_verified,
-                    config_path=str(state.config_path),
-                    checked_at=state.checked_at,
-                    updated=state.updated,
-                    last_error=state.last_error,
-                ).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
-
             if request.method == "get_browser_runtime_status":
                 result = get_browser_runtime_status().model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
@@ -226,21 +208,6 @@ class RpcServer:
                         message="Stop active jobs before restoring a backup.",
                     )
                 result = restore_backup_archive(_backup_rpc_path(restore_params.path, must_exist=True))
-                return RpcSuccessResponse(id=request.id, result=result)
-
-            if request.method == "sync_module_config":
-                sync_params = ModuleConfigRequest.model_validate(request.params)
-                state = sync_module_config(sync_params.module)
-                result = ModuleConfigStatus(
-                    module=sync_params.module,
-                    version=state.version,
-                    source=state.source,
-                    signature_verified=state.signature_verified,
-                    config_path=str(state.config_path),
-                    checked_at=state.checked_at,
-                    updated=state.updated,
-                    last_error=state.last_error,
-                ).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "start_job":

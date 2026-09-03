@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { describeAiError, describeUserFacingError, getRuntimeConnectionErrorKind } from "./errorMessages";
 
 describe("error message mapping", () => {
+  it("directs users to reinstall a damaged bundled config without leaking details", () => {
+    const message = describeUserFacingError("CONFIG_BUNDLED_INVALID: private-path");
+    expect(message).toContain("ติดตั้ง");
+    expect(message).not.toContain("private-path");
+    expect(message).not.toContain("cloud");
+  });
   it("classifies missing Tauri IPC as a desktop runtime error", () => {
     const raw = "Cannot read properties of undefined (reading 'transformCallback')";
 

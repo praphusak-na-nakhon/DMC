@@ -18,7 +18,6 @@ import type {
   DatabaseStatus,
   JobStatusSnapshot,
   ListJobsResponse,
-  ModuleConfigStatus,
   OcrDocumentInput,
   OcrDocumentResponse,
   RestoreBackupResponse,
@@ -47,7 +46,6 @@ import {
   parseJobActionResponse,
   parseJobStatusSnapshot,
   parseListJobsResponse,
-  parseModuleConfigStatus,
   parseOcrDocumentResponse,
   parseRestoreBackupResponse,
   parseResumeExistingJobResponse,
@@ -368,20 +366,6 @@ export async function validateCurrentStudentImportForm(
     excel_path: excelPath,
   });
   return parseValidateCurrentStudentsImportFormResponse(result);
-}
-
-export async function getModuleConfigStatus(
-  module: "graduation" = "graduation",
-): Promise<ModuleConfigStatus> {
-  const result = await sidecarRequest<unknown>("get_module_config_status", { module });
-  return parseModuleConfigStatus(result);
-}
-
-export async function syncModuleConfig(
-  module: "graduation" = "graduation",
-): Promise<ModuleConfigStatus> {
-  const result = await sidecarRequest<unknown>("sync_module_config", { module });
-  return parseModuleConfigStatus(result);
 }
 
 export async function getBrowserRuntimeStatus(): Promise<BrowserRuntimeStatus> {

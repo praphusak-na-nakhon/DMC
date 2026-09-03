@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import json
 import threading
 import time
@@ -9,34 +8,12 @@ from typing import Any
 
 import pytest
 from ai_fakes import InMemorySecretStore
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from dmc_sidecar import config as sidecar_config
 from dmc_sidecar.checkpoint import JobCheckpoint
 from dmc_sidecar.errors import DomainError
-from dmc_sidecar.module_config import load_effective_config, sync_module_config
 from dmc_sidecar.rpc import RpcServer
 from dmc_sidecar.runtime import utc_now
-
-
-class _UrlopenResponse:
-    def __init__(self, *, status: int, headers: dict[str, str], body: bytes) -> None:
-        self.status = status
-        self.headers = headers
-        self._body = body
-
-    def read(self) -> bytes:
-        return self._body
-
-    def getcode(self) -> int:
-        return self.status
-
-    def __enter__(self) -> "_UrlopenResponse":
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> bool:  # noqa: ANN001
-        return False
 
 
 def _rpc_call(server: RpcServer, method: str, params: dict[str, object]) -> dict[str, Any]:
@@ -411,94 +388,30 @@ def test_session_expiry_login_resume_workflow(monkeypatch, tmp_path: Path, modul
     _wait_until(lambda: not reopened_server.job_manager.runtime_statuses())
 
 
-def test_invalid_signed_config_falls_back_to_cached_workflow(monkeypatch, tmp_path: Path) -> None:
+def test_invalid_bundled_config_stops_validation_and_job_workflow(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(sidecar_config, "default_data_dir", lambda: tmp_path)
     bundled_root = tmp_path / "bundled"
-    configs_root = tmp_path / "configs"
-    keyring_path = tmp_path / "keys.json"
     bundled_path = bundled_root / "graduation" / "v1.json"
-    bundled_path.parent.mkdir(parents=True, exist_ok=True)
-    configs_root.mkdir(parents=True, exist_ok=True)
+    bundled_path.parent.mkdir(parents=True)
+    bundled_path.write_text('{"module": "graduation"}', encoding="utf-8")
+    monkeypatch.setattr(sidecar_config, "module_configs_root", lambda: bundled_root)
+    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
+    notifications: list[dict[str, Any]] = []
+    server = RpcServer(emit_notification=notifications.append, secret_store=InMemorySecretStore())
 
-    bundled_path.write_text(
-        json.dumps({"version": "1.0.0", "status_code_map": {"เดิม": "201"}}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-    private_key = Ed25519PrivateKey.generate()
-    public_key = private_key.public_key().public_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PublicFormat.Raw,
-    )
-    keyring_path.write_text(
-        json.dumps(
-            {
-                "keys": [
-                    {
-                        "key_id": "test-key",
-                        "algorithm": "ed25519",
-                        "public_key_base64": base64.b64encode(public_key).decode("ascii"),
-                    }
-                ]
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-
-    cached_config = {"status_code_map": {"เดิม": "201", "อื่น": "207"}}
-    cached_payload = json.dumps(
-        {"version": "1.0.1", "config": cached_config},
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    cached_signature = base64.b64encode(private_key.sign(cached_payload)).decode("ascii")
-    (configs_root / "graduation.json").write_text(
-        json.dumps(
-            {
-                "version": "1.0.1",
-                "config": cached_config,
-                "signature": f"ed25519:test-key:{cached_signature}",
-                "verified_at": "2026-04-23T00:00:00Z",
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-
-    monkeypatch.setattr("dmc_sidecar.module_config.module_configs_root", lambda: bundled_root)
-    monkeypatch.setattr("dmc_sidecar.module_config.configs_dir", lambda: configs_root)
-    monkeypatch.setattr("dmc_sidecar.module_config.config_signing_keys_path", lambda: keyring_path)
-    monkeypatch.setattr("dmc_sidecar.module_config.secure_cloud_base_url", lambda: "https://cloud.test")
-
-    invalid_cloud_payload = {
-        "version": "2.0.0",
-        "config": {"status_code_map": {"ปลอม": "999"}},
-        "signature": "ed25519:test-key:invalid-signature",
-    }
-
-    monkeypatch.setattr(
-        "dmc_sidecar.module_config.urlopen",
-        lambda request, timeout=10: _UrlopenResponse(  # noqa: ARG005
-            status=200,
-            headers={"Content-Type": "application/json"},
-            body=json.dumps(invalid_cloud_payload).encode("utf-8"),
-        ),
-    )
-
-    baseline_state = load_effective_config("graduation")
-    synced_state = sync_module_config("graduation")
-    reloaded_state = load_effective_config("graduation")
-
-    assert baseline_state.source == "cached"
-    assert baseline_state.version == "1.0.1"
-    assert synced_state.source == "cached"
-    assert synced_state.updated is False
-    assert synced_state.last_error == "CONFIG_SIGNATURE_INVALID"
-    assert reloaded_state.source == "cached"
-    assert reloaded_state.version == "1.0.1"
-    assert reloaded_state.config["status_code_map"]["อื่น"] == "207"
+    validated = _rpc_call(server, "validate_excel", {"module": "graduation", "path": "not-read.xlsx"})
+    assert validated["error"]["code"] == "CONFIG_BUNDLED_INVALID"
+    started = _rpc_call(server, "start_job", {
+        "job_id": "bad-config-job", "module": "graduation",
+        "excel_path": "not-read.xlsx", "options": {"dry_run": False},
+    })
+    assert started["result"]["accepted"] is True
+    _wait_until(lambda: not server.job_manager.runtime_statuses())
+    status = server.job_store.get_status("bad-config-job")
+    assert status is not None and status["status"] == "failed"
+    assert status["processed"] == 0
+    assert any(event.get("type") == "error" and event.get("code") == "CONFIG_BUNDLED_INVALID" for event in notifications)
+    assert not (tmp_path / "profiles").exists()
 
 
 def test_backup_restore_reopen_workflow(monkeypatch, tmp_path: Path) -> None:

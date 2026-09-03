@@ -1,152 +1,83 @@
 from __future__ import annotations
 
-import base64
 import json
-from datetime import UTC, datetime
 from pathlib import Path
+from urllib import request
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+import pytest
+
 from dmc_sidecar import config, module_config
 from dmc_sidecar.errors import DomainError
 
 
-class FakeResponse:
-    def __init__(self, status: int, payload: dict[str, object] | None = None) -> None:
-        self.status = status
-        self._payload = payload
-
-    def read(self) -> bytes:
-        return json.dumps(self._payload or {}).encode("utf-8")
-
-    def __enter__(self) -> "FakeResponse":
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        return None
-
-PRIVATE_KEY_SEED_HEX = "affb171844b95521a4d9a844da801d480577ca29d141eb5113da47acf182a088"
-KEY_ID = "dev-2026-01"
-
-
-def sign_payload(version: str, payload: dict[str, object]) -> str:
-    key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(PRIVATE_KEY_SEED_HEX))
-    signature = key.sign(module_config._canonical_payload(version, payload))  # noqa: SLF001
-    return f"ed25519:{KEY_ID}:{base64.b64encode(signature).decode('ascii')}"
-
-
-def test_sync_module_config_downloads_and_caches_verified_payload(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    monkeypatch.setattr(module_config, "secure_cloud_base_url", lambda: "https://cloud.example.test")
-
-    bundled = module_config.load_effective_config("graduation")
-    payload = dict(bundled.config)
-    payload["version"] = "0.2.0"
-    payload["login_url"] = "https://portal.example.test/login"
-    response_payload = {
-        "version": "0.2.0",
-        "config": payload,
-        "signature": sign_payload("0.2.0", payload),
+def bundled_payload() -> dict[str, object]:
+    return {
+        "module": "graduation", "version": "1",
+        "login_url": "https://example.test/login",
+        "target_url_template": "https://example.test/students?level={level_code}",
+        "selectors": {}, "status_code_map": {}, "level_rules": {},
     }
 
-    monkeypatch.setattr(
-        module_config,
-        "urlopen",
-        lambda request, timeout=10: FakeResponse(200, response_payload),
-    )
 
-    state = module_config.sync_module_config("graduation")
-
-    assert state.version == "0.2.0"
-    assert state.source == "cloud"
-    assert state.signature_verified is True
-    assert state.updated is True
-    assert state.last_error is None
-    assert state.config_path.exists()
-
-    reloaded = module_config.load_effective_config("graduation")
-    assert reloaded.version == "0.2.0"
-    assert reloaded.source == "cached"
-    assert reloaded.signature_verified is True
+def write_bundle(monkeypatch, tmp_path: Path, raw: str) -> None:
+    monkeypatch.setenv("DMC_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(config, "module_configs_root", lambda: tmp_path)
+    module_dir = tmp_path / "graduation"
+    module_dir.mkdir()
+    (module_dir / "v1.json").write_text(raw, encoding="utf-8")
 
 
-def test_sync_module_config_rejects_invalid_signature_and_keeps_local_state(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    monkeypatch.setattr(module_config, "secure_cloud_base_url", lambda: "https://cloud.example.test")
+def test_bundled_graduation_config_loads_without_cloud_or_signature(monkeypatch, tmp_path: Path) -> None:
+    write_bundle(monkeypatch, tmp_path, json.dumps(bundled_payload()))
+    monkeypatch.setenv("DMC_CLOUD_BASE_URL", "https://cloud.example.test")
 
-    monkeypatch.setattr(
-        module_config,
-        "urlopen",
-        lambda request, timeout=10: FakeResponse(
-            200,
-            {
-                "version": "0.9.0",
-                "config": {"module": "graduation", "version": "0.9.0"},
-                "signature": "ed25519:dev-2026-01:deadbeef",
-            },
-        ),
-    )
+    def no_network(*args, **kwargs):
+        pytest.fail("bundled config must not make a network request")
 
-    state = module_config.sync_module_config("graduation")
-
-    assert state.source == "bundled"
-    assert state.signature_verified is True
-    assert state.updated is False
-    assert state.last_error == "CONFIG_SIGNATURE_INVALID"
+    monkeypatch.setattr(request, "urlopen", no_network)
+    payload = module_config.load_bundled_module_config("graduation")
+    assert payload["login_url"] == "https://example.test/login"
+    assert payload["version"] == "1"
+    assert not (tmp_path / "data").exists()
 
 
-def test_sync_module_config_rejects_insecure_cloud_url(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    monkeypatch.setattr(
-        module_config,
-        "secure_cloud_base_url",
-        lambda: (_ for _ in ()).throw(DomainError("CLOUD_URL_INSECURE")),
-    )
-
-    state = module_config.sync_module_config("graduation")
-
-    assert state.updated is False
-    assert state.last_error == "CLOUD_URL_INSECURE"
+@pytest.mark.parametrize("raw", ["{not-json", "[]", "null", "{}"])
+def test_bundled_config_rejects_invalid_document(monkeypatch, tmp_path: Path, raw: str) -> None:
+    write_bundle(monkeypatch, tmp_path, raw)
+    with pytest.raises(DomainError, match="CONFIG_BUNDLED_INVALID"):
+        module_config.load_bundled_module_config("graduation")
 
 
-def test_bundled_module_config_rejects_tampering(monkeypatch, tmp_path: Path) -> None:
-    config_root = tmp_path / "module-configs" / "graduation"
-    config_root.mkdir(parents=True)
-    (config_root / "v1.json").write_text(
-        json.dumps(
-            {
-                "version": "0.1.0",
-                "login_url": "https://phishing.example.test/login",
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(module_config, "module_configs_root", lambda: tmp_path / "module-configs")
-
-    try:
-        module_config.load_effective_config("graduation")
-    except DomainError as exc:
-        assert exc.code == "CONFIG_SIGNATURE_INVALID"
-    else:  # pragma: no cover - explicit assertion branch for readability
-        raise AssertionError("tampered bundled config was accepted")
+@pytest.mark.parametrize(("field", "value"), [
+    ("module", "currentStudents"), ("version", 1), ("login_url", None),
+    ("selectors", {"student_rows": 1}), ("status_code_map", {"status": 201}),
+    ("level_rules", {"ม.3": {"level_code": "12"}}),
+    ("level_rules", {"ม.3": {"level_code": "12", "default_missing_code": None,
+                            "ambiguity_floor": None, "require_exact_student_no": "false"}}),
+    ("unexpected", True),
+])
+def test_bundled_config_rejects_wrong_types_and_unknown_fields(monkeypatch, tmp_path: Path, field: str, value: object) -> None:
+    payload = bundled_payload()
+    payload[field] = value
+    write_bundle(monkeypatch, tmp_path, json.dumps(payload))
+    with pytest.raises(DomainError, match="CONFIG_BUNDLED_INVALID"):
+        module_config.load_bundled_module_config("graduation")
 
 
-def test_quarantine_cached_config_uses_unique_atomic_target(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+def test_missing_bundled_file_is_actionable(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "module_configs_root", lambda: tmp_path)
+    with pytest.raises(DomainError, match="CONFIG_BUNDLED_INVALID"):
+        module_config.load_bundled_module_config("graduation")
 
-    class FixedDatetime:
-        @staticmethod
-        def now(tz):
-            return datetime(2026, 1, 1, tzinfo=UTC if tz is not None else None)
 
-    monkeypatch.setattr(module_config, "datetime", FixedDatetime)
-    cached_path = module_config.cached_config_path("graduation")
-    cached_path.parent.mkdir(parents=True, exist_ok=True)
+@pytest.mark.parametrize("module", ["currentStudents", "../graduation", ""])
+def test_unknown_module_is_rejected(monkeypatch, tmp_path: Path, module: str) -> None:
+    write_bundle(monkeypatch, tmp_path, json.dumps(bundled_payload()))
+    with pytest.raises(DomainError, match="CONFIG_BUNDLED_INVALID"):
+        module_config.load_bundled_module_config(module)
 
-    cached_path.write_text("{not-json", encoding="utf-8")
-    module_config._quarantine_cached_config("graduation")  # noqa: SLF001
-    cached_path.write_text("{not-json-again", encoding="utf-8")
-    module_config._quarantine_cached_config("graduation")  # noqa: SLF001
 
-    assert (cached_path.parent / "graduation.invalid-20260101T000000Z.json").exists()
-    assert (cached_path.parent / "graduation.invalid-20260101T000000Z-1.json").exists()
-    assert not cached_path.exists()
+def test_shipped_graduation_payload_is_preserved() -> None:
+    payload = module_config.load_bundled_module_config("graduation")
+    assert payload == json.loads((config.module_configs_root() / "graduation" / "v1.json").read_text(encoding="utf-8"))
+    assert payload["version"] == "0.1.0"

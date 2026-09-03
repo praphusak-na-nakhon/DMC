@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from urllib.parse import urlparse
-
-from .errors import DomainError
 
 
 APP_NAME = "dmc-assistant"
@@ -64,12 +61,6 @@ def backups_dir() -> Path:
     return path
 
 
-def configs_dir() -> Path:
-    path = ensure_data_dir() / "configs"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
 def profiles_dir() -> Path:
     path = ensure_data_dir() / "profiles"
     path.mkdir(parents=True, exist_ok=True)
@@ -89,34 +80,8 @@ def automation_profile_dir() -> Path:
     return path
 
 
-def cloud_base_url() -> str | None:
-    value = os.getenv("DMC_CLOUD_BASE_URL", "").strip()
-    return value.rstrip("/") or None
-
-
 def allow_production_dry_run() -> bool:
     return env_flag("DMC_ENABLE_DRY_RUN")
-
-
-def secure_cloud_base_url() -> str | None:
-    value = cloud_base_url()
-    if value is None:
-        return None
-
-    parsed = urlparse(value)
-    hostname = (parsed.hostname or "").lower()
-    if parsed.scheme == "https":
-        return value
-    if parsed.scheme == "http" and hostname in {"localhost", "127.0.0.1"}:
-        return value
-    raise DomainError("CLOUD_URL_INSECURE")
-
-
-def config_signing_keys_path() -> Path:
-    bundled_root = bundled_resources_root()
-    if bundled_root is not None:
-        return bundled_root / "shared-schemas" / "config-signing" / "keys.json"
-    return repo_root() / "packages" / "shared-schemas" / "config-signing" / "keys.json"
 
 
 def module_configs_root() -> Path:

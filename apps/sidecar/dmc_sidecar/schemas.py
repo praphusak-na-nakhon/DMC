@@ -62,12 +62,6 @@ class ValidateExcelRequest(BaseModel):
     module: Literal["graduation"]
 
 
-class ModuleConfigRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    module: Literal["graduation"]
-
-
 class ExportStudentBasicInfoFormRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -156,19 +150,6 @@ class FilePathRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     path: str
-
-
-class ModuleConfigStatus(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    module: Literal["graduation"]
-    version: str
-    source: Literal["bundled", "cached", "cloud"]
-    signature_verified: bool
-    config_path: str
-    checked_at: str
-    updated: bool
-    last_error: str | None
 
 
 class BrowserRuntimePackage(BaseModel):

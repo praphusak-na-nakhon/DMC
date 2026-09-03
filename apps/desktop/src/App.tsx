@@ -9,7 +9,6 @@ import {
   getBrowserRuntimeStatus,
   getDatabaseStatus,
   getJobStatus,
-  getModuleConfigStatus,
   getUpdaterStatus,
   initializeSidecar,
   installAppUpdate,
@@ -25,7 +24,6 @@ import {
   saveTemplateDialog,
   startCurrentStudentsImportJob,
   startGraduationJob,
-  syncModuleConfig,
   validateExcel,
   writeTextFile,
   pauseJob,
@@ -101,7 +99,6 @@ export function App() {
   const {
     preview,
     currentJob,
-    moduleConfigStatus,
     existingJobs,
     excelPath,
     connectionState,
@@ -113,7 +110,6 @@ export function App() {
     setExcelPath,
     setPreview,
     setCurrentJob,
-    setModuleConfigStatus,
     setExistingJobs,
     upsertExistingJob,
     setConnectionState,
@@ -192,19 +188,6 @@ export function App() {
     }
   }, [setErrorMessage]);
 
-  const handleSyncConfig = useCallback(async () => {
-    try {
-      const status = await syncModuleConfig("graduation");
-      setModuleConfigStatus(status);
-      pushSidecarMessage(`config graduation ${status.version} (${status.source})`);
-      if (status.last_error) {
-        pushSidecarMessage(`config fallback: ${status.last_error}`);
-      }
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }, [pushSidecarMessage, setErrorMessage, setModuleConfigStatus]);
-
   const handleLoadBrowserRuntime = useCallback(async (): Promise<BrowserRuntimeStatus> => {
     try {
       const status = await getBrowserRuntimeStatus();
@@ -245,11 +228,6 @@ export function App() {
         return;
       }
       setConnectionState("ready");
-      const configStatus = await getModuleConfigStatus("graduation");
-      if (!isActive()) {
-        return;
-      }
-      setModuleConfigStatus(configStatus);
       await handleLoadUpdaterStatus();
       if (!isActive()) {
         return;
@@ -266,7 +244,6 @@ export function App() {
       if (!isActive()) {
         return;
       }
-      await handleSyncConfig();
     } catch (error) {
       if (!isActive()) {
         return;
@@ -279,10 +256,8 @@ export function App() {
     handleLoadDatabaseStatus,
     handleLoadJobs,
     handleLoadUpdaterStatus,
-    handleSyncConfig,
     setConnectionState,
     setErrorMessage,
-    setModuleConfigStatus,
   ]);
 
   async function handleCreateBackup() {
@@ -321,7 +296,6 @@ export function App() {
       await handleLoadDatabaseStatus();
       await handleLoadJobs();
       await handleLoadBrowserRuntime();
-      await handleSyncConfig();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -342,7 +316,6 @@ export function App() {
         platform: typeof navigator !== "undefined" ? navigator.userAgent : "unknown",
         connectionState,
         databaseStatus,
-        moduleConfigStatus,
         browserRuntimeStatus,
         updaterStatus,
         availableUpdate,
@@ -676,7 +649,6 @@ export function App() {
         setErrorMessage(browserStatus.message ?? "ยังไม่ได้ติดตั้ง Chromium runtime");
         return;
       }
-      await handleSyncConfig();
       const result = await startGraduationJob({
         jobId: buildJobId(),
         excelPath: selectedExcelPath,
@@ -1012,7 +984,6 @@ export function App() {
             activeJobId={activeJobId}
             progressPercent={progressPercent}
             connectionState={connectionState}
-            moduleConfigStatus={moduleConfigStatus}
             browserRuntimeStatus={browserRuntimeStatus}
             browserRuntimeProgress={browserRuntimeProgress}
             supportMessage={supportMessage}
@@ -1040,7 +1011,6 @@ export function App() {
             onStopOnReviewChange={setStopOnReview}
             onConnect={() => void handleConnect()}
             onRefreshJobs={() => void handleLoadJobs()}
-            onSyncConfig={() => void handleSyncConfig()}
             onValidate={() => void handleValidate()}
             onStartDryRun={() => void handleStart(true)}
             onStartLive={() => void handleStart(false)}

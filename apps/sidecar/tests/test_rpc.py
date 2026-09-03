@@ -380,23 +380,22 @@ def test_archive_old_jobs_rpc_keeps_latest_terminal_jobs(monkeypatch, tmp_path: 
     assert store.list_results("job-4") == [{"page": 1, "portal_row_index": 1, "note": "dry_run"}]
 
 
-def test_get_module_config_status_rpc(monkeypatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize("method", ["get_module_config_status", "sync_module_config"])
+def test_config_management_rpcs_are_removed(monkeypatch, tmp_path: Path, method: str) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
     server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
     payload = json.dumps(
         {
             "jsonrpc": "2.0",
             "id": "req-config",
-            "method": "get_module_config_status",
+            "method": method,
             "params": {"module": "graduation"},
         }
     )
 
     response = json.loads(server.handle_text(payload))
 
-    assert response["result"]["module"] == "graduation"
-    assert response["result"]["source"] == "bundled"
-    assert response["result"]["version"] == "0.1.0"
+    assert response["error"]["code"] == "RPC_METHOD_NOT_FOUND"
 
 
 def test_get_browser_runtime_status_rpc(monkeypatch, tmp_path: Path) -> None:

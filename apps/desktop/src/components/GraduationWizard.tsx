@@ -3,7 +3,6 @@ import {
   AlertCircle,
   Award,
   CheckCircle2,
-  CloudCog,
   FileCheck2,
   FileDown,
   FileSpreadsheet,
@@ -25,7 +24,6 @@ import {
   describeBrowserRuntimePhase,
   describeJobStatus,
   formatBytes,
-  formatTimestamp,
 } from "../lib/appUi";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Badge } from "./ui/badge";
@@ -44,7 +42,6 @@ import type {
   BrowserRuntimeStatus,
   JobCompletionItem,
   JobStatusSnapshot,
-  ModuleConfigStatus,
   ValidateExcelResponse,
 } from "../types/contracts";
 
@@ -65,7 +62,6 @@ type GraduationWizardProps = {
   activeJobId: string | null;
   progressPercent: number;
   connectionState: ConnectionState;
-  moduleConfigStatus: ModuleConfigStatus | null;
   browserRuntimeStatus: BrowserRuntimeStatus | null;
   browserRuntimeProgress: BrowserRuntimeProgress;
   supportMessage: string | null;
@@ -89,7 +85,6 @@ type GraduationWizardProps = {
   onStopOnReviewChange: (value: boolean) => void;
   onConnect: () => void;
   onRefreshJobs: () => void;
-  onSyncConfig: () => void;
   onValidate: () => void;
   onStartDryRun: () => void;
   onStartLive: () => void;
@@ -240,7 +235,6 @@ export function GraduationWizard({
   activeJobId,
   progressPercent,
   connectionState,
-  moduleConfigStatus,
   browserRuntimeStatus,
   browserRuntimeProgress,
   supportMessage,
@@ -264,7 +258,6 @@ export function GraduationWizard({
   onStopOnReviewChange,
   onConnect,
   onRefreshJobs,
-  onSyncConfig,
   onValidate,
   onStartDryRun,
   onStartLive,
@@ -808,10 +801,7 @@ export function GraduationWizard({
                 </div>
 
                 <div className="space-y-3 rounded-lg border bg-muted/40 p-4">
-                  <div className="font-semibold">Config และ Chromium</div>
-                  <div className="text-sm text-muted-foreground">
-                    สถานะ config: {moduleConfigStatus ? `${moduleConfigStatus.version} (${moduleConfigStatus.source})` : "-"}
-                  </div>
+                  <div className="font-semibold">Chromium</div>
                   <div className="text-sm text-muted-foreground">
                     สถานะ runtime: {browserRuntimeStatus?.message ?? browserRuntimeStatus?.state ?? "-"}
                   </div>
@@ -825,10 +815,6 @@ export function GraduationWizard({
                     </div>
                   ) : null}
                   <div className="flex flex-wrap gap-2">
-                    <Button variant="outline" onClick={onSyncConfig}>
-                      <CloudCog className="h-4 w-4" />
-                      ซิงก์ config
-                    </Button>
                     {browserRuntimeStatus && !browserRuntimeStatus.installed ? (
                       <Button
                         disabled={connectionState !== "ready" || isBootstrappingBrowser || !browserRuntimeStatus.bootstrap_supported}
@@ -869,11 +855,6 @@ export function GraduationWizard({
             {supportSection === "messages" ? <SidecarLogPanel sidecarMessages={sidecarMessages} /> : null}
           </CardContent>
         ) : null}
-      </Card>
-
-      <Card className="px-4 py-3 text-xs text-muted-foreground">
-        สถานะล่าสุด: config ตรวจเมื่อ{" "}
-        {formatTimestamp(moduleConfigStatus?.checked_at ?? null)}
       </Card>
     </div>
   );

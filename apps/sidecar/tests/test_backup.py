@@ -114,7 +114,8 @@ def test_sidecar_backup_archive_round_trip(monkeypatch, tmp_path: Path) -> None:
     store.append_results("backup-job", [{"page": 2, "portal_row_index": 1, "matched_order": 4, "note": "dry_run"}])
     sample_report = config.reports_dir() / "report.json"
     sample_report.write_text('{"ok":true}', encoding="utf-8")
-    sample_config = config.configs_dir() / "graduation.json"
+    sample_config = tmp_path / "configs" / "graduation.json"
+    sample_config.parent.mkdir()
     sample_config.write_text("{}", encoding="utf-8")
     sample_ocr = config.ocr_cache_dir() / "gemini" / "result.json"
     sample_ocr.parent.mkdir(parents=True, exist_ok=True)

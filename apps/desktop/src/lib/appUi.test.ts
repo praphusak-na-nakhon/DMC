@@ -10,12 +10,12 @@ describe("local job UI", () => {
     const output = buildSupportDiagnostics({
       appVersion: "0.1.0", platform: "Win32", connectionState: "ready",
       databaseStatus: { path: "local.sqlite3", schema_generation: 2, tables: ["job"], job_columns: ["id"] },
-      moduleConfigStatus: null, browserRuntimeStatus: null, updaterStatus: null, availableUpdate: null,
+      browserRuntimeStatus: null, updaterStatus: null, availableUpdate: null,
       currentJob: buildDraftJob("private-student-path.xlsx", 2, "job-local"), existingJobs: [],
       sidecarMessageCount: 0, hasErrorMessage: false,
     });
     expect(output.database_status).toMatchObject({ schema_generation: 2, tables: ["job"], job_columns: ["id"] });
     expect(output.current_job).toMatchObject({ job_id: "job-local", total: 2 });
-    expect(JSON.stringify(output)).not.toMatch(/account|credit|private-student-path/);
+    expect(JSON.stringify(output)).not.toMatch(/account|credit|private-student-path|module_config/);
   });
 });
