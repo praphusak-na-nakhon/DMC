@@ -4,6 +4,8 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, Literal
 
+from httpx import TimeoutException
+
 from .base import AiConnectionTestResponse, AiProviderId, OcrDocumentRequest, OcrDocumentResponse, OcrUsageMetadata, SecretStore
 from ..errors import DomainError
 from ..gemini_ocr import GEMINI_OCR_MODEL, GeminiOcrDmcFormRequest, GeminiOcrDmcFormResponse, ocr_dmc_form_with_gemini
@@ -125,6 +127,15 @@ def _utc_now() -> str:
 def _safe_ai_error(exc: Exception) -> DomainError:
     if isinstance(exc, DomainError) and exc.code.startswith("AI_"):
         return DomainError(exc.code)
+    if isinstance(exc, TimeoutException):
+        return DomainError("AI_REQUEST_TIMEOUT")
+    status_code = _status_code(exc)
+    if status_code in {401, 403}:
+        return DomainError("AI_API_KEY_INVALID")
+    if status_code == 429:
+        return DomainError("AI_RATE_LIMITED")
+    if status_code in {408, 504}:
+        return DomainError("AI_REQUEST_TIMEOUT")
     code = exc.code if isinstance(exc, DomainError) else ""
     message = str(exc).upper()
     if code in {"GEMINIOCR_API_KEY_REQUIRED"}:
@@ -147,3 +158,13 @@ def _safe_ai_error(exc: Exception) -> DomainError:
     if code in {"GEMINIOCR_BATCH_FAILED", "GEMINIOCR_BATCH_RESPONSE_MISSING", "GEMINIOCR_PROCESSING_FAILED"}:
         return DomainError("AI_JOB_FAILED")
     return DomainError("AI_RESPONSE_INVALID")
+
+
+def _status_code(exc: Exception) -> int | None:
+    for attribute in ("status_code", "code"):
+        value = getattr(exc, attribute, None)
+        if isinstance(value, int):
+            return value
+    response = getattr(exc, "response", None)
+    value = getattr(response, "status_code", None)
+    return value if isinstance(value, int) else None

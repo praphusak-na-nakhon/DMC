@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
+from google.genai.errors import ClientError
 
 from ai_fakes import InMemorySecretStore
 from dmc_sidecar.ai.base import OcrDocumentRequest
@@ -84,6 +86,40 @@ def test_gemini_connection_tests_metadata_and_closes_client() -> None:
     assert response.ok is True
     assert response.message == "Gemini connection succeeded."
     assert calls == ["metadata", "close"]
+
+
+@pytest.mark.parametrize(
+    ("metadata_error", "expected_code"),
+    [
+        (
+            ClientError(403, {"error": {"status": "PERMISSION_DENIED", "message": "Authorization: Bearer secret-value"}}),
+            "AI_API_KEY_INVALID",
+        ),
+        (httpx.ReadTimeout("Authorization: Bearer secret-value"), "AI_REQUEST_TIMEOUT"),
+    ],
+    ids=["sdk-authentication", "http-timeout"],
+)
+def test_gemini_connection_translates_raw_client_errors_and_closes_client(
+    metadata_error: Exception,
+    expected_code: str,
+) -> None:
+    store = InMemorySecretStore()
+    store.set("gemini", "secret-value")
+    calls: list[str] = []
+
+    class FakeClient:
+        models = SimpleNamespace(get=lambda **_: (_ for _ in ()).throw(metadata_error))
+
+        def close(self) -> None:
+            calls.append("close")
+
+    with pytest.raises(DomainError) as exc_info:
+        GeminiProvider(store, client_factory=lambda **_: FakeClient()).test_connection()
+
+    assert exc_info.value.code == expected_code
+    assert "secret-value" not in exc_info.value.user_message
+    assert "secret-value" not in str(exc_info.value.details)
+    assert calls == ["close"]
 
 
 @pytest.mark.parametrize(
