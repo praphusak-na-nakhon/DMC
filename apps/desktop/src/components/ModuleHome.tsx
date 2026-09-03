@@ -78,9 +78,9 @@ export function ModuleHome({
         </p>
       </header>
 
-      {errorMessage ? (
+      {errorMessage || connectionState === "error" ? (
         <HomeErrorBanner
-          message={errorMessage}
+          message={errorMessage || home.runtimeDisconnected}
           onRetry={onRetryRuntime}
           isRetrying={connectionState === "connecting"}
         />

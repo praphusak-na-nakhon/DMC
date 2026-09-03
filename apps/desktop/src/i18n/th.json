@@ -76,6 +76,7 @@
       "ready": "พร้อมใช้งาน",
       "skeleton": "กำลังออกแบบ",
       "retryConnection": "ลองเชื่อมต่อใหม่",
+      "runtimeDisconnected": "ตัวเชื่อมระบบหยุดทำงาน กรุณาลองเชื่อมต่อใหม่",
       "aiSettings": {
         "title": "การตั้งค่า AI",
         "description": "ตั้งค่า Gemini API key สำหรับอ่านเอกสาร OCR",

@@ -13,6 +13,19 @@ describe("ModuleHome", () => {
     }
     expect(screen.queryByText(/เครดิต|เข้าสู่ระบบ|License/i)).not.toBeInTheDocument();
   });
+  it("offers runtime recovery after a sidecar exit without an error message", () => {
+    const retry = vi.fn();
+    render(<ModuleHome onOpenModule={vi.fn()} connectionState="error" errorMessage={null} onRetryRuntime={retry} />);
+
+    const retryButton = screen.getByRole("button", { name: messages.app.home.retryConnection });
+    expect(retryButton).toBeEnabled();
+    expect(screen.getByText(/ตัวเชื่อมระบบ.*ลองเชื่อมต่อใหม่/)).toBeVisible();
+    fireEvent.click(retryButton);
+    expect(retry).toHaveBeenCalledOnce();
+    expect(screen.queryByText(messages.app.home.aiSettings.title)).not.toBeInTheDocument();
+    expect(screen.queryByText(/เครดิต|เข้าสู่ระบบ|License/i)).not.toBeInTheDocument();
+  });
+
   it("shows local errors and offers runtime recovery", () => {
     const retry = vi.fn();
     render(<ModuleHome onOpenModule={vi.fn()} connectionState="error" errorMessage="Runtime disconnected" onRetryRuntime={retry} />);
