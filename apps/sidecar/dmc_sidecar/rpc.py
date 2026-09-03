@@ -55,19 +55,15 @@ from .current_students import (
 from .job_store import JobStore
 from .module_config import load_effective_config, sync_module_config
 from .modules import get_module
-from .p_sar_readiness import PsarReadinessService
 from .runtime import JobManager, build_event_notification, finalize_job_credits, utc_now
 from .schemas import (
-    AddPsarEvidenceRequest,
     ArchiveJobsRequest,
     ExportStudentBasicInfoFormRequest,
     FilePathRequest,
-    GeneratePsarReportRequest,
     JobIdRequest,
     ModuleConfigRequest,
     ModuleConfigStatus,
     PingResponse,
-    PsarReadinessRequest,
     RpcErrorData,
     RpcErrorResponse,
     RpcRequest,
@@ -89,7 +85,6 @@ class RpcServer:
         self.job_store = JobStore()
         self.account_store = AccountSessionStore()
         self.telemetry = TelemetryClient(account_store=self.account_store)
-        self.psar_readiness = PsarReadinessService()
         reaped_jobs = self._reap_interrupted_reservations()
         self.job_manager = JobManager(
             job_store=self.job_store,
@@ -325,24 +320,6 @@ class RpcServer:
                         else None
                     ),
                 ).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
-
-            if request.method == "get_psar_readiness":
-                psar_params = PsarReadinessRequest.model_validate(request.params)
-                result = self.psar_readiness.get_readiness(psar_params.project_id).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
-
-            if request.method == "add_psar_evidence":
-                evidence_params = AddPsarEvidenceRequest.model_validate(request.params)
-                result = self.psar_readiness.add_evidence(
-                    project_id=evidence_params.project_id,
-                    file_path=evidence_params.file_path,
-                ).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
-
-            if request.method == "generate_psar_report":
-                report_params = GeneratePsarReportRequest.model_validate(request.params)
-                result = self.psar_readiness.generate_report(report_params.project_id).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "get_job_status":
