@@ -50,6 +50,19 @@ def _ready_browser_status(tmp_path: Path):
     )()
 
 
+def test_database_status_exposes_generation_and_local_columns(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
+
+    response = _rpc_call(server, "get_database_status", {})
+
+    metadata = response["result"]
+    assert metadata["schema_generation"] == 2
+    assert set(metadata["tables"]) == {"job", "job_record", "schema_metadata"}
+    assert "checkpoint_json" in metadata["job_columns"]
+    assert "credit_status" not in metadata["job_columns"]
+
+
 @pytest.mark.parametrize("module_name", ["graduation", "currentStudents"])
 def test_live_job_starts_without_account_or_credit(monkeypatch, tmp_path: Path, module_name: str) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
@@ -341,6 +354,7 @@ def test_archive_old_jobs_rpc_keeps_latest_terminal_jobs(monkeypatch, tmp_path: 
     for index in range(5):
         job_id = f"job-{index}"
         store.create_pending_job(job_id, "graduation", f"C:\\data\\m3-{index}.xlsx")
+        store.append_results(job_id, [{"page": 1, "portal_row_index": 1, "note": "dry_run"}])
         checkpoint = JobCheckpoint.initial(level_label="เธก.3", base_url="https://example.test")
         store.mark_done(job_id, checkpoint=checkpoint, finished_at=f"2026-04-22T00:0{index}:00Z")
     store.create_pending_job("job-active", "graduation", "C:\\data\\active.xlsx")
@@ -362,6 +376,8 @@ def test_archive_old_jobs_rpc_keeps_latest_terminal_jobs(monkeypatch, tmp_path: 
     assert response["result"] == {"archived": 3, "kept": 2}
     assert {"job-4", "job-3", "job-active"}.issubset(remaining_ids)
     assert "job-0" not in remaining_ids
+    assert store.list_results("job-0") == []
+    assert store.list_results("job-4") == [{"page": 1, "portal_row_index": 1, "note": "dry_run"}]
 
 
 def test_get_module_config_status_rpc(monkeypatch, tmp_path: Path) -> None:

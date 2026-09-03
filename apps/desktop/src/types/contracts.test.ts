@@ -2,9 +2,26 @@ import { describe, expect, it } from "vitest";
 import {
   parseAiConnectionTest,
   parseAiSettings,
+  parseDatabaseStatus,
   parseJobStatusSnapshot,
   parseOcrDocumentResponse,
 } from "./contracts";
+
+describe("database status contract", () => {
+  it("parses generation two metadata from the sidecar", () => {
+    expect(parseDatabaseStatus({
+      path: "C:/local/desktop.sqlite3",
+      schema_generation: 2,
+      tables: ["job", "job_record", "schema_metadata"],
+      job_columns: ["id", "status", "checkpoint_json"],
+    })).toEqual({
+      path: "C:/local/desktop.sqlite3",
+      schema_generation: 2,
+      tables: ["job", "job_record", "schema_metadata"],
+      job_columns: ["id", "status", "checkpoint_json"],
+    });
+  });
+});
 
 const baseJob = {
   job_id: "job-empty-summary",

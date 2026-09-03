@@ -529,8 +529,9 @@ export type BrowserRuntimeStatus = {
 
 export type DatabaseStatus = {
   path: string;
-  schema_version: number;
+  schema_generation: number;
   tables: string[];
+  job_columns: string[];
 };
 
 export type BackupCreateResponse = {
@@ -1565,10 +1566,16 @@ export function parseDatabaseStatus(value: unknown): DatabaseStatus {
   const record = asRecord(value, "database_status");
   return {
     path: readString(record, "path", "database_status"),
-    schema_version: readNumber(record, "schema_version", "database_status"),
+    schema_generation: readNumber(record, "schema_generation", "database_status"),
     tables: readArray(record, "tables", "database_status").map((item, index) => {
       if (typeof item !== "string") {
         throw new Error(`database_status.tables[${index}] must be a string`);
+      }
+      return item;
+    }),
+    job_columns: readArray(record, "job_columns", "database_status").map((item, index) => {
+      if (typeof item !== "string") {
+        throw new Error(`database_status.job_columns[${index}] must be a string`);
       }
       return item;
     }),
