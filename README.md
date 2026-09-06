@@ -1,79 +1,36 @@
 # DMC Assistant
 
-Desktop automation for Thailand's DMC / student data-entry portal (BOPP OBEC), with a Python
-sidecar that drives Playwright, a cloud backend for account/credit/OCR, and a React desktop shell.
-
-## Layout
-
-- `apps/desktop`: Tauri + React desktop shell (TypeScript, Vite, Vitest)
-- `apps/sidecar`: Python sidecar for automation, Excel/PDF parsing, OCR client, and local persistence
-- `apps/cloud`: FastAPI backend for accounts, credit wallet, config signing, and OCR gateway
-- `packages/shared-schemas`: shared JSON schemas for IPC and API contracts, config-signing keys
-- `packages/module-configs`: signed-config candidates for portal modules (e.g. `graduation`)
-- `scripts/`: smoke, release-readiness, and form-converter-readiness helpers
+DMC Assistant is a local-first Windows desktop tool for school staff using the DMC / OBEC portal.
 
 ## Modules
 
-- `graduation` — fill ม.3/ม.6 graduation statuses into the portal from an Excel roster
-- `currentStudents` — reconcile student rosters + Thai-ID CSV + OCR, build a transfer-in import form, and fill it
-- `formConverter` — handwritten PDF forms → AI OCR (mock/openai/gemini) → review → Excel, credit-gated through the cloud
-- `studentBasicInfo` — create a student basic-information workbook from DMC data
+- Graduation — validate an Excel roster and fill post-graduation statuses.
+- Current Students — validate sources and prepare import workbooks.
+- Form Converter — use Gemini OCR for a selected document, review, and export locally.
+- Student Basic Info — create a basic-information workbook from DMC data.
 
-## Local Development
+DMC portal authentication remains necessary in the local Chromium window when the portal requires it. It is not an application identity feature.
 
-Prereqs: Node.js + pnpm (via corepack), a local Python 3.11+ with `.venv`, and Rust for Tauri.
+## Local data and AI
 
-```powershell
-# Install dependencies (pnpm 10 allows esbuild's postinstall via onlyBuiltDependencies)
-corepack pnpm install
+The local database, reports, OCR cache, and input/output files may contain student PII. Backup/restore includes only database, reports, and OCR cache; browser profile, Windows Credential Manager keys, and config cache are excluded.
 
-# Desktop app with Tauri IPC + sidecar
-corepack pnpm run desktop:dev
+Form Converter v1 registers Gemini only behind provider-neutral interfaces. The Gemini key is entered in Home AI settings and stored exclusively in Windows Credential Manager. The application supports save, configured status, explicit connection test, and delete—never key readback. Save makes no Gemini request; the explicit test uses minimal authenticated metadata. Selected documents go directly to Gemini. Provider availability, quota, and cost are the user's responsibility; the app is free.
 
-# Vite web shell only (no Tauri/sidecar)
-corepack pnpm run desktop:web
-
-# Cloud API (dev, reload)
-corepack pnpm run cloud:dev
-```
-
-## Tests & Checks
+## Development and verification
 
 ```powershell
-# Desktop typecheck + tests
 corepack pnpm run desktop:typecheck
 corepack pnpm run desktop:test
-
-# Sidecar tests + strict typecheck
-corepack pnpm run sidecar:test
+corepack pnpm run desktop:build
 corepack pnpm run sidecar:typecheck
-
-# Cloud tests
-corepack pnpm run cloud:test
-
-# Full CI-equivalent gate
-corepack pnpm run ci:verify
-```
-
-End-to-end smoke (bundles the sidecar, launches it, exercises RPC + a real Excel sample):
-
-```powershell
-.\.venv\Scripts\python .\scripts\smoke_local.py
-```
-
-Release/form-converter readiness checks:
-
-```powershell
+corepack pnpm run sidecar:test
 corepack pnpm run release:check
 corepack pnpm run form-converter:check
 ```
 
-## Notes
+Use a temporary `DMC_DATA_DIR` and isolated `PLAYWRIGHT_BROWSERS_PATH` for smoke. It uses a loopback portal and neither DMC nor Gemini.
 
-- `apps/desktop/src-tauri/bundled-sidecar/` is a build artifact (gitignored); `sidecar:bundle`
-  regenerates it from `apps/sidecar` and `packages/module-configs`.
-- `upload/` contains real student data and is gitignored — do not commit it.
-- Portal automation requires an authenticated DMC session; jobs are credit-backed through the
-  cloud wallet unless run as a dry run.
+## Packaging
 
-See `docs/` for the PRD, TDD, IPC/API schemas, module specs, and readiness checklists.
+Build, download, and install the MSI manually. Authenticode is optional and authorized separately. The application does not update itself. Release input version only controls tag/title; manually align checked-in Tauri, Cargo, and package versions before packaging.

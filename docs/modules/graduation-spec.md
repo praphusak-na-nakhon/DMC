@@ -9,7 +9,7 @@
 
 ## 1. Purpose
 
-โมดูล `graduation` ใช้สำหรับช่วยกรอกสถานะการศึกษาต่อหรือการทำงานของนักเรียนที่จบการศึกษาในระบบ DMC / OBEC portal จากไฟล์ Excel ที่โรงเรียนเตรียมไว้ โดยรันบนเครื่องผู้ใช้และไม่ส่ง student PII ขึ้น cloud
+โมดูล `graduation` ใช้สำหรับช่วยกรอกสถานะการศึกษาต่อหรือการทำงานของนักเรียนที่จบการศึกษาในระบบ DMC / OBEC portal จากไฟล์ Excel ที่โรงเรียนเตรียมไว้ โดยรันบนเครื่องผู้ใช้ และข้อมูลนักเรียนกับรายงานคงอยู่ในเครื่อง
 
 ใน MVP โมดูลนี้เป็น automation module แรกและต้อง reuse logic จาก `fill_obec_portal.py` เป็นฐาน ไม่ rewrite business rules จากศูนย์
 
@@ -24,7 +24,7 @@
 
 ### Not included
 - การแก้ไขข้อมูลนักเรียนใน DMC นอกฟิลด์สถานะศึกษาต่อ/ทำงาน
-- การส่งไฟล์ต้นทางหรือผลลัพธ์ขึ้น cloud
+- การส่งไฟล์ต้นทางหรือผลลัพธ์ออกจากเครื่องโดยโมดูลนี้
 - การรองรับหลายโรงเรียนใน job เดียว
 - การรองรับหลายระดับชั้นปนกันใน job เดียว
 
@@ -245,8 +245,8 @@ score สุดท้าย clamp ที่ `0..100`
 1. validate Excel
 2. detect `level_label`
 3. build target URL จาก `level_code`
-4. เปิด browser profile ของ license นี้
-5. ให้ user login/manual auth ถ้าจำเป็น
+4. เปิด browser profile ในเครื่องตามค่าเริ่มต้น
+5. ให้ user ทำ portal authentication ด้วยตนเองถ้าจำเป็น
 6. เปิด target page ของ level นั้น
 7. ถ้า `resume_current = false` ให้ไปหน้า 1
 8. วนทุกหน้า:
@@ -323,8 +323,8 @@ MVP อาจเปลี่ยนชื่อ path ได้ แต่ต้อ
 - Source Excel อาจมี student PII
 - Portal DOM มี student PII
 - Report files local อาจมี student PII
-- ห้ามส่ง source row, portal row, report row, หรือ raw student name/number ขึ้น telemetry หรือ cloud logs
-- Telemetry ของ module นี้ส่งได้เฉพาะ aggregate เช่น total, succeeded, failed, duration, error code counts
+- ห้ามส่ง source row, portal row, report row, หรือ raw student name/number ออกจากเครื่องโดยโมดูลนี้
+- เก็บเฉพาะสถานะและรายงานที่จำเป็นในเครื่อง โดยหลีกเลี่ยงการเขียน PII ลง diagnostic output
 
 ## 14. Test Scenarios
 
@@ -347,5 +347,5 @@ MVP อาจเปลี่ยนชื่อ path ได้ แต่ต้อ
 
 - Implementer สามารถย้าย logic จาก `fill_obec_portal.py` ไป `modules/graduation.py` โดยไม่ต้องเดา rule หลัก
 - UI สามารถแสดง preview, warnings, progress, review list, stopped item ได้จาก contract นี้
-- Cloud/telemetry layer สามารถรับเฉพาะ aggregate metadata โดยไม่แตะ student PII
+- เอกสารนี้ระบุขอบเขต PII และการทดสอบโดยไม่ต้องส่งข้อมูลนักเรียนออกจากเครื่อง
 - Test writer สามารถสร้าง mock portal และ fixture Excel ได้จาก spec นี้
