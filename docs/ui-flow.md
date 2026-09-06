@@ -9,3 +9,5 @@ Graduation: choose Excel, validate and review preview/warnings, choose dry run o
 Current Students validates sources and writes an import workbook locally. Student Basic Info creates its workbook locally. Form Converter requires configured Gemini, sends the selected PDF/image directly to Gemini, presents a local result for field review, then exports locally. UI copy must explain provider quota/cost responsibility.
 
 Job states are `validating`, `ready_to_run`, `running`, `paused`, `needs_auth`, `stopped_on_review`, `failed`, `done`, and `cancelled`. Use Thai, actionable copy, honest progress, close protection for active jobs, and styled destructive confirmations.
+
+At completion, the UI exposes only local output paths and a concise count summary. Review-required, malformed-input, unavailable-browser, missing-key, invalid-key, and provider-response errors must state a next action without exposing PII, keys, or raw provider diagnostics.
