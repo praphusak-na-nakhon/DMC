@@ -21,7 +21,7 @@ Errors use stable domain codes and always carry an object `details` (possibly em
 
 Backup content is local database, reports, and OCR cache only. Browser profile, credential-store secrets, and config cache never appear in a backup result.
 
-Browser-runtime status contains `{ state:"ready"|"missing"|"installing"|"failed", installed:boolean, install_dir:string, executable_path:string|null, bootstrap_supported:boolean, bootstrap_performed:boolean, estimated_download_bytes:number|null, required_components:[{ name:string, install_location:string, download_url:string, download_bytes:number|null }], message:string|null, guidance:string|null, last_error:string|null, log_tail:string[] }`. Bootstrap additionally emits `{ phase:"checking"|"installing"|"verifying"|"ready"|"failed", message:string, percent:number|null, detail:string|null }` progress events.
+Browser-runtime status contains `{ state:"ready"|"missing"|"installing"|"failed", installed:boolean, install_dir:string, executable_path:string|null, bootstrap_supported:boolean, bootstrap_performed:boolean, estimated_download_bytes:number|null, required_components:[{ name:string, install_location:string, download_url:string, download_bytes:number|null }], message:string|null, guidance:string|null, last_error:string|null, log_tail:string[] }`. Bootstrap additionally emits `{ type:"browser_runtime_progress", phase:"checking"|"installing"|"verifying"|"ready"|"failed", message:string, percent:number|null, detail:string|null }` progress events.
 
 ## AI settings and OCR
 
