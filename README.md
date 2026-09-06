@@ -23,13 +23,18 @@ Form Converter v1 registers Gemini only behind provider-neutral interfaces. The 
 corepack pnpm run desktop:typecheck
 corepack pnpm run desktop:test
 corepack pnpm run desktop:build
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
 corepack pnpm run sidecar:typecheck
 corepack pnpm run sidecar:test
 corepack pnpm run release:check
 corepack pnpm run form-converter:check
+corepack pnpm run smoke:local
 ```
 
 Use a temporary `DMC_DATA_DIR` and isolated `PLAYWRIGHT_BROWSERS_PATH` for smoke. It uses a loopback portal and neither DMC nor Gemini.
+
+Native Cargo checks remain required. In the current Windows development environment they are blocked before application compilation by missing `dlltool.exe` / MSVC C++ Build Tools; do not remove the CI gates or treat this as a passing result. Windows sentinel persistence and live Gemini field testing are authorized manual acceptance gates.
 
 ## Packaging
 
