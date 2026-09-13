@@ -297,6 +297,13 @@ class RpcServer:
                 code="RPC_METHOD_NOT_FOUND",
                 message="Unsupported method.",
             )
+        except ValidationError as exc:
+            return self._error(
+                request.id,
+                code="RPC_INVALID_REQUEST",
+                message="Request params do not match the method schema.",
+                details={"errors": _safe_validation_errors(exc)},
+            )
         except DomainError as exc:
             return self._error(
                 request.id,

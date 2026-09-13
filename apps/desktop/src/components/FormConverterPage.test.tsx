@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FormConverterPage } from "./FormConverterPage";
 
@@ -704,17 +704,22 @@ describe("FormConverterPage", () => {
 
     expect((await screen.findAllByText(/Desktop runtime/)).length).toBeGreaterThan(0);
     expect(screen.getByText(/browser preview\/localhost/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "ลองเชื่อมต่อใหม่" }));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "ลองเชื่อมต่อใหม่" })); });
     expect(onRetryRuntime).toHaveBeenCalled();
+    expect(mockRpc.getAiSettings).toHaveBeenCalledTimes(2);
   });
 
-  it.each([false, true])("creates provider OCR JSON for DMC and preserves cache metadata (cached=%s)", async (cached) => {
+  it.each([
+    { cached: false, model: "gemini-3.5-flash", modelLabel: "Gemini 3.5 Flash" },
+    { cached: true, model: "gemini-3.5-flash", modelLabel: "Gemini 3.5 Flash" },
+    { cached: false, model: "gemini-3.1-pro-preview", modelLabel: "Gemini 3.1 Pro Preview" },
+  ])("creates provider OCR JSON for DMC and preserves cache metadata (cached=$cached, model=$model)", async ({ cached, model, modelLabel }) => {
     const onRevealPath = vi.fn();
     mockRpc.openOcrSourceDialog.mockResolvedValue("C:\\dmc\\uploadTest\\dmc-form.pdf");
     mockRpc.ocrDocument.mockResolvedValue({
       module: "formConverter",
       provider: "gemini",
-      model: "gemini-3.5-flash",
+      model,
       processing_mode: "batch",
       source_path: "C:\\dmc\\uploadTest\\dmc-form.pdf",
       markdown_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\dmc-form-gemini-3-5-flash-batch.json",
@@ -762,7 +767,7 @@ describe("FormConverterPage", () => {
     expect(within(dmcOcrCard).getByText(cached ? "ใช้ไฟล์ OCR ที่เคยสร้างแล้ว" : "สร้างไฟล์ OCR แล้ว")).toBeInTheDocument();
     expect(
       within(dmcOcrCard).getByText(
-        "2 หน้า · Gemini 3.5 Flash Batch · confidence 91.5 · 1,900 tokens (950/หน้า)",
+        `2 หน้า · ${modelLabel} Batch · confidence 91.5 · 1,900 tokens (950/หน้า)`,
       ),
     ).toBeInTheDocument();
 
@@ -784,6 +789,7 @@ describe("FormConverterPage", () => {
   });
 
   it.each([false, true])("creates provider OCR JSON for civil registration and preserves cache metadata (cached=%s)", async (cached) => {
+    const onRevealPath = vi.fn();
     mockRpc.openOcrSourceDialog.mockResolvedValue("C:\\dmc\\uploadTest\\civil-registration.pdf");
     mockRpc.ocrDocument.mockResolvedValue({
       module: "formConverter",
@@ -814,7 +820,7 @@ describe("FormConverterPage", () => {
       created_at: "2026-05-12T00:00:00+00:00",
     });
 
-    render(<FormConverterPage onBackHome={vi.fn()} onRevealPath={vi.fn()} />);
+    render(<FormConverterPage onBackHome={vi.fn()} onRevealPath={onRevealPath} />);
 
     const civilCard = screen.getByText("ไฟล์ OCR จากสำเนาทะเบียนบ้านนักเรียน").closest("section") as HTMLElement;
     fireEvent.click(within(civilCard).getByRole("tab", { name: "มีไฟล์สแกน PDF/รูปภาพ" }));
@@ -842,6 +848,9 @@ describe("FormConverterPage", () => {
       ),
     ).toBeInTheDocument();
 
+    fireEvent.click(within(civilCard).getByRole("button", { name: "เปิดไฟล์" }));
+    expect(onRevealPath).toHaveBeenCalledWith("C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\civil-registration-gemini-3-5-flash-batch.json");
+
     mockRpc.saveOcrMarkdownDialog.mockResolvedValue("D:\\DMC\\OCR\\civil-registration-ocr.json");
     mockRpc.copyOcrMarkdownFile.mockResolvedValue("D:\\DMC\\OCR\\civil-registration-ocr.json");
     fireEvent.click(within(civilCard).getByRole("button", { name: /บันทึกเป็น/ }));
@@ -858,12 +867,78 @@ describe("FormConverterPage", () => {
 });
 
 describe("local AI readiness", () => {
-  function showBothOcrTools() {
-    render(<FormConverterPage onBackHome={vi.fn()} onRevealPath={vi.fn()} />);
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason: Error) => void;
+    const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+    return { promise, resolve, reject };
+  }
+
+  function showBothOcrTools(onRetryRuntime?: () => void | Promise<void>) {
+    const view = render(<FormConverterPage onBackHome={vi.fn()} onRevealPath={vi.fn()} onRetryRuntime={onRetryRuntime} />);
     for (const button of screen.getAllByRole("tab", { name: "มีไฟล์สแกน PDF/รูปภาพ" })) {
       if (button.textContent?.includes("PDF")) fireEvent.click(button);
     }
+    return view;
   }
+
+  it.each(["sync", "async"])("recovers both OCR actions after a %s reconnect without losing form state", async (mode) => {
+    const reconnect = deferred<void>();
+    const settings = deferred<{ provider: "gemini"; configured: boolean }>();
+    const onRetryRuntime = vi.fn(() => mode === "async" ? reconnect.promise : undefined);
+    mockRpc.getAiSettings.mockRejectedValueOnce(new Error("AI_CREDENTIAL_STORE_UNAVAILABLE private-detail"));
+    mockRpc.getAiSettings.mockReturnValueOnce(settings.promise);
+    showBothOcrTools(onRetryRuntime);
+    const paths = ["C:/dmc-form.pdf", "C:/civil-registration.pdf"];
+    screen.getAllByLabelText("ไฟล์ PDF หรือรูปภาพสำหรับ OCR").forEach((input, index) => {
+      fireEvent.change(input, { target: { value: paths[index] } });
+    });
+    expect(await screen.findByText(/ไม่สามารถเข้าถึงที่เก็บ API key/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "ลองเชื่อมต่อใหม่" }));
+    expect(onRetryRuntime).toHaveBeenCalledOnce();
+    expect(screen.queryByText(/ไม่สามารถเข้าถึงที่เก็บ API key/)).not.toBeInTheDocument();
+    expect(screen.getByText("กำลังตรวจสอบการตั้งค่า AI")).toBeInTheDocument();
+    if (mode === "async") expect(mockRpc.getAiSettings).toHaveBeenCalledTimes(1);
+    await act(async () => { reconnect.resolve(); });
+    await waitFor(() => expect(mockRpc.getAiSettings).toHaveBeenCalledTimes(2));
+    for (const button of screen.getAllByRole("button", { name: "สร้างไฟล์ OCR" })) expect(button).toBeDisabled();
+    await act(async () => { settings.resolve({ provider: "gemini", configured: true }); });
+    for (const button of screen.getAllByRole("button", { name: "สร้างไฟล์ OCR" })) expect(button).toBeEnabled();
+    for (const path of paths) expect(screen.getByDisplayValue(path)).toBeInTheDocument();
+    expect(screen.queryByText(/private-detail/)).not.toBeInTheDocument();
+    expect(mockRpc.ocrDocument).not.toHaveBeenCalled();
+  });
+
+  it.each(["missing", "failure"])("ignores an older settings %s response after runtime retry succeeds", async (staleResult) => {
+    const initial = deferred<{ provider: "gemini"; configured: boolean }>();
+    mockRpc.getAiSettings.mockReturnValueOnce(initial.promise);
+    mockRpc.openExcelDialog.mockRejectedValue(new Error("DESKTOP_RUNTIME_UNAVAILABLE"));
+    const onRetryRuntime = vi.fn();
+    showBothOcrTools(onRetryRuntime);
+    for (const input of screen.getAllByLabelText("ไฟล์ PDF หรือรูปภาพสำหรับ OCR")) fireEvent.change(input, { target: { value: "C:/form.pdf" } });
+    fireEvent.click(screen.getByRole("button", { name: /เลือกไฟล์ Excel/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "ลองเชื่อมต่อใหม่" }));
+    await waitFor(() => {
+      expect(mockRpc.getAiSettings).toHaveBeenCalledTimes(2);
+      for (const button of screen.getAllByRole("button", { name: "สร้างไฟล์ OCR" })) expect(button).toBeEnabled();
+    });
+    await act(async () => {
+      if (staleResult === "missing") initial.resolve({ provider: "gemini", configured: false });
+      else initial.reject(new Error("AI_CREDENTIAL_STORE_UNAVAILABLE private-detail"));
+    });
+    for (const button of screen.getAllByRole("button", { name: "สร้างไฟล์ OCR" })) expect(button).toBeEnabled();
+    expect(screen.queryByText(/ไม่สามารถเข้าถึงที่เก็บ API key|กรุณาตั้งค่า Gemini API key/)).not.toBeInTheDocument();
+  });
+
+  it("does not load settings after unmounting during reconnect", async () => {
+    const reconnect = deferred<void>();
+    mockRpc.getAiSettings.mockRejectedValueOnce(new Error("AI_CREDENTIAL_STORE_UNAVAILABLE"));
+    const view = showBothOcrTools(() => reconnect.promise);
+    fireEvent.click(await screen.findByRole("button", { name: "ลองเชื่อมต่อใหม่" }));
+    view.unmount();
+    await act(async () => { reconnect.resolve(); });
+    expect(mockRpc.getAiSettings).toHaveBeenCalledTimes(1);
+  });
 
   it("blocks both OCR workflows while settings load", () => {
     mockRpc.getAiSettings.mockReturnValue(new Promise(() => {}));

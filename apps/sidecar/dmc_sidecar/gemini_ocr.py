@@ -20,7 +20,7 @@ from .errors import DomainError
 
 
 GEMINI_OCR_FLASH_MODEL: Literal["gemini-3.5-flash"] = "gemini-3.5-flash"
-GEMINI_OCR_PRO_MODEL: Literal["gemini-3-pro-preview"] = "gemini-3-pro-preview"
+GEMINI_OCR_PRO_MODEL: Literal["gemini-3.1-pro-preview"] = "gemini-3.1-pro-preview"
 GEMINI_OCR_MODEL: Literal["gemini-3.5-flash"] = GEMINI_OCR_FLASH_MODEL
 GEMINI_OCR_MODELS = {GEMINI_OCR_FLASH_MODEL, GEMINI_OCR_PRO_MODEL}
 GEMINI_OCR_PROCESSING_MODE: Literal["batch"] = "batch"

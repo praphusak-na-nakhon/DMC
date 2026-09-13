@@ -398,7 +398,7 @@ export type AiConnectionTest = {
 export type OcrDocumentInput = {
   provider: AiProviderId;
   sourcePath: string;
-  model: "gemini-3.5-flash" | "gemini-3-pro-preview";
+  model: "gemini-3.5-flash" | "gemini-3.1-pro-preview";
   processingMode: "standard" | "batch";
   forceRefresh: boolean;
 };
@@ -1224,7 +1224,7 @@ export function parseOcrDocumentResponse(value: unknown): OcrDocumentResponse {
     throw new Error(`${context}.module must be 'formConverter'`);
   }
   const model = readString(record, "model", context);
-  if (model !== "gemini-3.5-flash" && model !== "gemini-3-pro-preview") {
+  if (model !== "gemini-3.5-flash" && model !== "gemini-3.1-pro-preview") {
     throw new Error(`${context}.model is unsupported`);
   }
   const processingMode = readString(record, "processing_mode", context);

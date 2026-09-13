@@ -20,7 +20,13 @@ if (!(Test-Path $venvPython)) {
 }
 
 if (Test-Path $pyInstallerExe) {
+    # Probe PyInstaller presence. Relax error handling for the probe so a
+    # deprecation warning on stderr (e.g. "running PyInstaller as admin") is
+    # not treated as a terminating error under $ErrorActionPreference=Stop.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     & $pyInstallerExe --version *> $null
+    $ErrorActionPreference = $previousPreference
 } else {
     & $venvPython -m PyInstaller --version *> $null
 }

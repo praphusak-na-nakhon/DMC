@@ -19,6 +19,8 @@ corepack pnpm run form-converter:check
 corepack pnpm run smoke:local
 ```
 
-The smoke command must have a fresh temporary `DMC_DATA_DIR` and an absolute `PLAYWRIGHT_BROWSERS_PATH`; it exercises a loopback portal only. Cargo test/check are required native gates. They are currently unavailable in this Windows environment before application compilation because `dlltool.exe` / MSVC C++ Build Tools are missing, and must remain unclaimed rather than removed.
+The smoke command must have a fresh temporary `DMC_DATA_DIR` and an absolute `PLAYWRIGHT_BROWSERS_PATH` with Chromium installed; it exercises a loopback portal only. Cargo test/check are required native gates and need a working Windows Rust toolchain, C++ build tools, and an execution policy that permits them.
+
+Task 9 evidence from 2026-09-06 UTC: local native checks were blocked before application compilation by Windows Application Control (OS error 4551). The package attempt staged a fresh sidecar, then failed at Cargo metadata under the same policy; it produced no MSI. This is dated evidence for that machine, not a universal build result. Native compilation, MSI installation, and manual acceptance remain unverified.
 
 Windows sentinel persistence and live field testing are required authorized manual acceptance activities; this document does not claim either has passed.

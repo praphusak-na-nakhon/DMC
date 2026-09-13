@@ -200,11 +200,11 @@ describe("AI contracts", () => {
 });
 
 describe("OCR metadata contracts", () => {
-  it("parses the generated structured OCR response with usage metadata", () => {
+  it.each(["gemini-3.5-flash", "gemini-3.1-pro-preview"])("parses %s metadata and rejects the retired Pro model", (model) => {
     const parsed = parseOcrDocumentResponse({
       module: "formConverter",
       provider: "gemini",
-      model: "gemini-3.5-flash",
+      model,
       processing_mode: "batch",
       source_path: "C:\\dmc\\uploadTest\\dmc-form.pdf",
       markdown_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\dmc-form.json",
@@ -230,7 +230,7 @@ describe("OCR metadata contracts", () => {
 
     expect(parsed).toMatchObject({
       provider: "gemini",
-      model: "gemini-3.5-flash",
+      model,
       processing_mode: "batch",
       pages_processed: 2,
       structured_json_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\dmc-form.json",
@@ -240,5 +240,6 @@ describe("OCR metadata contracts", () => {
     });
     expect(parsed.usage_metadata?.total_token_count).toBe(2000);
     expect(parsed.usage_metadata?.total_tokens_per_page).toBe(1000);
+    expect(() => parseOcrDocumentResponse({ ...parsed, model: "gemini-3-pro-preview" })).toThrow(".model is unsupported");
   });
 });

@@ -34,7 +34,9 @@ corepack pnpm run smoke:local
 
 Use a temporary `DMC_DATA_DIR` and isolated `PLAYWRIGHT_BROWSERS_PATH` for smoke. It uses a loopback portal and neither DMC nor Gemini.
 
-Native Cargo checks remain required. In the current Windows development environment they are blocked before application compilation by missing `dlltool.exe` / MSVC C++ Build Tools; do not remove the CI gates or treat this as a passing result. Windows sentinel persistence and live Gemini field testing are authorized manual acceptance gates.
+Native Cargo checks require a working Windows Rust toolchain and C++ build tools allowed by the machine's execution policy. Chromium must be installed in the isolated `PLAYWRIGHT_BROWSERS_PATH` before the integration tests run. Keep native checks in CI; Windows sentinel persistence and live Gemini field testing remain authorized manual acceptance gates.
+
+Task 9 evidence from 2026-09-06 UTC: local native checks were blocked before compilation by Windows Application Control (OS error 4551). The package attempt staged the sidecar, then hit the same policy at Cargo metadata. No MSI or manual acceptance was produced; this records that machine's attempt, not the outcome on other Windows installations.
 
 ## Packaging
 

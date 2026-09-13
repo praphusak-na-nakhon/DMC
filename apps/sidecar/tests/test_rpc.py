@@ -273,8 +273,13 @@ def test_ai_rpc_validation_and_unexpected_errors_never_echo_secrets(capsys) -> N
     invalid_params = _rpc_call(
         server,
         "save_ai_api_key",
-        {"provider": "provider-secret", "api_key": "param-secret", "extra": "extra-secret"},
+        {"provider": "provider-secret", "api_key": "param-secret", "extra": "extra-secret", "student_name": "PRIVATE_STUDENT"},
     )
+    assert invalid_params["id"] == "req-save_ai_api_key"
+    assert invalid_params["error"]["code"] == "RPC_INVALID_REQUEST"
+    validation_errors = invalid_params["error"]["details"]["errors"]
+    assert {error["type"] for error in validation_errors} == {"literal_error", "extra_forbidden"}
+    assert all(set(error) == {"type", "message"} for error in validation_errors)
     invalid_method = json.loads(
         server.handle_text(
             json.dumps({"jsonrpc": "2.0", "id": "request-id", "method": "method-secret", "params": {}})
@@ -283,7 +288,7 @@ def test_ai_rpc_validation_and_unexpected_errors_never_echo_secrets(capsys) -> N
     unexpected = _rpc_call(server, "test_ai_connection", {"provider": "gemini"})
 
     visible_output = json.dumps([malformed, invalid_params, invalid_method, unexpected]) + capsys.readouterr().err
-    for secret in ("envelope-secret", "param-secret", "extra-secret", "provider-secret", "method-secret", "request-secret"):
+    for secret in ("envelope-secret", "param-secret", "extra-secret", "provider-secret", "method-secret", "request-secret", "PRIVATE_STUDENT", "student_name"):
         assert secret not in visible_output
 
 

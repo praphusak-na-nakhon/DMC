@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -48,4 +48,35 @@ it("starts locally with four visible modules and AI settings using only retained
   expect(calls).not.toEqual(expect.arrayContaining(["get_account_status"]));
   expect(calls.some((method) => /account|catalog|wallet|sign_in|module_config/.test(method))).toBe(false);
   expect(screen.queryByText(/เครดิต|เข้าสู่ระบบ|License/i)).not.toBeInTheDocument();
+});
+
+it("waits for native reconnect before reloading Form Converter AI settings", async () => {
+  await act(async () => { render(<App />); });
+  await waitFor(() => expect(calls).toContain("get_ai_settings"));
+  const nativeInvoke = vi.mocked(invoke).getMockImplementation()!;
+  let finishReconnect!: () => void;
+  const reconnect = new Promise<void>((resolve) => { finishReconnect = resolve; });
+  let settingsAttempts = 0;
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "initialize_sidecar") return reconnect;
+    if (command === "rpc_request" && JSON.parse((args as { requestJson: string }).requestJson).method === "get_ai_settings") {
+      settingsAttempts += 1;
+      if (settingsAttempts === 1) throw new Error("AI_CREDENTIAL_STORE_UNAVAILABLE");
+      return { provider: "gemini", configured: true };
+    }
+    return nativeInvoke(command, args);
+  });
+  fireEvent.click(screen.getByRole("button", { name: messages.app.home.moduleActions.formConverter }));
+  for (const tab of screen.getAllByRole("tab", { name: "มีไฟล์สแกน PDF/รูปภาพ" })) fireEvent.click(tab);
+  for (const input of screen.getAllByLabelText("ไฟล์ PDF หรือรูปภาพสำหรับ OCR")) fireEvent.change(input, { target: { value: "C:/local-form.pdf" } });
+  fireEvent.click(await screen.findByRole("button", { name: "ลองเชื่อมต่อใหม่" }));
+  await act(async () => {});
+  expect(settingsAttempts).toBe(1);
+  for (const button of screen.getAllByRole("button", { name: "สร้างไฟล์ OCR" })) expect(button).toBeDisabled();
+  await act(async () => { finishReconnect(); });
+  await waitFor(() => {
+    expect(settingsAttempts).toBe(2);
+    for (const button of screen.getAllByRole("button", { name: "สร้างไฟล์ OCR" })) expect(button).toBeEnabled();
+  });
+  expect(screen.getAllByDisplayValue("C:/local-form.pdf")).toHaveLength(2);
 });

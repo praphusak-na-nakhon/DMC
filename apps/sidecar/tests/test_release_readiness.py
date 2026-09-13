@@ -70,3 +70,26 @@ def test_unignored_sidecar_artifacts_are_rejected(readiness):
     readiness.GITIGNORE_PATH.write_text("", encoding="utf-8")
     with pytest.raises(SystemExit, match="bundled sidecar artifacts"):
         readiness.check_gitignore()
+
+
+def test_release_verification_installs_chromium_with_job_scoped_isolation():
+    root = Path(__file__).resolve().parents[3]
+    workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    job_environment = workflow.split("\n    env:\n", 1)[1].split("\n    permissions:", 1)[0]
+    assert "      DMC_DATA_DIR: ${{ runner.temp }}\\dmc-release-data" in job_environment
+    assert "      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}\\dmc-playwright" in job_environment
+    dependencies = workflow.index('python -m pip install -e ".\\apps\\sidecar[dev]"')
+    browser = workflow.index(r".\.venv\Scripts\python -m playwright install chromium")
+    verification = workflow.index("run: pnpm run ci:verify")
+    assert dependencies < browser < verification
+
+
+def test_pyinstaller_version_probe_restores_error_preference():
+    root = Path(__file__).resolve().parents[3]
+    script = (root / "apps/sidecar/scripts/build_windows_bundle.ps1").read_text(encoding="utf-8")
+    probe = script.split("if (Test-Path $pyInstallerExe) {", 1)[1].split("} else {", 1)[0]
+    save = probe.index("$previousPreference = $ErrorActionPreference")
+    relax = probe.index('$ErrorActionPreference = "Continue"')
+    version = probe.index("& $pyInstallerExe --version *> $null")
+    restore = probe.index("$ErrorActionPreference = $previousPreference")
+    assert save < relax < version < restore

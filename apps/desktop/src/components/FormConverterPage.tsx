@@ -12,7 +12,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useState, type DragEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import messages from "../i18n/th.json";
 import { describeAiError, describeUserFacingError } from "../lib/errorMessages";
 import {
@@ -49,7 +49,7 @@ import { SystemErrorAlert } from "./SystemErrorAlert";
 type FormConverterPageProps = {
   onBackHome: () => void;
   onRevealPath: (path: string) => void;
-  onRetryRuntime?: () => void;
+  onRetryRuntime?: () => void | Promise<void>;
 };
 
 type OcrInputMode = "ocrFile" | "scanFile";
@@ -286,22 +286,30 @@ export function FormConverterPage({
   const [aiSettings, setAiSettings] = useState<AiSettings | null>(null);
   const [aiSettingsError, setAiSettingsError] = useState<string | null>(null);
   const [isLoadingAiSettings, setIsLoadingAiSettings] = useState(true);
-  useEffect(() => {
-    let active = true;
-    getAiSettings("gemini")
-      .then((settings) => {
-        if (active) setAiSettings(settings);
-      })
-      .catch((error: unknown) => {
-        if (active) setAiSettingsError(describeAiError(error));
-      })
-      .finally(() => {
-        if (active) setIsLoadingAiSettings(false);
-      });
-    return () => {
-      active = false;
-    };
+  const settingsRequestGeneration = useRef(0);
+  const loadAiSettings = useCallback(async (reconnect?: () => void | Promise<void>) => {
+    const generation = ++settingsRequestGeneration.current;
+    setAiSettings(null);
+    setAiSettingsError(null);
+    setIsLoadingAiSettings(true);
+    try {
+      if (reconnect) await reconnect();
+      if (settingsRequestGeneration.current !== generation) return;
+      const settings = await getAiSettings("gemini");
+      if (settingsRequestGeneration.current === generation) setAiSettings(settings);
+    } catch (error: unknown) {
+      if (settingsRequestGeneration.current === generation) setAiSettingsError(describeAiError(error));
+    } finally {
+      if (settingsRequestGeneration.current === generation) setIsLoadingAiSettings(false);
+    }
   }, []);
+  useEffect(() => {
+    void loadAiSettings();
+    return () => {
+      settingsRequestGeneration.current += 1;
+    };
+  }, [loadAiSettings]);
+  const retryRuntimeAndAiSettings = () => { void loadAiSettings(onRetryRuntime); };
   const ocrReady = !isLoadingAiSettings && !aiSettingsError && aiSettings?.configured === true;
   const [rosterPath, setRosterPath] = useState("");
   const [thaiIdCsvPath, setThaiIdCsvPath] = useState("");
@@ -645,7 +653,7 @@ export function FormConverterPage({
       />
 
       {isLoadingAiSettings ? <p role="status">{messages.app.formConverter.aiLoading}</p> : null}
-      {aiSettingsError ? <SystemErrorAlert message={aiSettingsError} onRetry={onRetryRuntime} retryWhen="runtime" /> : null}
+      {aiSettingsError ? <SystemErrorAlert message={aiSettingsError} onRetry={retryRuntimeAndAiSettings} /> : null}
       {!isLoadingAiSettings && !aiSettingsError && !aiSettings?.configured ? (
         <div role="status" className="flex flex-wrap items-center gap-3">
           <p>{messages.app.formConverter.aiKeyRequired}</p>
@@ -654,7 +662,7 @@ export function FormConverterPage({
       ) : null}
 
       {errorMessage ? (
-        <SystemErrorAlert message={errorMessage} onRetry={onRetryRuntime} retryWhen="runtime" />
+        <SystemErrorAlert message={errorMessage} onRetry={retryRuntimeAndAiSettings} retryWhen="runtime" />
       ) : null}
 
       <Card>
@@ -1558,7 +1566,7 @@ function formatConfidence(value: number): string {
 }
 
 function formatOcrMode(result: OcrDocumentResponse): string {
-  const modelLabel = result.model === "gemini-3-pro-preview" ? "Gemini 3 Pro Preview" : "Gemini 3.5 Flash";
+  const modelLabel = result.model === "gemini-3.1-pro-preview" ? "Gemini 3.1 Pro Preview" : "Gemini 3.5 Flash";
   const modeLabel = result.processing_mode === "batch" ? "Batch" : "Standard";
   return ` · ${modelLabel} ${modeLabel}`;
 }

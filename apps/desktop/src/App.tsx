@@ -858,7 +858,7 @@ export function App() {
           <FormConverterPage
             onBackHome={() => setActiveModule("home")}
             onRevealPath={(path) => void handleRevealPath(path)}
-            onRetryRuntime={() => void handleConnect()}
+            onRetryRuntime={() => handleConnect()}
           />
         ) : activeModule === "studentBasicInfo" ? (
           <StudentBasicInfoPage

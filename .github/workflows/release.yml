@@ -24,6 +24,8 @@ jobs:
     runs-on: windows-latest
     environment: ${{ inputs.environment }}
     env:
+      DMC_DATA_DIR: ${{ runner.temp }}\dmc-release-data
+      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}\dmc-playwright
       WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
     permissions:
       contents: write
@@ -60,6 +62,9 @@ jobs:
           .\.venv\Scripts\python -m pip install --upgrade pip
           .\.venv\Scripts\python -m pip install pyinstaller
           .\.venv\Scripts\python -m pip install -e ".\apps\sidecar[dev]"
+
+      - name: Install Chromium and headless shell for localhost integration tests
+        run: .\.venv\Scripts\python -m playwright install chromium
 
       - name: Compute release metadata
         shell: pwsh

@@ -1,6 +1,6 @@
 # UI Flow
 
-Home shows Graduation, Current Students, Form Converter, Student Basic Info, local backup/restore, browser readiness, and AI settings.
+Home shows Graduation, Current Students, Form Converter, Student Basic Info, AI settings, and connection recovery when needed. Browser readiness and setup are part of the Graduation workflow. Local backup/restore is available through the operator scripts and RPC; Home has no backup/restore controls.
 
 AI settings lets the user enter a Gemini key, see configured state, explicitly test the connection, or delete the key. It never shows stored key material. Save does not contact Gemini.
 
