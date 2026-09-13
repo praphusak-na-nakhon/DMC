@@ -1,6 +1,6 @@
-import { ClipboardCheck, ClipboardList, FileSpreadsheet, GraduationCap, UserPlus } from "lucide-react";
+import { ClipboardList, FileSpreadsheet, GraduationCap, UserPlus } from "lucide-react";
 
-export type ModuleId = "formConverter" | "studentBasicInfo" | "psar" | "currentStudents" | "graduation";
+export type ModuleId = "formConverter" | "studentBasicInfo" | "currentStudents" | "graduation";
 export type ModuleStatus = "skeleton" | "ready";
 
 export type ModuleContract = {
@@ -15,10 +15,6 @@ export type ModuleDefinition = {
   id: ModuleId;
   status: ModuleStatus;
   icon: typeof GraduationCap;
-  requiresCredits: boolean;
-  pricingMode: "per_billable_record";
-  creditPerUnit: number;
-  productionDryRunEnabled: boolean;
   contract: ModuleContract;
 };
 
@@ -27,10 +23,6 @@ export const moduleDefinitions: ModuleDefinition[] = [
     id: "formConverter",
     status: "ready",
     icon: FileSpreadsheet,
-    requiresCredits: true,
-    pricingMode: "per_billable_record",
-    creditPerUnit: 3,
-    productionDryRunEnabled: false,
     contract: {
       version: "0.2",
       inputs: [
@@ -50,10 +42,6 @@ export const moduleDefinitions: ModuleDefinition[] = [
     id: "studentBasicInfo",
     status: "ready",
     icon: ClipboardList,
-    requiresCredits: false,
-    pricingMode: "per_billable_record",
-    creditPerUnit: 0,
-    productionDryRunEnabled: false,
     contract: {
       version: "0.1",
       inputs: ["dmc_student_excel_path", "student_basic_info_template"],
@@ -63,29 +51,9 @@ export const moduleDefinitions: ModuleDefinition[] = [
     },
   },
   {
-    id: "psar",
-    status: "ready",
-    icon: ClipboardCheck,
-    requiresCredits: false,
-    pricingMode: "per_billable_record",
-    creditPerUnit: 0,
-    productionDryRunEnabled: false,
-    contract: {
-      version: "0.1",
-      inputs: ["project_id", "uploaded_evidence_path", "p_sar_requirement_matrix"],
-      validations: ["supported_evidence_file", "requirement_mapping_confidence", "readiness_threshold"],
-      outputs: ["readiness_dashboard", "missing_evidence_recommendations", "mapped_files"],
-      events: ["get_psar_readiness", "add_psar_evidence"],
-    },
-  },
-  {
     id: "currentStudents",
     status: "ready",
     icon: UserPlus,
-    requiresCredits: true,
-    pricingMode: "per_billable_record",
-    creditPerUnit: 1,
-    productionDryRunEnabled: false,
     contract: {
       version: "0.1-draft",
       inputs: ["blank_current_students_template", "completed_current_students_excel_or_json_path"],
@@ -114,14 +82,10 @@ export const moduleDefinitions: ModuleDefinition[] = [
     id: "graduation",
     status: "ready",
     icon: GraduationCap,
-    requiresCredits: true,
-    pricingMode: "per_billable_record",
-    creditPerUnit: 1,
-    productionDryRunEnabled: false,
     contract: {
       version: "0.1",
       inputs: ["obec_study_excel_path", "grade_level", "minimum_match_score"],
-      validations: ["excel_schema", "status_mapping", "browser_runtime", "credit_policy"],
+      validations: ["excel_schema", "status_mapping", "browser_runtime"],
       outputs: ["obec_fill_report_csv", "obec_fill_review_csv", "run_summary", "completion_summary_xlsx"],
       events: ["validate_excel", "start_job", "progress", "job_done"],
     },

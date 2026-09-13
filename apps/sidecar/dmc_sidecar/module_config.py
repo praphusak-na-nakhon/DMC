@@ -1,321 +1,41 @@
 from __future__ import annotations
 
-import base64
-import hashlib
-import json
-from dataclasses import dataclass, replace
-from datetime import UTC, datetime
-from pathlib import Path
-from tempfile import NamedTemporaryFile
-from typing import Any, Literal, cast
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from typing import Literal
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
-from .config import (
-    config_signing_keys_path,
-    configs_dir,
-    module_configs_root,
-    secure_cloud_base_url,
-)
+from . import config
 from .errors import DomainError
 
 
-BUNDLED_CONFIG_SHA256: dict[str, str] = {
-    "graduation": "eb38e41ba55346033e0f1f38a79514c0efa0ce1481f1286b49f01f7e40cb057c",
-}
+class GraduationLevelRule(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    level_code: str
+    default_missing_code: str | None
+    ambiguity_floor: int | None
+    require_exact_student_no: bool
 
 
-def utc_now() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+class GraduationConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
 
-
-class ConfigEnvelope(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+    module: Literal["graduation"]
     version: str
-    config: dict[str, Any]
-    signature: str
-    verified_at: str
+    login_url: str
+    target_url_template: str
+    selectors: dict[str, str]
+    status_code_map: dict[str, str]
+    level_rules: dict[str, GraduationLevelRule]
 
 
-@dataclass(frozen=True)
-class ModuleConfigState:
-    module: str
-    version: str
-    config: dict[str, Any]
-    source: Literal["bundled", "cached", "cloud"]
-    signature_verified: bool
-    config_path: Path
-    checked_at: str
-    updated: bool
-    last_error: str | None
-
-
-def bundled_config_path(module: str) -> Path:
-    return module_configs_root() / module / "v1.json"
-
-
-def cached_config_path(module: str) -> Path:
-    return configs_dir() / f"{module}.json"
-
-
-def _canonical_payload(version: str, payload: dict[str, Any]) -> bytes:
-    return json.dumps(
-        {
-            "version": version,
-            "config": payload,
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-
-
-def _load_key_ring() -> dict[str, str]:
-    key_ring = _read_json_file(config_signing_keys_path())
-    raw_keys = key_ring.get("keys", [])
-    if not isinstance(raw_keys, list):
-        raise DomainError("CONFIG_KEYRING_INVALID")
-
-    mapping: dict[str, str] = {}
-    for item in raw_keys:
-        if not isinstance(item, dict):
-            continue
-        key_id = item.get("key_id")
-        algorithm = item.get("algorithm")
-        public_key_base64 = item.get("public_key_base64")
-        if (
-            isinstance(key_id, str)
-            and isinstance(algorithm, str)
-            and algorithm == "ed25519"
-            and isinstance(public_key_base64, str)
-        ):
-            mapping[key_id] = public_key_base64
-    if not mapping:
-        raise DomainError("CONFIG_KEYRING_INVALID")
-    return mapping
-
-
-def verify_signature(version: str, payload: dict[str, Any], signature: str) -> None:
-    parts = signature.split(":", 2)
-    if len(parts) != 3:
-        raise DomainError("CONFIG_SIGNATURE_INVALID")
-    algorithm, key_id, encoded_signature = parts
-    if algorithm != "ed25519":
-        raise DomainError("CONFIG_SIGNATURE_INVALID")
-
-    public_key_base64 = _load_key_ring().get(key_id)
-    if public_key_base64 is None:
-        raise DomainError("CONFIG_SIGNATURE_INVALID")
-
+def load_bundled_module_config(module: str) -> dict[str, object]:
+    """Validate and load the configuration shipped with this application."""
+    if module != "graduation":
+        raise DomainError("CONFIG_BUNDLED_INVALID")
+    path = config.module_configs_root() / module / "v1.json"
     try:
-        public_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key_base64))
-        public_key.verify(
-            base64.b64decode(encoded_signature),
-            _canonical_payload(version, payload),
-        )
-    except Exception as exc:
-        raise DomainError("CONFIG_SIGNATURE_INVALID") from exc
-
-
-def _read_json_file(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise DomainError("CONFIG_JSON_INVALID")
-    return cast(dict[str, Any], payload)
-
-
-def _read_bundled_config(module: str, path: Path) -> dict[str, Any]:
-    expected_hash = BUNDLED_CONFIG_SHA256.get(module)
-    if expected_hash is None:
-        raise DomainError("CONFIG_SIGNATURE_INVALID")
-    raw_bytes = path.read_bytes()
-    if hashlib.sha256(raw_bytes).hexdigest() != expected_hash:
-        raise DomainError("CONFIG_SIGNATURE_INVALID")
-    payload = json.loads(raw_bytes.decode("utf-8"))
-    if not isinstance(payload, dict):
-        raise DomainError("CONFIG_JSON_INVALID")
-    if "version" not in payload:
-        raise DomainError("CONFIG_SIGNATURE_INVALID")
-    return cast(dict[str, Any], payload)
-
-
-def _load_bundled_state(module: str, *, last_error: str | None = None) -> ModuleConfigState:
-    path = bundled_config_path(module)
-    payload = _read_bundled_config(module, path)
-    return ModuleConfigState(
-        module=module,
-        version=str(payload["version"]),
-        config=payload,
-        source="bundled",
-        signature_verified=True,
-        config_path=path,
-        checked_at=utc_now(),
-        updated=False,
-        last_error=last_error,
-    )
-
-
-def _load_cached_envelope(module: str) -> ConfigEnvelope | None:
-    path = cached_config_path(module)
-    if not path.exists():
-        return None
-    return ConfigEnvelope.model_validate(_read_json_file(path))
-
-
-def _quarantine_cached_config(module: str) -> None:
-    path = cached_config_path(module)
-    if not path.exists():
-        return
-    quarantine_path = _quarantine_path(path)
-    try:
-        path.replace(quarantine_path)
-    except OSError:
-        try:
-            path.unlink()
-        except OSError:
-            pass
-
-
-def _quarantine_path(path: Path) -> Path:
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    candidate = path.with_suffix(f".invalid-{timestamp}.json")
-    suffix = 1
-    while candidate.exists():
-        candidate = path.with_suffix(f".invalid-{timestamp}-{suffix}.json")
-        suffix += 1
-    return candidate
-
-
-def load_effective_config(module: str) -> ModuleConfigState:
-    try:
-        cached = _load_cached_envelope(module)
-    except Exception:
-        _quarantine_cached_config(module)
-        return _load_bundled_state(module, last_error="CONFIG_CACHE_INVALID")
-
-    if cached is None:
-        return _load_bundled_state(module)
-
-    try:
-        verify_signature(cached.version, cached.config, cached.signature)
-    except DomainError as exc:
-        _quarantine_cached_config(module)
-        return _load_bundled_state(module, last_error=str(exc))
-
-    return ModuleConfigState(
-        module=module,
-        version=cached.version,
-        config=cached.config,
-        source="cached",
-        signature_verified=True,
-        config_path=cached_config_path(module),
-        checked_at=utc_now(),
-        updated=False,
-        last_error=None,
-    )
-
-
-def _write_cached_envelope(module: str, envelope: ConfigEnvelope) -> Path:
-    target_path = cached_config_path(module)
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    with NamedTemporaryFile(
-        "w",
-        encoding="utf-8",
-        dir=str(target_path.parent),
-        delete=False,
-        suffix=".tmp",
-    ) as handle:
-        json.dump(
-            envelope.model_dump(),
-            handle,
-            ensure_ascii=False,
-            indent=2,
-        )
-        temp_path = Path(handle.name)
-    temp_path.replace(target_path)
-    return target_path
-
-
-def sync_module_config(module: str, *, timeout_sec: int = 10) -> ModuleConfigState:
-    local_state = load_effective_config(module)
-    try:
-        base_url = secure_cloud_base_url()
-    except DomainError as exc:
-        return replace(
-            local_state,
-            checked_at=utc_now(),
-            updated=False,
-            last_error=str(exc),
-        )
-    if base_url is None:
-        return local_state
-
-    query = urlencode({"current_version": local_state.version})
-    request = Request(
-        f"{base_url}/v1/config/{module}?{query}",
-        headers={"Accept": "application/json"},
-        method="GET",
-    )
-
-    try:
-        with urlopen(request, timeout=timeout_sec) as response:
-            status_code = getattr(response, "status", None)
-            if status_code is None:
-                status_code = response.getcode()
-            if status_code == 204:
-                return replace(local_state, checked_at=utc_now(), updated=False)
-            payload = json.loads(response.read().decode("utf-8"))
-    except HTTPError as exc:
-        if exc.code == 304:
-            return replace(local_state, checked_at=utc_now(), updated=False)
-        return replace(
-            local_state,
-            checked_at=utc_now(),
-            updated=False,
-            last_error=f"HTTP_{exc.code}",
-        )
-    except URLError:
-        return replace(
-            local_state,
-            checked_at=utc_now(),
-            updated=False,
-            last_error="CONFIG_SYNC_UNAVAILABLE",
-        )
-
-    version = str(payload["version"])
-    config = dict(payload["config"])
-    signature = str(payload["signature"])
-
-    try:
-        verify_signature(version, config, signature)
-    except DomainError as exc:
-        return replace(
-            local_state,
-            checked_at=utc_now(),
-            updated=False,
-            last_error=str(exc),
-        )
-
-    envelope = ConfigEnvelope(
-        version=version,
-        config=config,
-        signature=signature,
-        verified_at=utc_now(),
-    )
-    config_path = _write_cached_envelope(module, envelope)
-    return ModuleConfigState(
-        module=module,
-        version=version,
-        config=config,
-        source="cloud",
-        signature_verified=True,
-        config_path=config_path,
-        checked_at=envelope.verified_at,
-        updated=True,
-        last_error=None,
-    )
+        payload = GraduationConfig.model_validate_json(path.read_bytes())
+    except (OSError, ValidationError) as exc:
+        raise DomainError("CONFIG_BUNDLED_INVALID") from exc
+    return payload.model_dump()

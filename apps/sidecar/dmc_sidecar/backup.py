@@ -5,6 +5,7 @@ import shutil
 import sqlite3
 import tempfile
 import zipfile
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -28,14 +29,9 @@ def default_backup_path() -> Path:
 
 def _snapshot_sqlite_database(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
-    source_connection = sqlite3.connect(source)
-    target_connection = sqlite3.connect(target)
-    try:
+    with closing(sqlite3.connect(source)) as source_connection, closing(sqlite3.connect(target)) as target_connection:
         source_connection.backup(target_connection)
         target_connection.commit()
-    finally:
-        target_connection.close()
-        source_connection.close()
 
 
 def _remove_sqlite_sidecars(path: Path) -> None:
@@ -47,20 +43,15 @@ def _remove_sqlite_sidecars(path: Path) -> None:
 
 def _restore_sqlite_database(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
-    source_connection = sqlite3.connect(source)
-    target_connection = sqlite3.connect(target)
-    try:
+    with closing(sqlite3.connect(source)) as source_connection, closing(sqlite3.connect(target)) as target_connection:
         source_connection.backup(target_connection)
         target_connection.commit()
-    finally:
-        target_connection.close()
-        source_connection.close()
 
 
 def _iter_data_files() -> list[tuple[Path, str]]:
     files: list[tuple[Path, str]] = []
     data_dir = config.default_data_dir()
-    for root in (config.configs_dir(), config.reports_dir()):
+    for root in (config.reports_dir(), config.ocr_cache_dir()):
         if not root.exists():
             continue
         for path in sorted(item for item in root.rglob("*") if item.is_file()):
@@ -94,19 +85,20 @@ def create_backup_archive(output_path: Path | None = None) -> Path:
         db_snapshot = temp_root / "desktop.sqlite3"
         _snapshot_sqlite_database(source_db, db_snapshot)
 
+        data_files = _iter_data_files()
         manifest = {
             "kind": "dmc-sidecar-backup",
             "created_at": utc_now(),
             "sidecar_version": __version__,
             "schema": get_database_metadata(source_db),
             "data_dir": str(config.default_data_dir()),
-            "files": ["desktop.sqlite3", *[relative for _, relative in _iter_data_files()]],
+            "files": ["desktop.sqlite3", *[relative for _, relative in data_files]],
         }
 
         with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
             archive.write(db_snapshot, arcname="desktop.sqlite3")
-            for source_path, relative_path in _iter_data_files():
+            for source_path, relative_path in data_files:
                 archive.write(source_path, arcname=relative_path)
 
     return destination
@@ -137,26 +129,33 @@ def restore_backup_archive(archive_path: Path) -> dict[str, str]:
         if not restored_db.exists():
             raise DomainError("BACKUP_DATABASE_MISSING")
 
-        for folder in (config.configs_dir(), config.reports_dir()):
+        manifest_files = manifest.get("files", [])
+        if not isinstance(manifest_files, list):
+            raise DomainError("BACKUP_MANIFEST_INVALID")
+
+        retained_roots = (config.reports_dir(), config.ocr_cache_dir())
+        restore_files: list[tuple[Path, Path]] = []
+        for relative in manifest_files:
+            if not isinstance(relative, str):
+                raise DomainError("BACKUP_MANIFEST_INVALID")
+            if relative in {"manifest.json", "desktop.sqlite3"}:
+                continue
+            source_path = _ensure_relative_member_path(temp_root, relative)
+            destination_path = _ensure_relative_member_path(current_data_dir, relative)
+            if not any(destination_path.is_relative_to(root.resolve()) for root in retained_roots):
+                continue
+            if not source_path.exists() or not source_path.is_file():
+                continue
+            restore_files.append((source_path, destination_path))
+
+        for folder in retained_roots:
             if folder.exists():
                 shutil.rmtree(folder)
 
         sqlite_target = config.sqlite_path()
         _restore_sqlite_database(restored_db, sqlite_target)
 
-        manifest_files = manifest.get("files", [])
-        if not isinstance(manifest_files, list):
-            raise DomainError("BACKUP_MANIFEST_INVALID")
-
-        for relative in manifest_files:
-            if relative in {"manifest.json", "desktop.sqlite3"}:
-                continue
-            if not isinstance(relative, str):
-                raise DomainError("BACKUP_MANIFEST_INVALID")
-            source_path = _ensure_relative_member_path(temp_root, relative)
-            if not source_path.exists() or not source_path.is_file():
-                continue
-            destination_path = _ensure_relative_member_path(current_data_dir, relative)
+        for source_path, destination_path in restore_files:
             destination_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_path, destination_path)
 

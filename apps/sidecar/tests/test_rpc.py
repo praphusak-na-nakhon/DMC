@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
-from types import SimpleNamespace
+
+import pytest
 
 from dmc_sidecar import config
+from ai_fakes import InMemorySecretStore
+from dmc_sidecar.ai.base import AiConnectionTestResponse, OcrDocumentRequest, OcrDocumentResponse
+from dmc_sidecar.ai.registry import ProviderRegistry
 from dmc_sidecar.checkpoint import JobCheckpoint
 from dmc_sidecar.errors import DomainError
 from dmc_sidecar.job_store import JobStore
 from dmc_sidecar.rpc import RpcServer
-from dmc_sidecar.runtime import build_event_notification, finalize_job_credits
-from dmc_sidecar.gemini_ocr import GeminiOcrDmcFormResponse
+from dmc_sidecar.runtime import build_event_notification
 
 
 def _rpc_call(server: RpcServer, method: str, params: dict[str, object]) -> dict[str, object]:
@@ -27,23 +29,6 @@ def _rpc_call(server: RpcServer, method: str, params: dict[str, object]) -> dict
             )
         )
     )
-
-
-def _wait_until(assertion, *, timeout: float = 3.0) -> None:  # noqa: ANN001
-    deadline = time.time() + timeout
-    last_error: AssertionError | None = None
-    while time.time() < deadline:
-        try:
-            result = assertion()
-            if result is False:
-                raise AssertionError("condition not satisfied")
-            return
-        except AssertionError as exc:
-            last_error = exc
-            time.sleep(0.02)
-    if last_error is not None:
-        raise last_error
-    raise AssertionError("condition not satisfied")
 
 
 def _ready_browser_status(tmp_path: Path):
@@ -65,8 +50,100 @@ def _ready_browser_status(tmp_path: Path):
     )()
 
 
+def test_database_status_exposes_generation_and_local_columns(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
+
+    response = _rpc_call(server, "get_database_status", {})
+
+    metadata = response["result"]
+    assert metadata["schema_generation"] == 2
+    assert set(metadata["tables"]) == {"job", "job_record", "schema_metadata"}
+    assert "checkpoint_json" in metadata["job_columns"]
+    assert "credit_status" not in metadata["job_columns"]
+
+
+@pytest.mark.parametrize("module_name", ["graduation", "currentStudents"])
+def test_live_job_starts_without_account_or_credit(monkeypatch, tmp_path: Path, module_name: str) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
+    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
+    started: dict[str, object] = {}
+    monkeypatch.setattr(server.job_manager, "start_job", lambda **kwargs: started.update(kwargs))
+
+    response = _rpc_call(server, "start_job", {
+        "job_id": "job-local-free", "module": module_name,
+        "excel_path": "C:\\data\\m3.xlsx", "options": {"dry_run": False},
+    })
+
+    assert response.get("result") == {"accepted": True, "job_id": "job-local-free"}, response
+    assert started == {"job_id": "job-local-free", "module_name": module_name,
+                       "excel_path": Path("C:\\data\\m3.xlsx"), "options": {"dry_run": False}}
+    status = server.job_store.get_status("job-local-free")
+    assert status is not None and status["status"] == "pending"
+    assert not any("credit" in key for key in status)
+    record = server.job_store.get_job_record("job-local-free")
+    assert record is not None and not any("credit" in key for key in record)
+
+
+@pytest.mark.parametrize("method", ["sign_in", "sign_out", "get_account_status", "refresh_wallet", "get_module_catalog"])
+def test_commercial_rpc_is_unsupported(method: str) -> None:
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
+    response = _rpc_call(server, method, {})
+    assert response["error"]["code"] == "RPC_METHOD_NOT_FOUND"
+
+
+def test_live_start_failure_marks_local_pending_job_failed(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
+    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
+
+    def fail_start(**kwargs: object) -> None:
+        raise DomainError("JOB_ALREADY_RUNNING")
+
+    monkeypatch.setattr(server.job_manager, "start_job", fail_start)
+    response = _rpc_call(server, "start_job", {
+        "job_id": "job-start-failed", "module": "graduation",
+        "excel_path": "source.xlsx", "options": {"dry_run": False},
+    })
+
+    assert response["error"]["code"] == "JOB_ALREADY_RUNNING"
+    status = server.job_store.get_status("job-start-failed")
+    assert status is not None and status["status"] == "failed"
+    assert status["finished_at"] is not None
+    assert status["processed"] == 0
+    assert not any("credit" in key for key in status)
+
+
+@pytest.mark.parametrize("module_name", ["graduation", "currentStudents"])
+@pytest.mark.parametrize("status", ["paused", "stopped_on_review"])
+def test_live_job_resumes_without_account_or_credit(monkeypatch, tmp_path: Path, module_name: str, status: str) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
+    server.job_store.create_pending_job("job-local-resume", module_name, "C:\\data\\m3.xlsx")
+    checkpoint = JobCheckpoint.initial(level_label="M3", base_url="https://portal.example.test")
+    checkpoint.options = {"dry_run": False, "stop_on_review": True}
+    checkpoint.processed = 1
+    checkpoint.next_page = 2
+    server.job_store.mark_running("job-local-resume", total_records=3, checkpoint=checkpoint, started_at="2026-09-04T00:00:00Z")
+    server.job_store.save_checkpoint("job-local-resume", checkpoint)
+    server.job_store.set_status("job-local-resume", status)
+    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
+    started: dict[str, object] = {}
+    monkeypatch.setattr(server.job_manager, "start_job", lambda **kwargs: started.update(kwargs))
+
+    response = _rpc_call(server, "resume_existing_job", {"job_id": "job-local-resume"})
+
+    assert response["result"] == {"accepted": True, "job_id": "job-local-resume", "status": "running"}
+    assert started == {"job_id": "job-local-resume", "module_name": module_name,
+                       "excel_path": Path("C:\\data\\m3.xlsx"), "options": {"dry_run": False, "stop_on_review": True}}
+    persisted = server.job_store.get_status("job-local-resume")
+    assert persisted is not None and persisted["processed"] == 1 and persisted["current_page"] == 2
+    assert not any("credit" in key for key in persisted)
+
+
 def test_ping_rpc() -> None:
-    server = RpcServer(emit_notification=lambda payload: None)
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
     payload = json.dumps(
         {
             "jsonrpc": "2.0",
@@ -82,116 +159,139 @@ def test_ping_rpc() -> None:
     assert response["result"]["sidecar_version"] == "0.1.0"
 
 
-def test_ocr_dmc_form_with_gemini_rpc(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
-    captured: dict[str, object] = {}
-    source_path = tmp_path / "form.pdf"
-    source_path.write_bytes(b"%PDF-1.7\n1 0 obj << /Type /Page >> endobj\n%%EOF")
+def test_unsupported_rpc_returns_method_not_found_envelope() -> None:
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
 
-    def fake_ocr(request) -> GeminiOcrDmcFormResponse:  # noqa: ANN001
-        captured["request"] = request
-        return GeminiOcrDmcFormResponse(
-            model="gemini-3.5-flash",
+    response = _rpc_call(server, "unsupported_method", {})
+
+    assert response == {
+        "jsonrpc": "2.0",
+        "id": "req-unsupported_method",
+        "error": {
+            "code": "RPC_METHOD_NOT_FOUND",
+            "message": "Unsupported method.",
+            "details": {},
+        },
+    }
+
+
+class _FakeAiProvider:
+    provider_id = "gemini"
+
+    def test_connection(self) -> AiConnectionTestResponse:
+        return AiConnectionTestResponse(
+            provider="gemini",
+            ok=True,
+            tested_at="2026-09-04T00:00:00+00:00",
+            message="Gemini connection succeeded.",
+        )
+
+    def ocr_document(self, request: OcrDocumentRequest) -> OcrDocumentResponse:
+        return OcrDocumentResponse(
+            provider="gemini",
+            model=request.model,
+            processing_mode=request.processing_mode,
             source_path=request.source_path,
-            markdown_path="C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\form.json",
-            structured_json_path="C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\form.json",
+            markdown_path="C:\\data\\form.md",
             cached=False,
             pages_processed=1,
             pages_estimated=1,
-            average_confidence=None,
-            file_sha256="abc123",
-            created_at="2026-05-11T00:00:00+00:00",
+            file_sha256="digest",
+            created_at="2026-09-04T00:00:00+00:00",
         )
 
-    reservations: list[dict[str, object]] = []
-    captures: list[dict[str, object]] = []
 
-    def fake_reserve(*args: object, **kwargs: object) -> SimpleNamespace:
-        reservations.append(dict(kwargs))
-        return SimpleNamespace(reservation_id="reservation-ocr-1")
+def _ai_server(store: InMemorySecretStore | None = None) -> RpcServer:
+    return RpcServer(
+        emit_notification=lambda payload: None,
+        secret_store=store or InMemorySecretStore(),
+        provider_registry=ProviderRegistry([_FakeAiProvider()]),
+    )
 
-    def fake_capture(*args: object, **kwargs: object) -> SimpleNamespace:
-        captures.append(dict(kwargs))
-        return SimpleNamespace(reservation_id=kwargs["reservation_id"])
 
-    monkeypatch.setattr("dmc_sidecar.rpc.ocr_dmc_form_with_gemini", fake_ocr)
-    monkeypatch.setattr("dmc_sidecar.rpc.reserve_credits", fake_reserve)
-    monkeypatch.setattr("dmc_sidecar.rpc.capture_credits", fake_capture)
-    server = RpcServer(emit_notification=lambda payload: None)
+def test_ai_key_rpc_never_returns_secret() -> None:
+    store = InMemorySecretStore()
+    server = _ai_server(store)
+
+    saved = _rpc_call(server, "save_ai_api_key", {"provider": "gemini", "api_key": "secret-value"})
+    status = _rpc_call(server, "get_ai_settings", {"provider": "gemini"})
+
+    assert saved["result"] == {"provider": "gemini", "configured": True}
+    assert status["result"] == {"provider": "gemini", "configured": True}
+    assert "secret-value" not in json.dumps([saved, status])
+
+
+def test_ai_connection_and_ocr_rpc_use_injected_provider() -> None:
+    store = InMemorySecretStore()
+    store.set("gemini", "configured-key")
+    server = _ai_server(store)
+
+    connection = _rpc_call(server, "test_ai_connection", {"provider": "gemini"})
+    document = _rpc_call(
+        server,
+        "ocr_document",
+        {"provider": "gemini", "source_path": "C:\\data\\form.pdf"},
+    )
+
+    assert connection["result"]["ok"] is True
+    assert document["result"]["provider"] == "gemini"
+    assert document["result"]["source_path"] == "C:\\data\\form.pdf"
+
+
+def test_deleting_key_blocks_new_ocr_requests() -> None:
+    store = InMemorySecretStore()
+    store.set("gemini", "secret-value")
+    server = _ai_server(store)
+    deleted = _rpc_call(server, "delete_ai_api_key", {"provider": "gemini"})
 
     response = _rpc_call(
         server,
-        "ocr_dmc_form_with_gemini",
-        {
-            "source_path": str(source_path),
-            "api_key": None,
-            "model": "gemini-3.5-flash",
-            "force_refresh": False,
-        },
+        "ocr_document",
+        {"provider": "gemini", "source_path": "C:\\data\\form.pdf"},
     )
 
-    assert response["result"]["engine"] == "gemini"
-    assert response["result"]["markdown_path"].endswith("form.json")
-    assert response["result"]["output_format"] == "structured_json"
-    assert response["result"]["credits_charged"] == 3
-    assert response["result"]["charged"] is True
-    assert captured["request"].source_path == str(source_path)
-    assert reservations[0]["module"] == "formConverter"
-    assert reservations[0]["units"] == 3
-    assert captures[0]["units"] == 3
+    assert deleted["result"] == {"provider": "gemini", "configured": False}
+    assert response["error"]["code"] == "AI_API_KEY_REQUIRED"
 
 
-def test_ocr_dmc_form_with_gemini_rpc_falls_back_when_cloud_is_unavailable(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:  # noqa: ANN001
-    captured: dict[str, object] = {}
-    source_path = tmp_path / "form.pdf"
-    source_path.write_bytes(b"%PDF-1.7\n1 0 obj << /Type /Page >> endobj\n%%EOF")
+def test_ai_rpc_validation_and_unexpected_errors_never_echo_secrets(capsys) -> None:  # noqa: ANN001
+    class ExplodingProvider(_FakeAiProvider):
+        def test_connection(self) -> AiConnectionTestResponse:
+            raise RuntimeError("provider-secret")
 
-    def fake_ocr(request) -> GeminiOcrDmcFormResponse:  # noqa: ANN001
-        captured["request"] = request
-        return GeminiOcrDmcFormResponse(
-            model="gemini-3.5-flash",
-            source_path=request.source_path,
-            markdown_path="C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\form.json",
-            structured_json_path="C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\form.json",
-            cached=False,
-            pages_processed=1,
-            pages_estimated=1,
-            average_confidence=None,
-            file_sha256="abc123",
-            created_at="2026-05-11T00:00:00+00:00",
+    server = RpcServer(
+        emit_notification=lambda payload: None,
+        secret_store=InMemorySecretStore(),
+        provider_registry=ProviderRegistry([ExplodingProvider()]),
+    )
+
+    malformed = json.loads(
+        server.handle_text(
+            json.dumps({"jsonrpc": "2.0", "id": "request-secret", "method": "ping", "params": {}, "api_key": "envelope-secret"})
         )
-
-    monkeypatch.setattr("dmc_sidecar.rpc.ocr_dmc_form_with_gemini", fake_ocr)
-    monkeypatch.setattr(
-        "dmc_sidecar.rpc.reserve_credits",
-        lambda *args, **kwargs: (_ for _ in ()).throw(DomainError("ACCOUNT_CLOUD_UNAVAILABLE")),
     )
-    monkeypatch.setattr(
-        "dmc_sidecar.rpc.capture_credits",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("capture should not run without reservation")),
-    )
-    server = RpcServer(emit_notification=lambda payload: None)
-
-    response = _rpc_call(
+    invalid_params = _rpc_call(
         server,
-        "ocr_dmc_form_with_gemini",
-        {
-            "source_path": str(source_path),
-            "api_key": None,
-            "model": "gemini-3.5-flash",
-            "force_refresh": False,
-        },
+        "save_ai_api_key",
+        {"provider": "provider-secret", "api_key": "param-secret", "extra": "extra-secret", "student_name": "PRIVATE_STUDENT"},
     )
+    assert invalid_params["id"] == "req-save_ai_api_key"
+    assert invalid_params["error"]["code"] == "RPC_INVALID_REQUEST"
+    validation_errors = invalid_params["error"]["details"]["errors"]
+    assert {error["type"] for error in validation_errors} == {"literal_error", "extra_forbidden"}
+    assert all(set(error) == {"type", "message"} for error in validation_errors)
+    invalid_method = json.loads(
+        server.handle_text(
+            json.dumps({"jsonrpc": "2.0", "id": "request-id", "method": "method-secret", "params": {}})
+        )
+    )
+    unexpected = _rpc_call(server, "test_ai_connection", {"provider": "gemini"})
 
-    assert response["result"]["engine"] == "gemini"
-    assert response["result"]["markdown_path"].endswith("form.json")
-    assert response["result"]["credits_per_page"] == 3
-    assert response["result"]["credits_charged"] == 0
-    assert response["result"]["charged"] is False
-    assert response["result"]["credit_reservation_id"] is None
-    assert captured["request"].source_path == str(source_path)
+    visible_output = json.dumps([malformed, invalid_params, invalid_method, unexpected]) + capsys.readouterr().err
+    for secret in ("envelope-secret", "param-secret", "extra-secret", "provider-secret", "method-secret", "request-secret", "PRIVATE_STUDENT", "student_name"):
+        assert secret not in visible_output
+
+
 
 
 def test_list_jobs_rpc(monkeypatch, tmp_path: Path) -> None:
@@ -236,7 +336,7 @@ def test_list_jobs_rpc(monkeypatch, tmp_path: Path) -> None:
         ],
     )
 
-    server = RpcServer(emit_notification=lambda payload: None)
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
     payload = json.dumps(
         {
             "jsonrpc": "2.0",
@@ -259,12 +359,13 @@ def test_archive_old_jobs_rpc_keeps_latest_terminal_jobs(monkeypatch, tmp_path: 
     for index in range(5):
         job_id = f"job-{index}"
         store.create_pending_job(job_id, "graduation", f"C:\\data\\m3-{index}.xlsx")
+        store.append_results(job_id, [{"page": 1, "portal_row_index": 1, "note": "dry_run"}])
         checkpoint = JobCheckpoint.initial(level_label="เธก.3", base_url="https://example.test")
         store.mark_done(job_id, checkpoint=checkpoint, finished_at=f"2026-04-22T00:0{index}:00Z")
     store.create_pending_job("job-active", "graduation", "C:\\data\\active.xlsx")
     store.set_status("job-active", "running")
 
-    server = RpcServer(emit_notification=lambda payload: None)
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
     payload = json.dumps(
         {
             "jsonrpc": "2.0",
@@ -280,30 +381,31 @@ def test_archive_old_jobs_rpc_keeps_latest_terminal_jobs(monkeypatch, tmp_path: 
     assert response["result"] == {"archived": 3, "kept": 2}
     assert {"job-4", "job-3", "job-active"}.issubset(remaining_ids)
     assert "job-0" not in remaining_ids
+    assert store.list_results("job-0") == []
+    assert store.list_results("job-4") == [{"page": 1, "portal_row_index": 1, "note": "dry_run"}]
 
 
-def test_get_module_config_status_rpc(monkeypatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize("method", ["get_module_config_status", "sync_module_config"])
+def test_config_management_rpcs_are_removed(monkeypatch, tmp_path: Path, method: str) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    server = RpcServer(emit_notification=lambda payload: None)
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
     payload = json.dumps(
         {
             "jsonrpc": "2.0",
             "id": "req-config",
-            "method": "get_module_config_status",
+            "method": method,
             "params": {"module": "graduation"},
         }
     )
 
     response = json.loads(server.handle_text(payload))
 
-    assert response["result"]["module"] == "graduation"
-    assert response["result"]["source"] == "bundled"
-    assert response["result"]["version"] == "0.1.0"
+    assert response["error"]["code"] == "RPC_METHOD_NOT_FOUND"
 
 
 def test_get_browser_runtime_status_rpc(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    server = RpcServer(emit_notification=lambda payload: None)
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
     monkeypatch.setattr(
         "dmc_sidecar.rpc.get_browser_runtime_status",
         lambda: type(
@@ -340,7 +442,7 @@ def test_get_browser_runtime_status_rpc(monkeypatch, tmp_path: Path) -> None:
 
 def test_create_backup_rpc_returns_archive_path(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    server = RpcServer(emit_notification=lambda payload: None)
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
     payload = json.dumps(
         {
             "jsonrpc": "2.0",
@@ -357,7 +459,7 @@ def test_create_backup_rpc_returns_archive_path(monkeypatch, tmp_path: Path) -> 
 
 def test_backup_rpc_rejects_relative_escape_path(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path / "data")
-    server = RpcServer(emit_notification=lambda payload: None)
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
 
     response = _rpc_call(server, "create_backup", {"path": "../escape.zip"})
 
@@ -366,7 +468,7 @@ def test_backup_rpc_rejects_relative_escape_path(monkeypatch, tmp_path: Path) ->
 
 def test_restore_backup_rpc_requires_idle(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    server = RpcServer(emit_notification=lambda payload: None)
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
     monkeypatch.setattr(
         server.job_manager,
         "runtime_statuses",
@@ -389,7 +491,7 @@ def test_restore_backup_rpc_requires_idle(monkeypatch, tmp_path: Path) -> None:
 
 def test_start_job_rpc_requires_browser_runtime(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    server = RpcServer(emit_notification=lambda payload: None)
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
     monkeypatch.setattr(
         "dmc_sidecar.rpc.get_browser_runtime_status",
         lambda: type(
@@ -430,291 +532,6 @@ def test_start_job_rpc_requires_browser_runtime(monkeypatch, tmp_path: Path) -> 
     assert response["error"]["details"]["installed"] is False
 
 
-def test_live_start_requires_account_session_before_job_starts(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
-    server = RpcServer(emit_notification=lambda payload: None)
-    started: list[str] = []
-    monkeypatch.setattr(server.job_manager, "start_job", lambda **_: started.append("started"))
-
-    response = _rpc_call(
-        server,
-        "start_job",
-        {
-            "job_id": "job-credit-session",
-            "module": "graduation",
-            "excel_path": "C:\\data\\m3.xlsx",
-            "options": {"dry_run": False, "estimated_credits": 3},
-        },
-    )
-
-    assert response["error"]["code"] == "SIGN_IN_REQUIRED"
-    assert started == []
-    assert server.job_store.get_job_record("job-credit-session") is None
-
-
-def test_live_start_reports_credit_reservation_failure_from_background(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
-    monkeypatch.setattr(
-        "dmc_sidecar.rpc.reserve_credits",
-        lambda *args, **kwargs: (_ for _ in ()).throw(DomainError("INSUFFICIENT_CREDITS")),
-    )
-    server = RpcServer(emit_notification=lambda payload: None)
-    monkeypatch.setattr(server.account_store, "get_session", lambda: SimpleNamespace(token="token"))
-    started: list[str] = []
-    monkeypatch.setattr(server.job_manager, "start_job", lambda **_: started.append("started"))
-
-    response = _rpc_call(
-        server,
-        "start_job",
-        {
-            "job_id": "job-credit-low",
-            "module": "graduation",
-            "excel_path": "C:\\data\\m3.xlsx",
-            "options": {"dry_run": False, "estimated_credits": 3},
-        },
-    )
-
-    assert response["result"]["accepted"] is True
-    assert started == []
-    _wait_until(lambda: (server.job_store.get_status("job-credit-low") or {}).get("status") == "failed")
-    status = server.job_store.get_status("job-credit-low")
-    assert status is not None
-    assert status["credit_status"] == "start_failed:INSUFFICIENT_CREDITS"
-
-
-def test_live_start_reports_account_cloud_failure_from_background(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
-    monkeypatch.setattr(
-        "dmc_sidecar.rpc.reserve_credits",
-        lambda *args, **kwargs: (_ for _ in ()).throw(DomainError("ACCOUNT_CLOUD_UNAVAILABLE")),
-    )
-    server = RpcServer(emit_notification=lambda payload: None)
-    monkeypatch.setattr(server.account_store, "get_session", lambda: SimpleNamespace(token="token"))
-    started: list[str] = []
-    monkeypatch.setattr(server.job_manager, "start_job", lambda **_: started.append("started"))
-
-    response = _rpc_call(
-        server,
-        "start_job",
-        {
-            "job_id": "job-cloud-down",
-            "module": "graduation",
-            "excel_path": "C:\\data\\m3.xlsx",
-            "options": {"dry_run": False, "estimated_credits": 3},
-        },
-    )
-
-    assert response["result"]["accepted"] is True
-    assert started == []
-    _wait_until(lambda: (server.job_store.get_status("job-cloud-down") or {}).get("status") == "failed")
-    status = server.job_store.get_status("job-cloud-down")
-    assert status is not None
-    assert status["credit_status"] == "start_failed:ACCOUNT_CLOUD_UNAVAILABLE"
-
-
-def test_current_students_live_start_blocks_when_cloud_unavailable(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
-    monkeypatch.setattr(
-        "dmc_sidecar.rpc.reserve_credits",
-        lambda *args, **kwargs: (_ for _ in ()).throw(DomainError("ACCOUNT_CLOUD_UNAVAILABLE")),
-    )
-    server = RpcServer(emit_notification=lambda payload: None)
-    monkeypatch.setattr(server.account_store, "get_session", lambda: SimpleNamespace(token="token"))
-    started: dict[str, object] = {}
-    monkeypatch.setattr(server.job_manager, "start_job", lambda **kwargs: started.update(kwargs))
-
-    response = _rpc_call(
-        server,
-        "start_job",
-        {
-            "job_id": "job-current-cloud-down",
-            "module": "currentStudents",
-            "excel_path": "C:\\data\\dmc-form-data.json",
-            "options": {"dry_run": False, "estimated_credits": 3},
-        },
-    )
-
-    assert response["result"]["accepted"] is True
-    _wait_until(lambda: (server.job_store.get_status("job-current-cloud-down") or {}).get("status") == "failed")
-    assert started == {}
-    status = server.job_store.get_status("job-current-cloud-down")
-    assert status is not None
-    assert status["status"] == "failed"
-    assert status["credit_status"] == "start_failed:ACCOUNT_CLOUD_UNAVAILABLE"
-
-
-def test_rpc_server_reaps_reserving_jobs_from_previous_process(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    store = JobStore()
-    store.create_pending_job(
-        job_id="job-interrupted-reserve",
-        module="graduation",
-        source_file="C:\\data\\m3.xlsx",
-        credits_reserved=3,
-        credit_status="reserving",
-    )
-    notifications: list[dict[str, object]] = []
-
-    server = RpcServer(emit_notification=notifications.append)
-
-    status = server.job_store.get_status("job-interrupted-reserve")
-    assert status is not None
-    assert status["status"] == "failed"
-    assert status["credit_status"] == "start_failed:RESTART_DURING_RESERVATION"
-    assert any("interrupted credit reservation" in str(item.get("message")) for item in notifications)
-
-
-def test_rpc_server_releases_reaped_cloud_reservation(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    store = JobStore()
-    store.create_pending_job(
-        job_id="job-interrupted-cloud-reserve",
-        module="graduation",
-        source_file="C:\\data\\m3.xlsx",
-        credit_reservation_id="reservation-old",
-        credits_reserved=4,
-        credit_status="reserving",
-    )
-    released: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        "dmc_sidecar.rpc.AccountSessionStore.get_session",
-        lambda self: SimpleNamespace(token="token"),
-    )
-    monkeypatch.setattr(
-        "dmc_sidecar.rpc.release_credits",
-        lambda *args, **kwargs: released.append(dict(kwargs)) or SimpleNamespace(reservation_id="reservation-old"),
-    )
-    monkeypatch.setattr(
-        "dmc_sidecar.rpc.reserve_credits",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("known reservation should be released directly")),
-    )
-
-    server = RpcServer(emit_notification=lambda payload: None)
-
-    assert released == [
-        {
-            "reservation_id": "reservation-old",
-            "units": 4,
-            "idempotency_key": "job-interrupted-cloud-reserve:reaper:release",
-        }
-    ]
-    status = server.job_store.get_status("job-interrupted-cloud-reserve")
-    assert status is not None
-    assert status["status"] == "failed"
-    assert status["credit_status"] == "start_failed:RESTART_DURING_RESERVATION"
-
-
-def test_live_start_reserves_credits_in_background_before_starting_job(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
-    reserved: dict[str, object] = {}
-    started: dict[str, object] = {}
-
-    def fake_reserve_credits(*args: object, job_id: str, module: str, units: int, idempotency_key: str, **_: object):
-        reserved.update(
-            {
-                "job_id": job_id,
-                "module": module,
-                "units": units,
-                "idempotency_key": idempotency_key,
-            }
-        )
-        return SimpleNamespace(reservation_id="reservation-1")
-
-    def fake_start_job(**kwargs: object) -> None:
-        started.update(kwargs)
-
-    monkeypatch.setattr("dmc_sidecar.rpc.reserve_credits", fake_reserve_credits)
-    server = RpcServer(emit_notification=lambda payload: None)
-    monkeypatch.setattr(server.account_store, "get_session", lambda: SimpleNamespace(token="token"))
-    monkeypatch.setattr(server.job_manager, "start_job", fake_start_job)
-
-    response = _rpc_call(
-        server,
-        "start_job",
-        {
-            "job_id": "job-credit-ok",
-            "module": "graduation",
-            "excel_path": "C:\\data\\m3.xlsx",
-            "options": {"dry_run": False, "estimated_credits": 7},
-        },
-    )
-
-    assert response["result"] == {
-        "accepted": True,
-        "job_id": "job-credit-ok",
-        "credit_reservation_id": None,
-        "credits_reserved": 7,
-    }
-    _wait_until(lambda: started.get("credit_reservation_id") == "reservation-1")
-    assert reserved == {
-        "job_id": "job-credit-ok",
-        "module": "graduation",
-        "units": 7,
-        "idempotency_key": "job-credit-ok:reserve",
-    }
-    assert started["credit_reservation_id"] == "reservation-1"
-    assert started["credits_reserved"] == 7
-    status = server.job_store.get_status("job-credit-ok")
-    assert status is not None
-    assert status["credit_reservation_id"] == "reservation-1"
-    assert status["credits_reserved"] == 7
-
-
-def test_live_start_releases_reservation_when_job_start_fails(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
-    released: list[dict[str, object]] = []
-
-    monkeypatch.setattr(
-        "dmc_sidecar.rpc.reserve_credits",
-        lambda *args, **kwargs: SimpleNamespace(reservation_id="reservation-start-failed"),
-    )
-    monkeypatch.setattr(
-        "dmc_sidecar.rpc.release_credits",
-        lambda *args, **kwargs: released.append(dict(kwargs)) or SimpleNamespace(reservation_id=kwargs["reservation_id"]),
-    )
-    server = RpcServer(emit_notification=lambda payload: None)
-    monkeypatch.setattr(server.account_store, "get_session", lambda: SimpleNamespace(token="token"))
-    monkeypatch.setattr(
-        server.job_manager,
-        "start_job",
-        lambda **kwargs: (_ for _ in ()).throw(DomainError("JOB_ALREADY_RUNNING")),
-    )
-
-    response = _rpc_call(
-        server,
-        "start_job",
-        {
-            "job_id": "job-start-fails-after-reserve",
-            "module": "graduation",
-            "excel_path": "C:\\data\\m3.xlsx",
-            "options": {"dry_run": False, "estimated_credits": 5},
-        },
-    )
-
-    assert response["result"]["accepted"] is True
-    _wait_until(lambda: (server.job_store.get_status("job-start-fails-after-reserve") or {}).get("status") == "failed")
-    assert released == [
-        {
-            "reservation_id": "reservation-start-failed",
-            "units": 5,
-            "idempotency_key": "job-start-fails-after-reserve:start_failed:release",
-        }
-    ]
-    status = server.job_store.get_status("job-start-fails-after-reserve")
-    assert status is not None
-    assert status["credit_status"] == "start_failed:JOB_ALREADY_RUNNING"
-    assert status["credits_refunded"] == 5
-
-
 def test_resume_existing_job_rpc_uses_checkpoint_state_after_pause(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
     store = JobStore()
@@ -735,7 +552,7 @@ def test_resume_existing_job_rpc_uses_checkpoint_state_after_pause(monkeypatch, 
     )
     store.set_status("job-1", "paused")
 
-    server = RpcServer(emit_notification=lambda payload: None)
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
     before_resume = server.job_store.get_status("job-1")
     started: dict[str, object] = {}
     monkeypatch.setattr(
@@ -811,7 +628,7 @@ def test_resume_existing_job_rejects_done_job(monkeypatch, tmp_path: Path) -> No
     checkpoint.options = {"dry_run": False}
     store.mark_done("job-2", checkpoint=checkpoint, finished_at="2026-04-22T01:00:00Z")
 
-    server = RpcServer(emit_notification=lambda payload: None)
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
     payload = json.dumps(
         {
             "jsonrpc": "2.0",
@@ -826,68 +643,9 @@ def test_resume_existing_job_rejects_done_job(monkeypatch, tmp_path: Path) -> No
     assert response["error"]["code"] == "JOB_NOT_RESUMABLE"
 
 
-def test_resume_existing_job_re_reserves_finalized_credit_reservation(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    store = JobStore()
-    store.create_pending_job(
-        "job-credit-finalized",
-        "graduation",
-        "C:\\data\\m6.xlsx",
-        credit_reservation_id="reservation-finalized",
-        credits_reserved=10,
-        credit_status="reserved",
-    )
-    checkpoint = JobCheckpoint.initial(level_label="เธก.6", base_url="https://example.test")
-    checkpoint.options = {"dry_run": False}
-    store.mark_running(
-        "job-credit-finalized",
-        total_records=10,
-        checkpoint=checkpoint,
-        started_at="2026-04-22T00:00:00Z",
-    )
-    store.set_status("job-credit-finalized", "paused")
-    store.update_credit_status("job-credit-finalized", credit_status="finalized")
-
-    server = RpcServer(emit_notification=lambda payload: None)
-    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
-    reservations: list[dict[str, object]] = []
-
-    def fake_reserve_credits(*args: object, **kwargs: object) -> object:
-        reservations.append(dict(kwargs))
-        return SimpleNamespace(reservation_id="reservation-resume-1")
-
-    started: dict[str, object] = {}
-
-    def fake_start_job(**kwargs: object) -> None:
-        started.update(kwargs)
-
-    monkeypatch.setattr("dmc_sidecar.rpc.reserve_credits", fake_reserve_credits)
-    monkeypatch.setattr(server.job_manager, "start_job", fake_start_job)
-    payload = json.dumps(
-        {
-            "jsonrpc": "2.0",
-            "id": "req-finalized-credit",
-            "method": "resume_existing_job",
-            "params": {"job_id": "job-credit-finalized"},
-        }
-    )
-
-    response = json.loads(server.handle_text(payload))
-
-    assert response["result"]["accepted"] is True
-    assert reservations[0]["units"] == 10
-    assert str(reservations[0]["job_id"]).startswith("job-credit-finalized:resume:")
-    assert started["credit_reservation_id"] == "reservation-resume-1"
-    assert started["credits_reserved"] == 10
-    status = server.job_store.get_status("job-credit-finalized")
-    assert status is not None
-    assert status["credit_reservation_id"] == "reservation-resume-1"
-    assert status["credit_status"] == "reserved"
-
-
 def test_rpc_sanitizes_unexpected_exception_messages(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    server = RpcServer(emit_notification=lambda payload: None)
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
 
     class BadModule:
         def validate_excel(self, path):  # noqa: ANN001
@@ -912,7 +670,7 @@ def test_rpc_sanitizes_unexpected_exception_messages(monkeypatch, tmp_path: Path
 
 def test_validate_excel_rpc_reports_missing_openpyxl(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    server = RpcServer(emit_notification=lambda payload: None)
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
 
     class MissingExcelReaderModule:
         def validate_excel(self, path):  # noqa: ANN001
@@ -937,7 +695,7 @@ def test_validate_excel_rpc_reports_missing_openpyxl(monkeypatch, tmp_path: Path
 
 def test_validate_excel_rpc_response_is_ascii_safe(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    server = RpcServer(emit_notification=lambda payload: None)
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
 
     class ThaiPreviewModule:
         def validate_excel(self, path):  # noqa: ANN001
@@ -1001,240 +759,8 @@ def test_sidecar_event_notification_is_ascii_safe() -> None:
     assert event["params"]["message"] == "ทวีศักดิ์"
 
 
-def test_rpc_server_reaps_reserved_job_from_previous_process(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    store = JobStore()
-    store.create_pending_job(
-        job_id="job-crashed-after-reserve",
-        module="graduation",
-        source_file="C:\\data\\m3.xlsx",
-        credit_reservation_id="reservation-stuck",
-        credits_reserved=4,
-        credit_status="reserved",
-    )
-    released: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        "dmc_sidecar.rpc.AccountSessionStore.get_session",
-        lambda self: SimpleNamespace(token="token"),
-    )
-    monkeypatch.setattr(
-        "dmc_sidecar.rpc.release_credits",
-        lambda *args, **kwargs: released.append(dict(kwargs)) or SimpleNamespace(reservation_id=kwargs["reservation_id"]),
-    )
-
-    server = RpcServer(emit_notification=lambda payload: None)
-
-    assert released == [
-        {
-            "reservation_id": "reservation-stuck",
-            "units": 4,
-            "idempotency_key": "job-crashed-after-reserve:reaper:release",
-        }
-    ]
-    status = server.job_store.get_status("job-crashed-after-reserve")
-    assert status is not None
-    assert status["status"] == "failed"
-    assert status["credit_status"] == "start_failed:RESTART_DURING_RESERVATION"
-
-
-def test_rpc_server_retries_release_for_start_failed_job(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    store = JobStore()
-    store.create_pending_job(
-        job_id="job-start-failed-stuck",
-        module="graduation",
-        source_file="C:\\data\\m3.xlsx",
-        credit_reservation_id="reservation-start-failed-stuck",
-        credits_reserved=3,
-        credit_status="start_failed:ACCOUNT_CLOUD_UNAVAILABLE",
-    )
-    store.mark_start_failed(
-        "job-start-failed-stuck",
-        code="ACCOUNT_CLOUD_UNAVAILABLE",
-        finished_at="2026-04-22T00:00:00Z",
-    )
-    released: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        "dmc_sidecar.rpc.AccountSessionStore.get_session",
-        lambda self: SimpleNamespace(token="token"),
-    )
-    monkeypatch.setattr(
-        "dmc_sidecar.rpc.release_credits",
-        lambda *args, **kwargs: released.append(dict(kwargs)) or SimpleNamespace(reservation_id=kwargs["reservation_id"]),
-    )
-
-    server = RpcServer(emit_notification=lambda payload: None)
-
-    assert released == [
-        {
-            "reservation_id": "reservation-start-failed-stuck",
-            "units": 3,
-            "idempotency_key": "job-start-failed-stuck:start_failed:release",
-        }
-    ]
-    status = server.job_store.get_status("job-start-failed-stuck")
-    assert status is not None
-    assert status["credit_status"] == "finalized"
-    assert status["credits_captured"] == 0
-    assert status["credits_refunded"] == 3
-
-
-def test_rpc_server_retries_finalize_for_finalize_failed_job(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    store = JobStore()
-    store.create_pending_job(
-        job_id="job-finalize-failed-stuck",
-        module="graduation",
-        source_file="C:\\data\\m3.xlsx",
-        credit_reservation_id="reservation-finalize-stuck",
-        credits_reserved=5,
-        credit_status="reserved",
-    )
-    checkpoint = JobCheckpoint.initial(level_label="ม.3", base_url="https://example.test")
-    checkpoint.processed = 2
-    checkpoint.succeeded = 2
-    checkpoint.failed = 0
-    store.mark_running(
-        "job-finalize-failed-stuck",
-        total_records=5,
-        checkpoint=checkpoint,
-        started_at="2026-04-22T00:00:00Z",
-    )
-    store.mark_done("job-finalize-failed-stuck", checkpoint=checkpoint, finished_at="2026-04-22T01:00:00Z")
-    store.update_credit_status("job-finalize-failed-stuck", credit_status="finalize_failed:ACCOUNT_CLOUD_UNAVAILABLE")
-
-    calls: list[tuple[str, dict[str, object]]] = []
-    monkeypatch.setattr(
-        "dmc_sidecar.rpc.AccountSessionStore.get_session",
-        lambda self: SimpleNamespace(token="token"),
-    )
-    monkeypatch.setattr(
-        "dmc_sidecar.runtime.capture_credits",
-        lambda *args, **kwargs: calls.append(("capture", dict(kwargs))) or SimpleNamespace(reservation_id=kwargs["reservation_id"]),
-    )
-    monkeypatch.setattr(
-        "dmc_sidecar.runtime.release_credits",
-        lambda *args, **kwargs: calls.append(("release", dict(kwargs))) or SimpleNamespace(reservation_id=kwargs["reservation_id"]),
-    )
-
-    server = RpcServer(emit_notification=lambda payload: None)
-
-    assert [op for op, _ in calls] == ["capture", "release"]
-    assert calls[0][1] == {
-        "reservation_id": "reservation-finalize-stuck",
-        "units": 2,
-        "idempotency_key": "job-finalize-failed-stuck:reservation-finalize-stuck:capture",
-    }
-    assert calls[1][1] == {
-        "reservation_id": "reservation-finalize-stuck",
-        "units": 3,
-        "idempotency_key": "job-finalize-failed-stuck:reservation-finalize-stuck:release",
-    }
-    status = server.job_store.get_status("job-finalize-failed-stuck")
-    assert status is not None
-    assert status["credit_status"] == "finalized"
-    assert status["credits_captured"] == 2
-    assert status["credits_refunded"] == 3
-
-
-def test_finalize_job_credits_uses_reservation_scoped_idempotency_keys(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    store = JobStore()
-    store.create_pending_job(
-        job_id="job-finalize-keys",
-        module="graduation",
-        source_file="C:\\data\\m3.xlsx",
-        credit_reservation_id="reservation-A",
-        credits_reserved=5,
-        credit_status="reserved",
-    )
-    checkpoint = JobCheckpoint.initial(level_label="ม.3", base_url="https://example.test")
-    checkpoint.succeeded = 2
-    store.mark_running(
-        "job-finalize-keys",
-        total_records=5,
-        checkpoint=checkpoint,
-        started_at="2026-04-22T00:00:00Z",
-    )
-    store.mark_done("job-finalize-keys", checkpoint=checkpoint, finished_at="2026-04-22T01:00:00Z")
-
-    calls: list[tuple[str, dict[str, object]]] = []
-    monkeypatch.setattr(
-        "dmc_sidecar.runtime.capture_credits",
-        lambda *args, **kwargs: calls.append(("capture", dict(kwargs))) or SimpleNamespace(reservation_id=kwargs["reservation_id"]),
-    )
-    monkeypatch.setattr(
-        "dmc_sidecar.runtime.release_credits",
-        lambda *args, **kwargs: calls.append(("release", dict(kwargs))) or SimpleNamespace(reservation_id=kwargs["reservation_id"]),
-    )
-
-    status = store.get_status("job-finalize-keys")
-    assert status is not None
-    result = finalize_job_credits(account_store=SimpleNamespace(), job_store=store, status=status)
-
-    assert result == "finalized"
-    assert calls == [
-        (
-            "capture",
-            {
-                "reservation_id": "reservation-A",
-                "units": 2,
-                "idempotency_key": "job-finalize-keys:reservation-A:capture",
-            },
-        ),
-        (
-            "release",
-            {
-                "reservation_id": "reservation-A",
-                "units": 3,
-                "idempotency_key": "job-finalize-keys:reservation-A:release",
-            },
-        ),
-    ]
-
-
-def test_resume_stopped_on_review_job_re_reserves_and_starts(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path)
-    store = JobStore()
-    store.create_pending_job(
-        "job-review-stopped",
-        "graduation",
-        "C:\\data\\m6.xlsx",
-        credit_reservation_id="reservation-reviewed",
-        credits_reserved=10,
-        credit_status="reserved",
-    )
-    checkpoint = JobCheckpoint.initial(level_label="ม.6", base_url="https://example.test")
-    checkpoint.options = {"dry_run": False}
-    store.mark_running(
-        "job-review-stopped",
-        total_records=10,
-        checkpoint=checkpoint,
-        started_at="2026-04-22T00:00:00Z",
-    )
-    store.set_status("job-review-stopped", "stopped_on_review")
-    store.update_credit_status("job-review-stopped", credit_status="finalized")
-
-    server = RpcServer(emit_notification=lambda payload: None)
-    monkeypatch.setattr("dmc_sidecar.rpc.get_browser_runtime_status", lambda: _ready_browser_status(tmp_path))
-    reservations: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        "dmc_sidecar.rpc.reserve_credits",
-        lambda *args, **kwargs: reservations.append(dict(kwargs)) or SimpleNamespace(reservation_id="reservation-resume-2"),
-    )
-    started: dict[str, object] = {}
-    monkeypatch.setattr(server.job_manager, "start_job", lambda **kwargs: started.update(kwargs))
-
-    response = _rpc_call(
-        server,
-        "resume_existing_job",
-        {"job_id": "job-review-stopped"},
-    )
-
-    assert response["result"]["accepted"] is True
-    assert reservations[0]["units"] == 10
-    assert str(reservations[0]["job_id"]).startswith("job-review-stopped:resume:")
-    assert started["credit_reservation_id"] == "reservation-resume-2"
-    status = server.job_store.get_status("job-review-stopped")
-    assert status is not None
-    assert status["credit_status"] == "reserved"
+@pytest.mark.parametrize("method", ["ocr_dmc_form_with_gemini", "ocr_dmc_form_with_akson", "ocr_dmc_form_with_typhoon"])
+def test_legacy_ocr_rpc_is_unsupported(method: str) -> None:
+    server = RpcServer(emit_notification=lambda payload: None, secret_store=InMemorySecretStore())
+    response = _rpc_call(server, method, {"source_path": "missing.pdf"})
+    assert response["error"]["code"] == "RPC_METHOD_NOT_FOUND"

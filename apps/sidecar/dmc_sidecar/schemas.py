@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 
 class RpcErrorData(BaseModel):
@@ -20,6 +20,16 @@ class RpcRequest(BaseModel):
     id: str | int | None
     method: str
     params: dict[str, Any] = Field(default_factory=dict)
+
+
+class AiProviderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["gemini"]
+
+
+class SaveAiApiKeyRequest(AiProviderRequest):
+    api_key: SecretStr = Field(min_length=1)
 
 
 class RpcSuccessResponse(BaseModel):
@@ -52,77 +62,6 @@ class ValidateExcelRequest(BaseModel):
     module: Literal["graduation"]
 
 
-class ModuleConfigRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    module: Literal["graduation"]
-
-
-class SignInRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    email: str
-    password: str
-    device_name: str
-    app_version: str
-
-
-class WalletSnapshot(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    user_id: str
-    balance: int
-    reserved: int
-    available: int
-
-
-class AccountSnapshot(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    signed_in: bool
-    user_id: str | None
-    email: str | None
-    display_name: str | None
-    status: str
-    token_expires_at: str | None
-    last_checked_at: str | None
-    wallet: WalletSnapshot | None
-    can_start_credit_jobs: bool
-    needs_attention: bool
-    message: str | None
-    last_error: str | None
-
-
-class ModuleCatalogItem(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
-    enabled: bool
-    requires_credits: bool
-    pricing_mode: Literal["per_billable_record"]
-    credit_per_unit: int
-    production_dry_run_enabled: bool
-
-
-class ModuleCatalogResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    modules: list[ModuleCatalogItem]
-
-
-class CreditReservationSnapshot(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    reservation_id: str
-    job_id: str
-    module: str
-    status: str
-    units_reserved: int
-    units_captured: int
-    units_released: int
-    wallet: WalletSnapshot
-
-
 class ExportStudentBasicInfoFormRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -152,155 +91,6 @@ class ExportStudentBasicInfoFormResponse(BaseModel):
     students_exported: int
     classes_exported: int
     classes: list[StudentBasicInfoClassSummary]
-
-
-EvidenceMappingStatus = Literal["accepted", "suggested", "rejected", "needs_review"]
-ReadinessRequirementStatus = Literal["complete", "partial", "missing", "needs_review"]
-ReadinessPriority = Literal["high", "medium", "low"]
-
-
-class PsarReadinessRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    project_id: str = "default"
-
-
-class AddPsarEvidenceRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    project_id: str = "default"
-    file_path: str
-
-
-class GeneratePsarReportRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    project_id: str = "default"
-
-
-class PsarRequirement(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    requirement_id: str
-    section_id: str
-    section_title: str
-    section_order: int
-    title: str
-    category: str
-    required_evidence: list[str]
-    optional_evidence: list[str] = Field(default_factory=list)
-    weight: float = Field(gt=0)
-    minimum_required_items: int = Field(ge=1)
-    description: str
-
-
-class PsarUploadedFile(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    file_id: str
-    file_name: str
-    file_path: str
-    file_type: str
-    extracted_summary: str
-    created_at: str
-    updated_at: str
-
-
-class PsarEvidenceMapping(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    requirement_id: str
-    evidence_type: str
-    source_file_id: str
-    source_file_name: str
-    extracted_summary: str
-    confidence_score: float = Field(ge=0, le=1)
-    page_number: int | None = None
-    location: str | None = None
-    status: EvidenceMappingStatus
-    created_at: str
-    updated_at: str
-
-
-class PsarReadinessRequirement(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    requirement_id: str
-    requirement_title: str
-    category: str
-    description: str
-    required_evidence: list[str]
-    optional_evidence: list[str]
-    weight: float
-    minimum_required_items: int
-    status: ReadinessRequirementStatus
-    completion_score: float = Field(ge=0, le=1)
-    missing_evidence: list[str]
-    found_evidence: list[PsarEvidenceMapping]
-    recommendation: str
-    priority: ReadinessPriority
-
-
-class PsarReadinessSection(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    section_id: str
-    section_title: str
-    completion_score: float = Field(ge=0, le=1)
-    complete_count: int
-    partial_count: int
-    missing_count: int
-    needs_review_count: int
-    requirements: list[PsarReadinessRequirement]
-
-
-class PsarMissingEvidenceRecommendation(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    evidence_name: str
-    requirement_id: str
-    requirement_title: str
-    section_id: str
-    section_title: str
-    why_needed: str
-    priority: ReadinessPriority
-    suggested_file_types: list[str]
-
-
-class PsarReadinessResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    project_id: str
-    overall_completion_score: float = Field(ge=0, le=1)
-    warning_threshold: float = Field(ge=0, le=1)
-    confidence_threshold: float = Field(ge=0, le=1)
-    total_requirements: int
-    complete_count: int
-    partial_count: int
-    missing_count: int
-    needs_review_count: int
-    sections: list[PsarReadinessSection]
-    missing_evidence_recommendations: list[PsarMissingEvidenceRecommendation]
-    mapped_files: list[PsarEvidenceMapping]
-    uploaded_files: list[PsarUploadedFile]
-
-
-class AddPsarEvidenceResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    project_id: str
-    file: PsarUploadedFile
-    mappings: list[PsarEvidenceMapping]
-    readiness: PsarReadinessResponse
-
-
-class GeneratePsarReportResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    project_id: str
-    report_path: str
-    readiness: PsarReadinessResponse
-    generated_at: str
 
 
 class ValidationWarning(BaseModel):
@@ -360,19 +150,6 @@ class FilePathRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     path: str
-
-
-class ModuleConfigStatus(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    module: Literal["graduation"]
-    version: str
-    source: Literal["bundled", "cached", "cloud"]
-    signature_verified: bool
-    config_path: str
-    checked_at: str
-    updated: bool
-    last_error: str | None
 
 
 class BrowserRuntimePackage(BaseModel):

@@ -72,6 +72,12 @@ function readArray(record: UnknownRecord, key: string, context: string): unknown
   return value;
 }
 
+function assertExactKeys(record: UnknownRecord, keys: readonly string[], context: string): void {
+  if (Object.keys(record).some((key) => !keys.includes(key))) {
+    throw new Error(`${context} contains unexpected fields`);
+  }
+}
+
 export type ValidationWarning = {
   code: string;
   row_index: number;
@@ -150,53 +156,11 @@ export type JobStatusSnapshot = {
   run_summary: JobRunSummary | null;
   summary_report_path: string | null;
   completion_summary: JobCompletionSummary | null;
-  credit_reservation_id: string | null;
-  credits_reserved: number;
-  credits_captured: number;
-  credits_refunded: number;
-  credit_status: string | null;
 };
 
 export type StartJobResponse = {
   accepted: boolean;
   job_id: string;
-  credit_reservation_id: string | null;
-  credits_reserved: number;
-};
-
-export type WalletSnapshot = {
-  user_id: string;
-  balance: number;
-  reserved: number;
-  available: number;
-};
-
-export type AccountStatus = {
-  signed_in: boolean;
-  user_id: string | null;
-  email: string | null;
-  display_name: string | null;
-  status: string;
-  token_expires_at: string | null;
-  last_checked_at: string | null;
-  wallet: WalletSnapshot | null;
-  can_start_credit_jobs: boolean;
-  needs_attention: boolean;
-  message: string | null;
-  last_error: string | null;
-};
-
-export type ModuleCatalogItem = {
-  id: string;
-  enabled: boolean;
-  requires_credits: boolean;
-  pricing_mode: "per_billable_record";
-  credit_per_unit: number;
-  production_dry_run_enabled: boolean;
-};
-
-export type ModuleCatalogResponse = {
-  modules: ModuleCatalogItem[];
 };
 
 export type StudentBasicInfoClassSummary = {
@@ -417,25 +381,33 @@ export type ExportDmcFormJsonResponse = {
   records: DmcFormJsonRecord[];
 };
 
-export type GeminiOcrModel = "gemini-3.5-flash" | "gemini-3-pro-preview";
-export type GeminiOcrProcessingMode = "standard" | "batch";
+export type AiProviderId = "gemini";
 
-export type GeminiOcrUsageMetadata = Record<string, unknown> & {
-  prompt_token_count: number | null;
-  candidates_token_count: number | null;
-  total_token_count: number | null;
-  cached_content_token_count: number | null;
-  thoughts_token_count: number | null;
-  input_tokens_per_page: number | null;
-  output_tokens_per_page: number | null;
-  total_tokens_per_page: number | null;
+export type AiSettings = {
+  provider: AiProviderId;
+  configured: boolean;
 };
 
-export type GeminiOcrDmcFormResponse = {
+export type AiConnectionTest = {
+  provider: AiProviderId;
+  ok: boolean;
+  tested_at: string;
+  message: string;
+};
+
+export type OcrDocumentInput = {
+  provider: AiProviderId;
+  sourcePath: string;
+  model: "gemini-3.5-flash" | "gemini-3.1-pro-preview";
+  processingMode: "standard" | "batch";
+  forceRefresh: boolean;
+};
+
+export type OcrDocumentResponse = {
   module: "formConverter";
-  engine: "gemini";
-  model: GeminiOcrModel;
-  processing_mode: GeminiOcrProcessingMode;
+  provider: AiProviderId;
+  model: OcrDocumentInput["model"];
+  processing_mode: OcrDocumentInput["processingMode"];
   source_path: string;
   markdown_path: string;
   structured_json_path: string | null;
@@ -443,14 +415,10 @@ export type GeminiOcrDmcFormResponse = {
   cached: boolean;
   pages_processed: number;
   pages_estimated: number;
-  credits_per_page: number;
-  credits_charged: number;
-  charged: boolean;
-  credit_reservation_id: string | null;
   average_confidence: number | null;
-  usage_metadata: GeminiOcrUsageMetadata | null;
-  batch_job_name: string | null;
-  batch_state: string | null;
+  usage_metadata: Record<string, unknown> | null;
+  provider_job_id: string | null;
+  provider_job_state: string | null;
   file_sha256: string;
   created_at: string;
 };
@@ -484,128 +452,6 @@ export type ValidateCurrentStudentsImportFormResponse = {
   warnings: CurrentStudentsWarning[];
 };
 
-export type EvidenceMappingStatus = "accepted" | "suggested" | "rejected" | "needs_review";
-export type ReadinessRequirementStatus = "complete" | "partial" | "missing" | "needs_review";
-export type ReadinessPriority = "high" | "medium" | "low";
-
-export type PsarRequirement = {
-  requirement_id: string;
-  section_id: string;
-  section_title: string;
-  section_order: number;
-  title: string;
-  category: string;
-  required_evidence: string[];
-  optional_evidence: string[];
-  weight: number;
-  minimum_required_items: number;
-  description: string;
-};
-
-export type PsarUploadedFile = {
-  file_id: string;
-  file_name: string;
-  file_path: string;
-  file_type: string;
-  extracted_summary: string;
-  created_at: string;
-  updated_at: string;
-};
-
-export type PsarEvidenceMapping = {
-  requirement_id: string;
-  evidence_type: string;
-  source_file_id: string;
-  source_file_name: string;
-  extracted_summary: string;
-  confidence_score: number;
-  page_number: number | null;
-  location: string | null;
-  status: EvidenceMappingStatus;
-  created_at: string;
-  updated_at: string;
-};
-
-export type PsarReadinessRequirement = {
-  requirement_id: string;
-  requirement_title: string;
-  category: string;
-  description: string;
-  required_evidence: string[];
-  optional_evidence: string[];
-  weight: number;
-  minimum_required_items: number;
-  status: ReadinessRequirementStatus;
-  completion_score: number;
-  missing_evidence: string[];
-  found_evidence: PsarEvidenceMapping[];
-  recommendation: string;
-  priority: ReadinessPriority;
-};
-
-export type PsarReadinessSection = {
-  section_id: string;
-  section_title: string;
-  completion_score: number;
-  complete_count: number;
-  partial_count: number;
-  missing_count: number;
-  needs_review_count: number;
-  requirements: PsarReadinessRequirement[];
-};
-
-export type PsarMissingEvidenceRecommendation = {
-  evidence_name: string;
-  requirement_id: string;
-  requirement_title: string;
-  section_id: string;
-  section_title: string;
-  why_needed: string;
-  priority: ReadinessPriority;
-  suggested_file_types: string[];
-};
-
-export type PsarReadinessResponse = {
-  project_id: string;
-  overall_completion_score: number;
-  warning_threshold: number;
-  confidence_threshold: number;
-  total_requirements: number;
-  complete_count: number;
-  partial_count: number;
-  missing_count: number;
-  needs_review_count: number;
-  sections: PsarReadinessSection[];
-  missing_evidence_recommendations: PsarMissingEvidenceRecommendation[];
-  mapped_files: PsarEvidenceMapping[];
-  uploaded_files: PsarUploadedFile[];
-};
-
-export type AddPsarEvidenceResponse = {
-  project_id: string;
-  file: PsarUploadedFile;
-  mappings: PsarEvidenceMapping[];
-  readiness: PsarReadinessResponse;
-};
-
-export type GeneratePsarReportResponse = {
-  project_id: string;
-  report_path: string;
-  readiness: PsarReadinessResponse;
-  generated_at: string;
-};
-
-export type ModuleConfigStatus = {
-  module: "graduation";
-  version: string;
-  source: "bundled" | "cached" | "cloud";
-  signature_verified: boolean;
-  config_path: string;
-  checked_at: string;
-  updated: boolean;
-  last_error: string | null;
-};
-
 export type BrowserRuntimePackage = {
   name: string;
   install_location: string;
@@ -630,8 +476,9 @@ export type BrowserRuntimeStatus = {
 
 export type DatabaseStatus = {
   path: string;
-  schema_version: number;
+  schema_generation: number;
   tables: string[];
+  job_columns: string[];
 };
 
 export type BackupCreateResponse = {
@@ -652,42 +499,6 @@ export type ArchiveJobsResponse = {
   archived: number;
   kept: number;
 };
-
-export type UpdaterStatus = {
-  configured: boolean;
-  endpoint: string | null;
-  current_version: string;
-  pubkey_configured: boolean;
-};
-
-export type AvailableUpdate = {
-  version: string;
-  current_version: string;
-  date: string | null;
-  body: string | null;
-};
-
-export type UpdaterEvent =
-  | {
-      type: "started";
-      downloaded: number;
-      contentLength: number | null;
-    }
-  | {
-      type: "progress";
-      downloaded: number;
-      contentLength: number | null;
-    }
-  | {
-      type: "finished";
-    }
-  | {
-      type: "installed";
-    }
-  | {
-      type: "error";
-      message: string;
-    };
 
 export type SidecarEvent =
   | {
@@ -892,11 +703,6 @@ export function parseJobStatusSnapshot(value: unknown): JobStatusSnapshot {
     run_summary: parseOptionalJobRunSummary(record, "run_summary", "job_status_snapshot"),
     summary_report_path: readOptionalString(record, "summary_report_path", "job_status_snapshot"),
     completion_summary: parseOptionalJobCompletionSummary(record, "completion_summary", "job_status_snapshot"),
-    credit_reservation_id: readOptionalString(record, "credit_reservation_id", "job_status_snapshot"),
-    credits_reserved: readNumber(record, "credits_reserved", "job_status_snapshot"),
-    credits_captured: readNumber(record, "credits_captured", "job_status_snapshot"),
-    credits_refunded: readNumber(record, "credits_refunded", "job_status_snapshot"),
-    credit_status: readOptionalString(record, "credit_status", "job_status_snapshot"),
   };
 }
 
@@ -905,67 +711,6 @@ export function parseStartJobResponse(value: unknown): StartJobResponse {
   return {
     accepted: readBoolean(record, "accepted", "start_job_response"),
     job_id: readString(record, "job_id", "start_job_response"),
-    credit_reservation_id: readOptionalString(record, "credit_reservation_id", "start_job_response"),
-    credits_reserved: readNumber(record, "credits_reserved", "start_job_response"),
-  };
-}
-
-function parseWalletSnapshot(value: unknown, context = "wallet_snapshot"): WalletSnapshot {
-  const record = asRecord(value, context);
-  return {
-    user_id: readString(record, "user_id", context),
-    balance: readNumber(record, "balance", context),
-    reserved: readNumber(record, "reserved", context),
-    available: readNumber(record, "available", context),
-  };
-}
-
-function parseOptionalWalletSnapshot(record: UnknownRecord, key: string, context: string): WalletSnapshot | null {
-  const value = record[key];
-  if (value === null || value === undefined) {
-    return null;
-  }
-  return parseWalletSnapshot(value, `${context}.${key}`);
-}
-
-export function parseAccountStatus(value: unknown): AccountStatus {
-  const record = asRecord(value, "account_status");
-  return {
-    signed_in: readBoolean(record, "signed_in", "account_status"),
-    user_id: readOptionalString(record, "user_id", "account_status"),
-    email: readOptionalString(record, "email", "account_status"),
-    display_name: readOptionalString(record, "display_name", "account_status"),
-    status: readString(record, "status", "account_status"),
-    token_expires_at: readOptionalString(record, "token_expires_at", "account_status"),
-    last_checked_at: readOptionalString(record, "last_checked_at", "account_status"),
-    wallet: parseOptionalWalletSnapshot(record, "wallet", "account_status"),
-    can_start_credit_jobs: readBoolean(record, "can_start_credit_jobs", "account_status"),
-    needs_attention: readBoolean(record, "needs_attention", "account_status"),
-    message: readOptionalString(record, "message", "account_status"),
-    last_error: readOptionalString(record, "last_error", "account_status"),
-  };
-}
-
-function parseModuleCatalogItem(value: unknown, index: number): ModuleCatalogItem {
-  const record = asRecord(value, `module_catalog_item[${index}]`);
-  const pricingMode = readString(record, "pricing_mode", "module_catalog_item");
-  if (pricingMode !== "per_billable_record") {
-    throw new Error("module_catalog_item.pricing_mode must be per_billable_record");
-  }
-  return {
-    id: readString(record, "id", "module_catalog_item"),
-    enabled: readBoolean(record, "enabled", "module_catalog_item"),
-    requires_credits: readBoolean(record, "requires_credits", "module_catalog_item"),
-    pricing_mode: pricingMode,
-    credit_per_unit: readNumber(record, "credit_per_unit", "module_catalog_item"),
-    production_dry_run_enabled: readBoolean(record, "production_dry_run_enabled", "module_catalog_item"),
-  };
-}
-
-export function parseModuleCatalogResponse(value: unknown): ModuleCatalogResponse {
-  const record = asRecord(value, "module_catalog_response");
-  return {
-    modules: readArray(record, "modules", "module_catalog_response").map(parseModuleCatalogItem),
   };
 }
 
@@ -1385,80 +1130,131 @@ export function parseExportDmcFormJsonResponse(value: unknown): ExportDmcFormJso
   };
 }
 
-export function parseGeminiOcrDmcFormResponse(value: unknown): GeminiOcrDmcFormResponse {
-  const record = asRecord(value, "gemini_ocr_dmc_form_response");
-  const module = readString(record, "module", "gemini_ocr_dmc_form_response");
+function parseAiProviderId(record: UnknownRecord, key: string, context: string): AiProviderId {
+  const provider = readString(record, key, context);
+  if (provider !== "gemini") {
+    throw new Error(`${context}.${key} must be 'gemini'`);
+  }
+  return provider;
+}
+
+export function parseAiSettings(value: unknown): AiSettings {
+  const context = "ai_settings";
+  const record = asRecord(value, context);
+  assertExactKeys(record, ["provider", "configured"], context);
+  return {
+    provider: parseAiProviderId(record, "provider", context),
+    configured: readBoolean(record, "configured", context),
+  };
+}
+
+function readNullableString(record: UnknownRecord, key: string, context: string): string | null {
+  const value = record[key];
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`${context}.${key} must be a string or null`);
+  }
+  return value;
+}
+
+function readNullableNumber(record: UnknownRecord, key: string, context: string): number | null {
+  const value = record[key];
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    throw new Error(`${context}.${key} must be a number or null`);
+  }
+  return value;
+}
+
+function readNullableObject(record: UnknownRecord, key: string, context: string): Record<string, unknown> | null {
+  const value = record[key];
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${context}.${key} must be an object or null`);
+  }
+  return value as Record<string, unknown>;
+}
+
+export function parseAiConnectionTest(value: unknown): AiConnectionTest {
+  const context = "ai_connection_test";
+  const record = asRecord(value, context);
+  assertExactKeys(record, ["provider", "ok", "tested_at", "message"], context);
+  return {
+    provider: parseAiProviderId(record, "provider", context),
+    ok: readBoolean(record, "ok", context),
+    tested_at: readString(record, "tested_at", context),
+    message: readString(record, "message", context),
+  };
+}
+
+export function parseOcrDocumentResponse(value: unknown): OcrDocumentResponse {
+  const context = "ocr_document_response";
+  const record = asRecord(value, context);
+  assertExactKeys(
+    record,
+    [
+      "module",
+      "provider",
+      "model",
+      "processing_mode",
+      "source_path",
+      "markdown_path",
+      "structured_json_path",
+      "output_format",
+      "cached",
+      "pages_processed",
+      "pages_estimated",
+      "average_confidence",
+      "usage_metadata",
+      "provider_job_id",
+      "provider_job_state",
+      "file_sha256",
+      "created_at",
+    ],
+    context,
+  );
+  const module = readString(record, "module", context);
   if (module !== "formConverter") {
-    throw new Error("gemini_ocr_dmc_form_response.module must be formConverter");
+    throw new Error(`${context}.module must be 'formConverter'`);
   }
-  const engine = readString(record, "engine", "gemini_ocr_dmc_form_response");
-  if (engine !== "gemini") {
-    throw new Error("gemini_ocr_dmc_form_response.engine must be gemini");
+  const model = readString(record, "model", context);
+  if (model !== "gemini-3.5-flash" && model !== "gemini-3.1-pro-preview") {
+    throw new Error(`${context}.model is unsupported`);
   }
-  const model = readString(record, "model", "gemini_ocr_dmc_form_response");
-  if (model !== "gemini-3.5-flash" && model !== "gemini-3-pro-preview") {
-    throw new Error("gemini_ocr_dmc_form_response.model must be a supported Gemini model");
-  }
-  const processingMode =
-    record.processing_mode === undefined
-      ? "standard"
-      : readString(record, "processing_mode", "gemini_ocr_dmc_form_response");
+  const processingMode = readString(record, "processing_mode", context);
   if (processingMode !== "standard" && processingMode !== "batch") {
-    throw new Error("gemini_ocr_dmc_form_response.processing_mode must be standard or batch");
+    throw new Error(`${context}.processing_mode is unsupported`);
   }
-  const markdownPath = readString(record, "markdown_path", "gemini_ocr_dmc_form_response");
-  const outputFormat =
-    record.output_format === undefined
-      ? "structured_json"
-      : readString(record, "output_format", "gemini_ocr_dmc_form_response");
+  const outputFormat = readString(record, "output_format", context);
   if (outputFormat !== "structured_json") {
-    throw new Error("gemini_ocr_dmc_form_response.output_format must be structured_json");
+    throw new Error(`${context}.output_format must be 'structured_json'`);
   }
   return {
     module,
-    engine,
+    provider: parseAiProviderId(record, "provider", context),
     model,
     processing_mode: processingMode,
-    source_path: readString(record, "source_path", "gemini_ocr_dmc_form_response"),
-    markdown_path: markdownPath,
-    structured_json_path:
-      readOptionalString(record, "structured_json_path", "gemini_ocr_dmc_form_response") ?? markdownPath,
+    source_path: readString(record, "source_path", context),
+    markdown_path: readString(record, "markdown_path", context),
+    structured_json_path: readNullableString(record, "structured_json_path", context),
     output_format: outputFormat,
-    cached: readBoolean(record, "cached", "gemini_ocr_dmc_form_response"),
-    pages_processed: readNumber(record, "pages_processed", "gemini_ocr_dmc_form_response"),
-    pages_estimated: readNumber(record, "pages_estimated", "gemini_ocr_dmc_form_response"),
-    credits_per_page: readNumber(record, "credits_per_page", "gemini_ocr_dmc_form_response"),
-    credits_charged: readNumber(record, "credits_charged", "gemini_ocr_dmc_form_response"),
-    charged: readBoolean(record, "charged", "gemini_ocr_dmc_form_response"),
-    credit_reservation_id: readOptionalString(record, "credit_reservation_id", "gemini_ocr_dmc_form_response"),
-    average_confidence: readOptionalNumber(record, "average_confidence", "gemini_ocr_dmc_form_response"),
-    usage_metadata: parseGeminiOcrUsageMetadata(record, "gemini_ocr_dmc_form_response"),
-    batch_job_name: readOptionalString(record, "batch_job_name", "gemini_ocr_dmc_form_response"),
-    batch_state: readOptionalString(record, "batch_state", "gemini_ocr_dmc_form_response"),
-    file_sha256: readString(record, "file_sha256", "gemini_ocr_dmc_form_response"),
-    created_at: readString(record, "created_at", "gemini_ocr_dmc_form_response"),
+    cached: readBoolean(record, "cached", context),
+    pages_processed: readNumber(record, "pages_processed", context),
+    pages_estimated: readNumber(record, "pages_estimated", context),
+    average_confidence: readNullableNumber(record, "average_confidence", context),
+    usage_metadata: readNullableObject(record, "usage_metadata", context),
+    provider_job_id: readNullableString(record, "provider_job_id", context),
+    provider_job_state: readNullableString(record, "provider_job_state", context),
+    file_sha256: readString(record, "file_sha256", context),
+    created_at: readString(record, "created_at", context),
   };
 }
-
-
-function parseGeminiOcrUsageMetadata(record: UnknownRecord, context: string): GeminiOcrUsageMetadata | null {
-  const usage = readObjectOrNull(record, "usage_metadata", context);
-  if (usage === null) {
-    return null;
-  }
-  return {
-    ...usage,
-    prompt_token_count: readOptionalNumber(usage, "prompt_token_count", `${context}.usage_metadata`),
-    candidates_token_count: readOptionalNumber(usage, "candidates_token_count", `${context}.usage_metadata`),
-    total_token_count: readOptionalNumber(usage, "total_token_count", `${context}.usage_metadata`),
-    cached_content_token_count: readOptionalNumber(usage, "cached_content_token_count", `${context}.usage_metadata`),
-    thoughts_token_count: readOptionalNumber(usage, "thoughts_token_count", `${context}.usage_metadata`),
-    input_tokens_per_page: readOptionalNumber(usage, "input_tokens_per_page", `${context}.usage_metadata`),
-    output_tokens_per_page: readOptionalNumber(usage, "output_tokens_per_page", `${context}.usage_metadata`),
-    total_tokens_per_page: readOptionalNumber(usage, "total_tokens_per_page", `${context}.usage_metadata`),
-  };
-}
-
 
 export function parseExportCurrentStudentsImportExcelResponse(
   value: unknown,
@@ -1550,180 +1346,6 @@ function readStringArray(record: UnknownRecord, key: string, context: string): s
   });
 }
 
-function parseEvidenceMappingStatus(value: string, context: string): EvidenceMappingStatus {
-  if (value !== "accepted" && value !== "suggested" && value !== "rejected" && value !== "needs_review") {
-    throw new Error(`${context}.status is invalid`);
-  }
-  return value;
-}
-
-function parseReadinessRequirementStatus(value: string, context: string): ReadinessRequirementStatus {
-  if (value !== "complete" && value !== "partial" && value !== "missing" && value !== "needs_review") {
-    throw new Error(`${context}.status is invalid`);
-  }
-  return value;
-}
-
-function parseReadinessPriority(value: string, context: string): ReadinessPriority {
-  if (value !== "high" && value !== "medium" && value !== "low") {
-    throw new Error(`${context}.priority is invalid`);
-  }
-  return value;
-}
-
-function parsePsarUploadedFile(value: unknown, index: number): PsarUploadedFile {
-  const context = `psar_uploaded_file[${index}]`;
-  const record = asRecord(value, context);
-  return {
-    file_id: readString(record, "file_id", context),
-    file_name: readString(record, "file_name", context),
-    file_path: readString(record, "file_path", context),
-    file_type: readString(record, "file_type", context),
-    extracted_summary: readString(record, "extracted_summary", context),
-    created_at: readString(record, "created_at", context),
-    updated_at: readString(record, "updated_at", context),
-  };
-}
-
-function parsePsarEvidenceMapping(value: unknown, index: number): PsarEvidenceMapping {
-  const context = `psar_evidence_mapping[${index}]`;
-  const record = asRecord(value, context);
-  return {
-    requirement_id: readString(record, "requirement_id", context),
-    evidence_type: readString(record, "evidence_type", context),
-    source_file_id: readString(record, "source_file_id", context),
-    source_file_name: readString(record, "source_file_name", context),
-    extracted_summary: readString(record, "extracted_summary", context),
-    confidence_score: readNumber(record, "confidence_score", context),
-    page_number: readOptionalNumber(record, "page_number", context),
-    location: readOptionalString(record, "location", context),
-    status: parseEvidenceMappingStatus(readString(record, "status", context), context),
-    created_at: readString(record, "created_at", context),
-    updated_at: readString(record, "updated_at", context),
-  };
-}
-
-function parsePsarReadinessRequirement(value: unknown, index: number): PsarReadinessRequirement {
-  const context = `psar_readiness_requirement[${index}]`;
-  const record = asRecord(value, context);
-  return {
-    requirement_id: readString(record, "requirement_id", context),
-    requirement_title: readString(record, "requirement_title", context),
-    category: readString(record, "category", context),
-    description: readString(record, "description", context),
-    required_evidence: readStringArray(record, "required_evidence", context),
-    optional_evidence: readStringArray(record, "optional_evidence", context),
-    weight: readNumber(record, "weight", context),
-    minimum_required_items: readNumber(record, "minimum_required_items", context),
-    status: parseReadinessRequirementStatus(readString(record, "status", context), context),
-    completion_score: readNumber(record, "completion_score", context),
-    missing_evidence: readStringArray(record, "missing_evidence", context),
-    found_evidence: readArray(record, "found_evidence", context).map(parsePsarEvidenceMapping),
-    recommendation: readString(record, "recommendation", context),
-    priority: parseReadinessPriority(readString(record, "priority", context), context),
-  };
-}
-
-function parsePsarReadinessSection(value: unknown, index: number): PsarReadinessSection {
-  const context = `psar_readiness_section[${index}]`;
-  const record = asRecord(value, context);
-  return {
-    section_id: readString(record, "section_id", context),
-    section_title: readString(record, "section_title", context),
-    completion_score: readNumber(record, "completion_score", context),
-    complete_count: readNumber(record, "complete_count", context),
-    partial_count: readNumber(record, "partial_count", context),
-    missing_count: readNumber(record, "missing_count", context),
-    needs_review_count: readNumber(record, "needs_review_count", context),
-    requirements: readArray(record, "requirements", context).map(parsePsarReadinessRequirement),
-  };
-}
-
-function parsePsarMissingEvidenceRecommendation(
-  value: unknown,
-  index: number,
-): PsarMissingEvidenceRecommendation {
-  const context = `psar_missing_evidence_recommendation[${index}]`;
-  const record = asRecord(value, context);
-  return {
-    evidence_name: readString(record, "evidence_name", context),
-    requirement_id: readString(record, "requirement_id", context),
-    requirement_title: readString(record, "requirement_title", context),
-    section_id: readString(record, "section_id", context),
-    section_title: readString(record, "section_title", context),
-    why_needed: readString(record, "why_needed", context),
-    priority: parseReadinessPriority(readString(record, "priority", context), context),
-    suggested_file_types: readStringArray(record, "suggested_file_types", context),
-  };
-}
-
-export function parsePsarReadinessResponse(value: unknown): PsarReadinessResponse {
-  const record = asRecord(value, "psar_readiness_response");
-  return {
-    project_id: readString(record, "project_id", "psar_readiness_response"),
-    overall_completion_score: readNumber(record, "overall_completion_score", "psar_readiness_response"),
-    warning_threshold: readNumber(record, "warning_threshold", "psar_readiness_response"),
-    confidence_threshold: readNumber(record, "confidence_threshold", "psar_readiness_response"),
-    total_requirements: readNumber(record, "total_requirements", "psar_readiness_response"),
-    complete_count: readNumber(record, "complete_count", "psar_readiness_response"),
-    partial_count: readNumber(record, "partial_count", "psar_readiness_response"),
-    missing_count: readNumber(record, "missing_count", "psar_readiness_response"),
-    needs_review_count: readNumber(record, "needs_review_count", "psar_readiness_response"),
-    sections: readArray(record, "sections", "psar_readiness_response").map(parsePsarReadinessSection),
-    missing_evidence_recommendations: readArray(
-      record,
-      "missing_evidence_recommendations",
-      "psar_readiness_response",
-    ).map(parsePsarMissingEvidenceRecommendation),
-    mapped_files: readArray(record, "mapped_files", "psar_readiness_response").map(parsePsarEvidenceMapping),
-    uploaded_files: readArray(record, "uploaded_files", "psar_readiness_response").map(parsePsarUploadedFile),
-  };
-}
-
-export function parseAddPsarEvidenceResponse(value: unknown): AddPsarEvidenceResponse {
-  const record = asRecord(value, "add_psar_evidence_response");
-  return {
-    project_id: readString(record, "project_id", "add_psar_evidence_response"),
-    file: parsePsarUploadedFile(record.file, 0),
-    mappings: readArray(record, "mappings", "add_psar_evidence_response").map(parsePsarEvidenceMapping),
-    readiness: parsePsarReadinessResponse(record.readiness),
-  };
-}
-
-export function parseGeneratePsarReportResponse(value: unknown): GeneratePsarReportResponse {
-  const record = asRecord(value, "generate_psar_report_response");
-  return {
-    project_id: readString(record, "project_id", "generate_psar_report_response"),
-    report_path: readString(record, "report_path", "generate_psar_report_response"),
-    readiness: parsePsarReadinessResponse(record.readiness),
-    generated_at: readString(record, "generated_at", "generate_psar_report_response"),
-  };
-}
-
-export function parseModuleConfigStatus(value: unknown): ModuleConfigStatus {
-  const record = asRecord(value, "module_config_status");
-  const module = readString(record, "module", "module_config_status");
-  if (module !== "graduation") {
-    throw new Error("module_config_status.module must be 'graduation'");
-  }
-
-  const source = readString(record, "source", "module_config_status");
-  if (source !== "bundled" && source !== "cached" && source !== "cloud") {
-    throw new Error("module_config_status.source must be bundled, cached, or cloud");
-  }
-
-  return {
-    module,
-    version: readString(record, "version", "module_config_status"),
-    source,
-    signature_verified: readBoolean(record, "signature_verified", "module_config_status"),
-    config_path: readString(record, "config_path", "module_config_status"),
-    checked_at: readString(record, "checked_at", "module_config_status"),
-    updated: readBoolean(record, "updated", "module_config_status"),
-    last_error: readOptionalString(record, "last_error", "module_config_status"),
-  };
-}
-
 function parseBrowserRuntimePackage(value: unknown, index: number): BrowserRuntimePackage {
   const record = asRecord(value, `browser_runtime_package[${index}]`);
   return {
@@ -1765,10 +1387,16 @@ export function parseDatabaseStatus(value: unknown): DatabaseStatus {
   const record = asRecord(value, "database_status");
   return {
     path: readString(record, "path", "database_status"),
-    schema_version: readNumber(record, "schema_version", "database_status"),
+    schema_generation: readNumber(record, "schema_generation", "database_status"),
     tables: readArray(record, "tables", "database_status").map((item, index) => {
       if (typeof item !== "string") {
         throw new Error(`database_status.tables[${index}] must be a string`);
+      }
+      return item;
+    }),
+    job_columns: readArray(record, "job_columns", "database_status").map((item, index) => {
+      if (typeof item !== "string") {
+        throw new Error(`database_status.job_columns[${index}] must be a string`);
       }
       return item;
     }),
@@ -1806,29 +1434,6 @@ export function parseArchiveJobsResponse(value: unknown): ArchiveJobsResponse {
   };
 }
 
-export function parseUpdaterStatus(value: unknown): UpdaterStatus {
-  const record = asRecord(value, "updater_status");
-  return {
-    configured: readBoolean(record, "configured", "updater_status"),
-    endpoint: readOptionalString(record, "endpoint", "updater_status"),
-    current_version: readString(record, "current_version", "updater_status"),
-    pubkey_configured: readBoolean(record, "pubkey_configured", "updater_status"),
-  };
-}
-
-export function parseAvailableUpdate(value: unknown): AvailableUpdate | null {
-  if (value === null) {
-    return null;
-  }
-  const record = asRecord(value, "available_update");
-  return {
-    version: readString(record, "version", "available_update"),
-    current_version: readString(record, "current_version", "available_update"),
-    date: readOptionalString(record, "date", "available_update"),
-    body: readOptionalString(record, "body", "available_update"),
-  };
-}
-
 export function parseJobActionResponse(value: unknown): {
   accepted?: boolean;
   job_id: string;
@@ -1857,37 +1462,6 @@ export function parseResumeExistingJobResponse(value: unknown): {
     job_id: parsed.job_id,
     status: parsed.status,
   };
-}
-
-export function parseUpdaterEvent(value: unknown): UpdaterEvent {
-  const record = asRecord(value, "updater_event");
-  const eventType = readString(record, "type", "updater_event");
-
-  switch (eventType) {
-    case "started":
-      return {
-        type: "started",
-        downloaded: readNumber(record, "downloaded", "updater_event"),
-        contentLength: readOptionalNumber(record, "contentLength", "updater_event"),
-      };
-    case "progress":
-      return {
-        type: "progress",
-        downloaded: readNumber(record, "downloaded", "updater_event"),
-        contentLength: readOptionalNumber(record, "contentLength", "updater_event"),
-      };
-    case "finished":
-      return { type: "finished" };
-    case "installed":
-      return { type: "installed" };
-    case "error":
-      return {
-        type: "error",
-        message: readString(record, "message", "updater_event"),
-      };
-    default:
-      throw new Error(`Unsupported updater event type: ${eventType}`);
-  }
 }
 
 export function parseSidecarEvent(value: unknown): SidecarEvent {

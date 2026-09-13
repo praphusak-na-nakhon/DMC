@@ -1,113 +1,37 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
 import messages from "../i18n/th.json";
 import { ModuleHome } from "./ModuleHome";
 
-type ModuleHomeProps = ComponentProps<typeof ModuleHome>;
-
-function buildHomeProps(overrides: Partial<ModuleHomeProps> = {}) {
-  return {
-    onOpenModule: vi.fn(),
-    connectionState: "ready" as const,
-    accountStatus: null,
-    errorMessage: null,
-    onOpenSignIn: vi.fn(),
-    onOpenTopup: vi.fn(),
-    onSignOut: vi.fn(),
-    onRetryRuntime: vi.fn(),
-    ...overrides,
-  };
-}
-
-function renderHome(overrides: Partial<ModuleHomeProps> = {}) {
-  const props = buildHomeProps(overrides);
-  render(<ModuleHome {...props} />);
-  return props;
-}
-
-function renderHomeWithAccountWarning() {
-  renderHome({
-    accountStatus: {
-      signed_in: false,
-      user_id: null,
-      email: null,
-      display_name: null,
-      status: "missing",
-      token_expires_at: null,
-      last_checked_at: null,
-      wallet: null,
-      can_start_credit_jobs: false,
-      needs_attention: true,
-      message: null,
-      last_error: "ACCOUNT_CLOUD_UNAVAILABLE",
-    },
-  });
-}
-
 describe("ModuleHome", () => {
-  it("renders the account bar and all module entry points from i18n copy", () => {
-    renderHome();
-
-    expect(screen.getByRole("heading", { name: messages.app.home.title })).toBeInTheDocument();
-    expect(screen.getByText(messages.app.home.accountSignedOut)).toBeInTheDocument();
-    expect(screen.getByText(messages.app.home.creditBalance)).toBeInTheDocument();
-    expect(screen.getByText(messages.app.home.modules.formConverter.title)).toBeInTheDocument();
-    expect(screen.getByText(messages.app.home.modules.studentBasicInfo.title)).toBeInTheDocument();
-    expect(screen.getByText(messages.app.home.modules.psar.title)).toBeInTheDocument();
-    expect(screen.getByText(messages.app.home.modules.currentStudents.title)).toBeInTheDocument();
-    expect(screen.getByText(messages.app.home.modules.graduation.title)).toBeInTheDocument();
-    expect(screen.getByText(`${messages.app.home.creditModule} 3 เครดิต/หน้า OCR`)).toBeInTheDocument();
-    expect(screen.getAllByText("ใช้เครดิต 1 เครดิต/รายการ")).toHaveLength(2);
-    expect(screen.queryByText(messages.app.account.topup.title)).not.toBeInTheDocument();
-    expect(screen.queryByText(messages.app.account.topup.packages[0].unitRate)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(messages.app.account.emailLabel)).not.toBeInTheDocument();
-    expect(screen.queryByText("License Activation")).not.toBeInTheDocument();
-  });
-
-  it("opens currentStudents from the ready module list", () => {
+  it("opens all four local modules without commercial controls", () => {
     const onOpenModule = vi.fn();
-    renderHome({ onOpenModule });
+    render(<ModuleHome onOpenModule={onOpenModule} connectionState="idle" errorMessage={null} onRetryRuntime={vi.fn()} />);
+    for (const id of ["formConverter", "studentBasicInfo", "currentStudents", "graduation"] as const) {
+      fireEvent.click(screen.getByRole("button", { name: messages.app.home.moduleActions[id] }));
+      expect(onOpenModule).toHaveBeenLastCalledWith(id);
+    }
+    expect(screen.queryByText(/เครดิต|เข้าสู่ระบบ|License/i)).not.toBeInTheDocument();
+  });
+  it("offers runtime recovery after a sidecar exit without an error message", () => {
+    const retry = vi.fn();
+    render(<ModuleHome onOpenModule={vi.fn()} connectionState="error" errorMessage={null} onRetryRuntime={retry} />);
 
-    fireEvent.click(screen.getByRole("button", { name: messages.app.home.moduleActions.formConverter }));
-
-    expect(onOpenModule).toHaveBeenCalledWith("formConverter");
-
-    fireEvent.click(screen.getByRole("button", { name: messages.app.home.moduleActions.currentStudents }));
-
-    expect(onOpenModule).toHaveBeenCalledWith("currentStudents");
+    const retryButton = screen.getByRole("button", { name: messages.app.home.retryConnection });
+    expect(retryButton).toBeEnabled();
+    expect(screen.getByText(/ตัวเชื่อมระบบ.*ลองเชื่อมต่อใหม่/)).toBeVisible();
+    fireEvent.click(retryButton);
+    expect(retry).toHaveBeenCalledOnce();
+    expect(screen.queryByText(messages.app.home.aiSettings.title)).not.toBeInTheDocument();
+    expect(screen.queryByText(/เครดิต|เข้าสู่ระบบ|License/i)).not.toBeInTheDocument();
   });
 
-  it("shows a friendly cloud unavailable account warning", () => {
-    renderHomeWithAccountWarning();
-
-    expect(screen.getByText(messages.app.account.errors.ACCOUNT_CLOUD_UNAVAILABLE)).toBeInTheDocument();
-  });
-
-  it("opens the separate credit top-up page from account actions", () => {
-    const props = renderHome();
-
-    fireEvent.click(screen.getByRole("button", { name: messages.app.account.topup.expandLabel }));
-
-    expect(props.onOpenTopup).toHaveBeenCalled();
-    expect(screen.queryByText(messages.app.account.topup.packages[0].unitRate)).not.toBeInTheDocument();
-  });
-
-  it("opens the separate sign-in page from account actions", () => {
-    const props = renderHome();
-
-    fireEvent.click(screen.getByRole("button", { name: messages.app.account.signIn }));
-
-    expect(props.onOpenSignIn).toHaveBeenCalled();
-  });
-
-  it("shows global login and cloud errors on the home screen", () => {
-    const props = buildHomeProps({
-      errorMessage: messages.app.account.errors.INVALID_CREDENTIALS,
-    });
-
-    render(<ModuleHome {...props} />);
-
-    expect(screen.getByText(messages.app.account.errors.INVALID_CREDENTIALS)).toBeInTheDocument();
+  it("shows local errors and offers runtime recovery", () => {
+    const retry = vi.fn();
+    render(<ModuleHome onOpenModule={vi.fn()} connectionState="error" errorMessage="Runtime disconnected" onRetryRuntime={retry} />);
+    expect(screen.getByText("Runtime disconnected")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: messages.app.home.retryConnection }));
+    expect(retry).toHaveBeenCalledOnce();
+    expect(screen.queryByText(messages.app.home.aiSettings.title)).not.toBeInTheDocument();
   });
 });

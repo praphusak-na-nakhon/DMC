@@ -6,12 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from dmc_sidecar import config
-from dmc_sidecar.account_store import AccountSessionStore
 from dmc_sidecar.checkpoint import JobCheckpoint
 from dmc_sidecar.job_store import JobStore
 from dmc_sidecar.modules.dry_run_review import pause_for_dry_run_review, should_pause_for_dry_run_review
 from dmc_sidecar.runtime import ActiveJob, JobContext, JobControl, JobManager, JobSnapshot
-from dmc_sidecar.telemetry import TelemetryClient
 
 
 def _wait_until(assertion, *, timeout: float = 3.0) -> None:  # noqa: ANN001
@@ -53,7 +51,6 @@ def test_pause_for_dry_run_review_waits_until_resume(monkeypatch, tmp_path: Path
         emit_event=events.append,
         control=control,
         job_store=store,
-        account_store=AccountSessionStore(),
         snapshot=JobSnapshot(job_id=job_id, module="graduation", status="running", processed=2, total=2, succeeded=2),
     )
 
@@ -98,8 +95,6 @@ def test_resume_job_is_idempotent_when_active_job_is_already_running(monkeypatch
     snapshot = JobSnapshot(job_id=job_id, module="graduation", status="paused", source_file="source.xlsx")
     manager = JobManager(
         job_store=store,
-        account_store=AccountSessionStore(),
-        telemetry=TelemetryClient(background_flush=False),
         emit_notification=lambda _payload: None,
     )
     manager._jobs[job_id] = ActiveJob(

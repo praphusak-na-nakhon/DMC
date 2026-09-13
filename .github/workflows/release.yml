@@ -15,7 +15,7 @@ on:
         required: true
         type: string
       release_notes:
-        description: Short updater notes
+        description: Short release notes
         required: false
         type: string
 
@@ -23,6 +23,8 @@ jobs:
   windows-release:
     runs-on: windows-latest
     environment: ${{ inputs.environment }}
+    env:
+      WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
     permissions:
       contents: write
 
@@ -30,10 +32,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Configure isolated test paths
+        shell: pwsh
+        run: |
+          "DMC_DATA_DIR=$env:RUNNER_TEMP\dmc-release-data" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PLAYWRIGHT_BROWSERS_PATH=$env:RUNNER_TEMP\dmc-playwright" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.8.1
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -41,93 +54,69 @@ jobs:
           node-version: "22"
           cache: "pnpm"
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.8.1
-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install cloud and sidecar build dependencies
+      - name: Install sidecar build dependencies
         run: |
           python -m venv .venv
           .\.venv\Scripts\python -m pip install --upgrade pip
           .\.venv\Scripts\python -m pip install pyinstaller
-          .\.venv\Scripts\python -m pip install -e .\apps\cloud[dev] -e .\apps\sidecar[dev]
+          .\.venv\Scripts\python -m pip install -e ".\apps\sidecar[dev]"
+
+      - name: Install Chromium and headless shell for localhost integration tests
+        run: .\.venv\Scripts\python -m playwright install chromium
 
       - name: Compute release metadata
         shell: pwsh
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_ENVIRONMENT: ${{ inputs.environment }}
         run: |
-          $version = "${{ inputs.version }}".Trim()
-          if (-not $version) { throw "version input is required" }
-          if ("${{ inputs.environment }}" -eq "production") {
+          $version = $env:INPUT_VERSION.Trim()
+          if (-not $version -or $version -match "[\r\n]") { throw "version input must be a nonempty single line" }
+          if ($env:INPUT_ENVIRONMENT -eq "production") {
             $tag = "v$version"
           } else {
-            $tag = "v$version-${{ inputs.environment }}"
+            $tag = "v$version-$env:INPUT_ENVIRONMENT"
           }
           "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "UPDATER_MANIFEST_URL=https://github.com/${{ github.repository }}/releases/download/$tag/latest.json" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Verify workspace
         run: pnpm run ci:verify
-
-      - name: Write packaged release config
-        shell: pwsh
-        run: >
-          .\.venv\Scripts\python .\scripts\write_release_config.py
-          --environment "${{ inputs.environment }}"
-          --cloud-base-url "${{ vars.DMC_CLOUD_BASE_URL }}"
-          --updater-endpoint "${{ env.UPDATER_MANIFEST_URL }}"
-          --updater-public-key "${{ secrets.DMC_UPDATER_PUBLIC_KEY }}"
 
       - name: Build bundled sidecar
         run: pnpm run sidecar:bundle
 
       - name: Build desktop package
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: corepack pnpm --dir apps/desktop exec tauri build
+        run: corepack pnpm --dir apps/desktop exec tauri build --config src-tauri/tauri.package.conf.json
 
       - name: Prepare code-signing certificate
-        if: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 != '' }}
+        if: ${{ env.WINDOWS_CODESIGN_PFX_BASE64 != '' }}
         shell: pwsh
         run: |
           $certDir = Join-Path $PWD ".release-signing"
           New-Item -ItemType Directory -Force -Path $certDir | Out-Null
           $certPath = Join-Path $certDir "codesign.pfx"
-          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String("${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}"))
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:WINDOWS_CODESIGN_PFX_BASE64))
           "WINDOWS_CODESIGN_CERT_PATH=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Sign MSI artifacts
-        if: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 != '' }}
+        if: ${{ env.WINDOWS_CODESIGN_PFX_BASE64 != '' }}
         env:
           WINDOWS_CODESIGN_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
         run: pnpm run release:sign-msi
-
-      - name: Generate updater manifest
-        shell: pwsh
-        run: >
-          .\.venv\Scripts\python .\scripts\create_release_manifest.py
-          --bundle-dir ".\apps\desktop\src-tauri\target\release\bundle"
-          --version "${{ env.RELEASE_VERSION }}"
-          --pub-date "$(Get-Date -AsUTC -Format o)"
-          --notes "${{ inputs.release_notes }}"
-          --base-url "https://github.com/${{ github.repository }}/releases/download/${{ env.RELEASE_TAG }}"
-          --output ".\release-artifacts\latest.json"
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: DMC Assistant ${{ env.RELEASE_VERSION }} (${{ inputs.environment }})
+          body: ${{ inputs.release_notes }}
+          fail_on_unmatched_files: true
           files: |
             apps/desktop/src-tauri/target/release/bundle/**/*.msi
-            apps/desktop/src-tauri/target/release/bundle/**/*.zip
-            apps/desktop/src-tauri/target/release/bundle/**/*.sig
-            release-artifacts/latest.json

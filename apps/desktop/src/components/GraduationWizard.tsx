@@ -3,7 +3,6 @@ import {
   AlertCircle,
   Award,
   CheckCircle2,
-  CloudCog,
   FileCheck2,
   FileDown,
   FileSpreadsheet,
@@ -23,10 +22,8 @@ import messages from "../i18n/th.json";
 import { describeUserFacingError } from "../lib/errorMessages";
 import {
   describeBrowserRuntimePhase,
-  describeCreditStatus,
   describeJobStatus,
   formatBytes,
-  formatTimestamp,
 } from "../lib/appUi";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Badge } from "./ui/badge";
@@ -42,11 +39,9 @@ import { SidecarLogPanel } from "./SidecarLogPanel";
 import { PageHeader } from "./PageHeader";
 import { SystemErrorAlert } from "./SystemErrorAlert";
 import type {
-  AccountStatus,
   BrowserRuntimeStatus,
   JobCompletionItem,
   JobStatusSnapshot,
-  ModuleConfigStatus,
   ValidateExcelResponse,
 } from "../types/contracts";
 
@@ -67,8 +62,6 @@ type GraduationWizardProps = {
   activeJobId: string | null;
   progressPercent: number;
   connectionState: ConnectionState;
-  accountStatus: AccountStatus | null;
-  moduleConfigStatus: ModuleConfigStatus | null;
   browserRuntimeStatus: BrowserRuntimeStatus | null;
   browserRuntimeProgress: BrowserRuntimeProgress;
   supportMessage: string | null;
@@ -81,7 +74,6 @@ type GraduationWizardProps = {
   isDownloadingTemplate: boolean;
   isArchivingJobs: boolean;
   isBootstrappingBrowser: boolean;
-  accountBlocksStart: boolean;
   browserRuntimeBlocksStart: boolean;
   validationBlocksStart: boolean;
   preflightRowsAccepted: number | null;
@@ -93,8 +85,6 @@ type GraduationWizardProps = {
   onStopOnReviewChange: (value: boolean) => void;
   onConnect: () => void;
   onRefreshJobs: () => void;
-  onRefreshWallet: () => void;
-  onSyncConfig: () => void;
   onValidate: () => void;
   onStartDryRun: () => void;
   onStartLive: () => void;
@@ -245,8 +235,6 @@ export function GraduationWizard({
   activeJobId,
   progressPercent,
   connectionState,
-  accountStatus,
-  moduleConfigStatus,
   browserRuntimeStatus,
   browserRuntimeProgress,
   supportMessage,
@@ -259,7 +247,6 @@ export function GraduationWizard({
   isDownloadingTemplate,
   isArchivingJobs,
   isBootstrappingBrowser,
-  accountBlocksStart,
   browserRuntimeBlocksStart,
   validationBlocksStart,
   preflightRowsAccepted,
@@ -271,8 +258,6 @@ export function GraduationWizard({
   onStopOnReviewChange,
   onConnect,
   onRefreshJobs,
-  onRefreshWallet,
-  onSyncConfig,
   onValidate,
   onStartDryRun,
   onStartLive,
@@ -294,7 +279,6 @@ export function GraduationWizard({
   const [showSupportDrawer, setShowSupportDrawer] = useState(false);
   const [supportSection, setSupportSection] = useState<"settings" | "history" | "messages">("settings");
   const runtimeReady = browserRuntimeStatus?.installed ?? false;
-  const accountReady = accountStatus?.can_start_credit_jobs ?? false;
   const showDryRun = Boolean((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV);
   const canDryRun =
     Boolean(selectedGrade) &&
@@ -302,7 +286,7 @@ export function GraduationWizard({
     !isBootstrappingBrowser &&
     !browserRuntimeBlocksStart &&
     !validationBlocksStart;
-  const canStart = canDryRun && !accountBlocksStart;
+  const canStart = canDryRun;
   const acceptedRows = preview?.rows_accepted ?? preflightRowsAccepted ?? 0;
   const totalRows = preview?.rows_total ?? preflightRowsTotal ?? null;
   const detectedLevel =
@@ -342,14 +326,6 @@ export function GraduationWizard({
   const rowsForPreview = useMemo(() => preview?.preview.slice(0, 5) ?? [], [preview]);
   const visibleErrorMessage = errorMessage ? describeUserFacingError(errorMessage) : null;
   const reportTools = messages.app.reportTools;
-  const accountCopy = messages.app.account;
-  const creditStatus = describeCreditStatus(currentJob?.credit_status);
-  const creditStatusClass = {
-    info: "border-blue-200 bg-blue-50 text-blue-950",
-    warning: "border-amber-200 bg-amber-50 text-amber-950",
-    danger: "border-destructive/30 bg-destructive/10 text-destructive",
-    success: "border-emerald-200 bg-emerald-50 text-emerald-950",
-  } as const;
   const browseFileHint = !selectedGrade ? "เลือกชั้นปีก่อนเลือกไฟล์ Excel" : null;
   const validateHint = !selectedGrade
     ? "เลือกชั้นปีก่อนตรวจสอบข้อมูล"
@@ -362,9 +338,7 @@ export function GraduationWizard({
       ? "ตรวจสอบไฟล์ Excel ให้ผ่านก่อนเริ่มส่งข้อมูล"
       : browserRuntimeBlocksStart
         ? "ติดตั้งหรือตรวจ Chromium runtime ให้พร้อมก่อนเริ่มงาน"
-        : accountBlocksStart
-          ? "ลงชื่อเข้าใช้และตรวจเครดิตก่อนเริ่มงานจริง"
-          : null;
+        : null;
 
   useEffect(() => {
     if (currentJob || preview) {
@@ -396,7 +370,7 @@ export function GraduationWizard({
     <div className="space-y-6">
       <PageHeader
         onBackHome={onBackHome}
-        badge="ใช้เครดิต"
+        badge="เครื่องมือในเครื่อง"
         title="ข้อมูลสิ้นปีการศึกษา (สอบได้ เรียนจบ)"
         description="ตรวจไฟล์ Excel, ทดสอบก่อนส่งจริง, กรอกข้อมูลจบการศึกษาใน DMC และสรุปรายงานหลังจบงาน"
         icon={<Award className="h-5 w-5 text-primary" />}
@@ -406,16 +380,6 @@ export function GraduationWizard({
               label="ตัวเชื่อมระบบ"
               value={connectionLabel(connectionState)}
               tone={connectionState === "ready" ? "success" : connectionState === "error" ? "danger" : "warning"}
-            />
-            <SystemPill
-              label="บัญชี"
-              value={accountStatus?.signed_in ? accountStatus.email ?? "signed in" : accountCopy.signInRequired}
-              tone={accountReady ? "success" : "warning"}
-            />
-            <SystemPill
-              label="เครดิต"
-              value={accountStatus?.wallet ? `${accountStatus.wallet.available} พร้อมใช้` : "-"}
-              tone={accountStatus?.wallet && accountStatus.wallet.available > 0 ? "success" : "warning"}
             />
             <SystemPill
               label="เบราว์เซอร์"
@@ -614,17 +578,6 @@ export function GraduationWizard({
                 {totalRows !== null ? ` จาก ${totalRows} แถว` : ""}
               </div>
               <div className="text-sm text-muted-foreground">ระดับชั้น: {detectedLevel}</div>
-              <div className="rounded-lg border bg-muted/40 px-3 py-2 text-sm text-foreground">
-                งานจริงนี้จะกันเครดิตไว้ประมาณ {acceptedRows} เครดิต
-                {accountStatus?.wallet ? ` · ${accountCopy.availableCredits} ${accountStatus.wallet.available}` : ` · ${accountCopy.signInBeforeLive}`}
-              </div>
-              {accountStatus?.wallet && accountStatus.wallet.available < acceptedRows ? (
-                <Alert variant="destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertTitle>{accountCopy.insufficientCreditsTitle}</AlertTitle>
-                  <AlertDescription>{accountCopy.insufficientCredits}</AlertDescription>
-                </Alert>
-              ) : null}
               <Progress value={currentJob ? progressPercent : 0} className="h-3" />
             </div>
 
@@ -651,13 +604,6 @@ export function GraduationWizard({
             </div>
 
             <div className="grid gap-3">
-              {creditStatus ? (
-                <Alert className={creditStatusClass[creditStatus.tone]}>
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertTitle>{creditStatus.title}</AlertTitle>
-                  <AlertDescription>{creditStatus.message}</AlertDescription>
-                </Alert>
-              ) : null}
               {currentJobNeedsAuth ? (
                 <Alert className="border-amber-200 bg-amber-50 text-amber-950">
                   <LogIn className="h-4 w-4" />
@@ -699,14 +645,6 @@ export function GraduationWizard({
                 </div>
                 <div>สำเร็จ: {currentJob.succeeded}</div>
                 <div>ต้องตรวจเพิ่ม/ผิดพลาด: {currentJob.failed}</div>
-                {currentJob.credits_reserved > 0 ? (
-                  <>
-                    <Separator />
-                    <div>เครดิตที่กันไว้: {currentJob.credits_reserved}</div>
-                    <div>เครดิตที่ใช้จริง: {currentJob.credits_captured}</div>
-                    <div>เครดิตที่คืน: {currentJob.credits_refunded}</div>
-                  </>
-                ) : null}
                 {runSummary ? (
                   <>
                     <Separator />
@@ -863,35 +801,7 @@ export function GraduationWizard({
                 </div>
 
                 <div className="space-y-3 rounded-lg border bg-muted/40 p-4">
-                  <div className="font-semibold">บัญชีและเครดิต</div>
-                  <div className="text-sm text-muted-foreground">
-                    {accountStatus?.signed_in ? accountStatus.email : accountCopy.signInRequired}
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 text-sm">
-                    <div className="rounded-lg border bg-background p-2">
-                      <div className="text-xs text-muted-foreground">เครดิตรวม</div>
-                      <div className="font-semibold">{accountStatus?.wallet?.balance ?? "-"}</div>
-                    </div>
-                    <div className="rounded-lg border bg-background p-2">
-                      <div className="text-xs text-muted-foreground">กันไว้</div>
-                      <div className="font-semibold">{accountStatus?.wallet?.reserved ?? "-"}</div>
-                    </div>
-                    <div className="rounded-lg border bg-background p-2">
-                      <div className="text-xs text-muted-foreground">พร้อมใช้</div>
-                      <div className="font-semibold">{accountStatus?.wallet?.available ?? "-"}</div>
-                    </div>
-                  </div>
-                  <Button variant="outline" onClick={onRefreshWallet} disabled={!accountStatus?.signed_in}>
-                    <RefreshCw className="h-4 w-4" />
-                    {accountCopy.refreshCredits}
-                  </Button>
-                </div>
-
-                <div className="space-y-3 rounded-lg border bg-muted/40 p-4">
-                  <div className="font-semibold">Config และ Chromium</div>
-                  <div className="text-sm text-muted-foreground">
-                    สถานะ config: {moduleConfigStatus ? `${moduleConfigStatus.version} (${moduleConfigStatus.source})` : "-"}
-                  </div>
+                  <div className="font-semibold">Chromium</div>
                   <div className="text-sm text-muted-foreground">
                     สถานะ runtime: {browserRuntimeStatus?.message ?? browserRuntimeStatus?.state ?? "-"}
                   </div>
@@ -905,10 +815,6 @@ export function GraduationWizard({
                     </div>
                   ) : null}
                   <div className="flex flex-wrap gap-2">
-                    <Button variant="outline" onClick={onSyncConfig}>
-                      <CloudCog className="h-4 w-4" />
-                      ซิงก์ config
-                    </Button>
                     {browserRuntimeStatus && !browserRuntimeStatus.installed ? (
                       <Button
                         disabled={connectionState !== "ready" || isBootstrappingBrowser || !browserRuntimeStatus.bootstrap_supported}
@@ -949,11 +855,6 @@ export function GraduationWizard({
             {supportSection === "messages" ? <SidecarLogPanel sidecarMessages={sidecarMessages} /> : null}
           </CardContent>
         ) : null}
-      </Card>
-
-      <Card className="px-4 py-3 text-xs text-muted-foreground">
-        สถานะล่าสุด: บัญชีตรวจเมื่อ {formatTimestamp(accountStatus?.last_checked_at ?? null)} · config ตรวจเมื่อ{" "}
-        {formatTimestamp(moduleConfigStatus?.checked_at ?? null)}
       </Card>
     </div>
   );

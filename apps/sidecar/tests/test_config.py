@@ -15,5 +15,4 @@ def test_packaged_resource_paths_use_bundled_resources_dir(monkeypatch, tmp_path
     bundled_root = tmp_path / "bundle"
     monkeypatch.setenv("DMC_BUNDLED_RESOURCES_DIR", str(bundled_root))
 
-    assert config.config_signing_keys_path() == bundled_root / "shared-schemas" / "config-signing" / "keys.json"
     assert config.module_configs_root() == bundled_root / "module-configs"

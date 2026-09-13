@@ -1,20 +1,22 @@
 import messages from "../i18n/th.json";
 
-const accountErrors = messages.app.account.errors as Record<string, string>;
 const formConverterErrors = messages.app.formConverter.errors as Record<string, string>;
 const generalErrors: Record<string, string> = {
-  CONFIG_SIGNATURE_INVALID: "ลายเซ็น config ไม่ถูกต้อง ระบบจะใช้ config ที่ปลอดภัยจากเครื่องแทน",
-  CONFIG_CACHE_INVALID: "ไฟล์ config ที่เก็บไว้เสียหาย ระบบจะกลับไปใช้ config ที่มากับแอป",
-  CONFIG_SYNC_UNAVAILABLE: "เชื่อมต่อ cloud เพื่ออัปเดต config ไม่ได้",
+  CONFIG_BUNDLED_INVALID: "ไฟล์ตั้งค่าที่มากับแอปเสียหายหรือไม่ครบ กรุณาติดตั้งแอปใหม่ก่อนใช้งาน Graduation",
+  AI_API_KEY_REQUIRED: "กรุณาตั้งค่า Gemini API key ที่หน้าหลักก่อนใช้ OCR",
+  AI_API_KEY_INVALID: "Gemini API key ไม่ถูกต้องหรือไม่มีสิทธิ์ใช้งาน กรุณาตรวจสอบที่หน้าหลัก",
+  AI_CREDENTIAL_STORE_UNAVAILABLE: "ไม่สามารถเข้าถึงที่เก็บ API key ที่ปลอดภัยได้ กรุณาตรวจสอบการตั้งค่า AI ที่หน้าหลัก",
+  AI_PROVIDER_UNAVAILABLE: "ผู้ให้บริการ AI ยังไม่พร้อมใช้งาน กรุณาลองใหม่ภายหลัง",
+  AI_RATE_LIMITED: "AI จำกัดจำนวนคำขอชั่วคราว กรุณารอสักครู่แล้วลองใหม่",
+  AI_REQUEST_TIMEOUT: "รอผลลัพธ์จาก AI นานเกินไป กรุณาลองใหม่",
+  AI_RESPONSE_INVALID: "AI ส่งผลลัพธ์ในรูปแบบที่อ่านไม่ได้ กรุณาลองใหม่",
+  AI_INPUT_UNSUPPORTED: "ไฟล์ไม่รองรับหรืออ่านไม่ได้ กรุณาเลือกไฟล์ PDF หรือรูปภาพที่ถูกต้อง",
+  AI_JOB_FAILED: "AI ประมวลผลเอกสารไม่สำเร็จ กรุณาลองใหม่",
   OCR_PROVIDER_UNSUPPORTED: "ยังไม่รองรับ AI provider ที่ตั้งค่าไว้",
   OCR_PROVIDER_RESPONSE_INVALID: "ผลลัพธ์จาก AI อยู่ในรูปแบบที่ระบบอ่านไม่ได้ กรุณาลองใหม่หรือส่ง diagnostics",
-  PSAR_EVIDENCE_FILE_NOT_FOUND: "ไม่พบไฟล์หลักฐานที่เลือก",
-  PSAR_EVIDENCE_PATH_NOT_FILE: "พาธหลักฐานที่เลือกไม่ใช่ไฟล์",
-  PSAR_EVIDENCE_UNSUPPORTED_TYPE: "หลักฐานต้องเป็นไฟล์ PDF, DOCX, XLSX หรือรูปภาพ",
-  PSAR_PROJECT_ID_INVALID: "รหัสโปรเจกต์ใช้ได้เฉพาะตัวอักษร ตัวเลข ขีดกลาง ขีดล่าง และจุด",
 };
 
-const errorMaps = [accountErrors, formConverterErrors, generalErrors];
+const errorMaps = [formConverterErrors, generalErrors];
 const desktopRuntimeRecoveryMessage =
   "Desktop runtime ยังไม่เชื่อมต่อ ฟังก์ชันนี้ต้องเปิดผ่านหน้าต่าง DMC Assistant desktop ไม่ใช่ browser preview/localhost หากกำลังทดสอบให้รัน `corepack pnpm --dir apps/desktop exec tauri dev` แล้วใช้หน้าต่างแอปที่เด้งขึ้นมา หรือกดลองเชื่อมต่อใหม่";
 const sidecarRecoveryMessage =
@@ -77,13 +79,6 @@ export function isRuntimeConnectionError(error: unknown): boolean {
   return getRuntimeConnectionErrorKind(error) !== null;
 }
 
-export function describeAccountCode(code: string | null | undefined): string | null {
-  if (!code) {
-    return null;
-  }
-  return accountErrors[code] ?? null;
-}
-
 export function describeErrorCode(code: string | null | undefined): string | null {
   if (!code) {
     return null;
@@ -121,4 +116,13 @@ export function describeUserFacingError(error: unknown): string {
     return genericRecoveryMessage;
   }
   return raw;
+}
+
+export function describeAiError(error: unknown): string {
+  if (getRuntimeConnectionErrorKind(error)) {
+    return describeUserFacingError(error);
+  }
+  const raw = error instanceof Error ? error.message : String(error);
+  const code = raw.match(/\bAI_[A-Z_]+\b/)?.[0];
+  return (code && generalErrors[code]) || generalErrors.AI_JOB_FAILED;
 }

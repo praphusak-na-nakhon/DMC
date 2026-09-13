@@ -12,6 +12,7 @@ obec-fill-review.csv
 .venv/
 *.egg-info/
 .dmc-assistant-data/
+.dmc-field-tests/
 *.sqlite3
 *.sqlite3-*
 .cloud-state.sqlite3
@@ -30,8 +31,5 @@ target/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/bundled-sidecar/*
 !apps/desktop/src-tauri/bundled-sidecar/.gitkeep
-apps/desktop/src-tauri/release-config/*.json
-!apps/desktop/src-tauri/release-config/.gitkeep
 apps/sidecar/build/
-release-artifacts/
 .worktrees/

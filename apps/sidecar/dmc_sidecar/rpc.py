@@ -1,39 +1,18 @@
 from __future__ import annotations
 
-import re
 import sys
 import threading
-import traceback
-import uuid
 from pathlib import Path
 from typing import Any, Callable
 
 from pydantic import ValidationError
 
-from .account_client import (
-    build_account_snapshot,
-    cached_module_catalog,
-    capture_credits,
-    get_module_catalog,
-    refresh_wallet,
-    release_credits,
-    reserve_credits,
-    sign_in,
-    sign_out,
-)
-from .account_store import AccountSessionStore
-
 from . import __version__
-from .gemini_ocr import (
-    GEMINI_OCR_CREDITS_PER_PAGE,
-    GeminiOcrDmcFormRequest,
-    GeminiOcrDmcFormResponse,
-    ocr_dmc_form_with_gemini,
-    prepare_gemini_ocr_request,
-)
+from .ai.base import AiSettingsResponse, OcrDocumentRequest, SecretStore
+from .ai.credentials import WindowsCredentialStore
+from .ai.registry import ProviderRegistry, build_provider_registry
 from .backup import create_backup_archive, restore_backup_archive
 from .browser_runtime import bootstrap_browser_runtime, get_browser_runtime_status
-from .checkpoint import JobCheckpoint
 from .config import default_data_dir, sqlite_path
 from .db import get_database_metadata
 from .errors import DomainError
@@ -47,64 +26,61 @@ from .current_students import (
     export_dmc_form_json,
     export_current_students_blank_form,
     export_current_students_import_excel,
-    load_dmc_transfer_in_import_records,
     preview_dmc_form_json,
     reconcile_current_students,
     validate_current_students_import_form,
 )
 from .job_store import JobStore
-from .module_config import load_effective_config, sync_module_config
 from .modules import get_module
-from .p_sar_readiness import PsarReadinessService
-from .runtime import JobManager, build_event_notification, finalize_job_credits, utc_now
+from .runtime import JobManager, build_event_notification, utc_now
 from .schemas import (
-    AddPsarEvidenceRequest,
+    AiProviderRequest,
     ArchiveJobsRequest,
     ExportStudentBasicInfoFormRequest,
     FilePathRequest,
-    GeneratePsarReportRequest,
     JobIdRequest,
-    ModuleConfigRequest,
-    ModuleConfigStatus,
     PingResponse,
-    PsarReadinessRequest,
     RpcErrorData,
     RpcErrorResponse,
     RpcRequest,
     RpcSuccessResponse,
-    SignInRequest,
+    SaveAiApiKeyRequest,
     StartJobRequest,
     ValidateExcelRequest,
 )
 from .student_basic_info import export_student_basic_info_form
-from .telemetry import TelemetryClient
 
 
-GEMINI_OCR_CREDIT_BYPASS_CODES = {"ACCOUNT_CLOUD_UNAVAILABLE", "ACCOUNT_CLOUD_REQUIRED"}
+_AI_RPC_METHODS = {"get_ai_settings", "save_ai_api_key", "test_ai_connection", "delete_ai_api_key", "ocr_document"}
+
+
+def _safe_validation_errors(exc: ValidationError) -> list[dict[str, str]]:
+    """Return validation metadata without client-controlled inputs or contexts."""
+    return [
+        {
+            "type": str(error.get("type", "validation_error")),
+            "message": str(error.get("msg", "Invalid request.")),
+        }
+        for error in exc.errors()
+    ]
 
 
 class RpcServer:
-    def __init__(self, emit_notification: Callable[[dict[str, Any]], None]) -> None:
+    def __init__(
+        self,
+        emit_notification: Callable[[dict[str, Any]], None],
+        *,
+        secret_store: SecretStore | None = None,
+        provider_registry: ProviderRegistry | None = None,
+    ) -> None:
         self.emit_notification = emit_notification
+        self.secret_store = secret_store if secret_store is not None else WindowsCredentialStore()
+        self.provider_registry = provider_registry if provider_registry is not None else build_provider_registry(self.secret_store)
         self.job_store = JobStore()
-        self.account_store = AccountSessionStore()
-        self.telemetry = TelemetryClient(account_store=self.account_store)
-        self.psar_readiness = PsarReadinessService()
-        reaped_jobs = self._reap_interrupted_reservations()
         self.job_manager = JobManager(
             job_store=self.job_store,
-            account_store=self.account_store,
-            telemetry=self.telemetry,
             emit_notification=emit_notification,
         )
-        if reaped_jobs:
-            self._emit_background_notification(
-                {
-                    "type": "sidecar_stderr",
-                    "message": f"marked {reaped_jobs} interrupted credit reservation job(s) as failed",
-                }
-            )
-        self.telemetry.record_app_started(app_version=__version__, platform=sys.platform)
 
     def handle_text(self, raw_text: str) -> str:
         try:
@@ -116,7 +92,7 @@ class RpcServer:
                 error=RpcErrorData(
                     code="RPC_INVALID_REQUEST",
                     message="Request payload does not match the JSON-RPC schema.",
-                    details={"errors": exc.errors()},
+                    details={"errors": _safe_validation_errors(exc)},
                 ),
             )
         return response.model_dump_json(ensure_ascii=True)
@@ -125,6 +101,38 @@ class RpcServer:
         try:
             if request.method == "ping":
                 result = PingResponse(sidecar_version=__version__).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "get_ai_settings":
+                ai_params = AiProviderRequest.model_validate(request.params)
+                result = AiSettingsResponse(
+                    provider=ai_params.provider,
+                    configured=self.secret_store.get(ai_params.provider) is not None,
+                ).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "save_ai_api_key":
+                ai_params = SaveAiApiKeyRequest.model_validate(request.params)
+                self.secret_store.set(ai_params.provider, ai_params.api_key.get_secret_value())
+                result = AiSettingsResponse(provider=ai_params.provider, configured=True).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "test_ai_connection":
+                ai_params = AiProviderRequest.model_validate(request.params)
+                result = self.provider_registry.get(ai_params.provider).test_connection().model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "delete_ai_api_key":
+                ai_params = AiProviderRequest.model_validate(request.params)
+                self.secret_store.delete(ai_params.provider)
+                result = AiSettingsResponse(provider=ai_params.provider, configured=False).model_dump()
+                return RpcSuccessResponse(id=request.id, result=result)
+
+            if request.method == "ocr_document":
+                ocr_params = OcrDocumentRequest.model_validate(request.params)
+                if not self.secret_store.get(ocr_params.provider):
+                    raise DomainError("AI_API_KEY_REQUIRED")
+                result = self.provider_registry.get(ocr_params.provider).ocr_document(ocr_params).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "validate_excel":
@@ -161,11 +169,6 @@ class RpcServer:
                 result = export_dmc_form_json(form_json_export_params).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
-            if request.method in {"ocr_dmc_form_with_gemini", "ocr_dmc_form_with_akson", "ocr_dmc_form_with_typhoon"}:
-                gemini_ocr_params = GeminiOcrDmcFormRequest.model_validate(request.params)
-                result = self._ocr_dmc_form_with_gemini(gemini_ocr_params).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
-
             if request.method == "export_current_student_blank_form":
                 current_students_blank_params = ExportCurrentStudentsBlankFormRequest.model_validate(request.params)
                 result = export_current_students_blank_form(current_students_blank_params).model_dump()
@@ -174,51 +177,6 @@ class RpcServer:
             if request.method == "validate_current_student_import_form":
                 current_students_import_params = ValidateCurrentStudentsImportFormRequest.model_validate(request.params)
                 result = validate_current_students_import_form(current_students_import_params).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
-
-            if request.method == "get_module_config_status":
-                config_params = ModuleConfigRequest.model_validate(request.params)
-                state = load_effective_config(config_params.module)
-                result = ModuleConfigStatus(
-                    module=config_params.module,
-                    version=state.version,
-                    source=state.source,
-                    signature_verified=state.signature_verified,
-                    config_path=str(state.config_path),
-                    checked_at=state.checked_at,
-                    updated=state.updated,
-                    last_error=state.last_error,
-                ).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
-
-            if request.method == "sign_in":
-                sign_in_params = SignInRequest.model_validate(request.params)
-                result = sign_in(
-                    self.account_store,
-                    email=sign_in_params.email,
-                    password=sign_in_params.password,
-                    device_name=sign_in_params.device_name,
-                    app_version=sign_in_params.app_version,
-                ).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
-
-            if request.method == "sign_out":
-                result = sign_out(self.account_store).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
-
-            if request.method == "get_account_status":
-                result = build_account_snapshot(self.account_store).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
-
-            if request.method == "refresh_wallet":
-                result = refresh_wallet(self.account_store).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
-
-            if request.method == "get_module_catalog":
-                try:
-                    result = get_module_catalog(self.account_store).model_dump()
-                except DomainError:
-                    result = cached_module_catalog(self.account_store).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "get_browser_runtime_status":
@@ -252,28 +210,6 @@ class RpcServer:
                 result = restore_backup_archive(_backup_rpc_path(restore_params.path, must_exist=True))
                 return RpcSuccessResponse(id=request.id, result=result)
 
-            if request.method == "sync_module_config":
-                sync_params = ModuleConfigRequest.model_validate(request.params)
-                previous_state = load_effective_config(sync_params.module)
-                state = sync_module_config(sync_params.module)
-                if state.updated:
-                    self.telemetry.record_config_updated(
-                        module=sync_params.module,
-                        from_version=previous_state.version,
-                        to_version=state.version,
-                    )
-                result = ModuleConfigStatus(
-                    module=sync_params.module,
-                    version=state.version,
-                    source=state.source,
-                    signature_verified=state.signature_verified,
-                    config_path=str(state.config_path),
-                    checked_at=state.checked_at,
-                    updated=state.updated,
-                    last_error=state.last_error,
-                ).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
-
             if request.method == "start_job":
                 start_params = StartJobRequest.model_validate(request.params)
                 browser_runtime = get_browser_runtime_status()
@@ -284,35 +220,24 @@ class RpcServer:
                         message="Chromium browser runtime is not installed.",
                         details=browser_runtime.model_dump(),
                     )
-                if not bool(start_params.options.get("dry_run", False)) and self.account_store.get_session() is None:
-                    return self._error(
-                        request.id,
-                        code="SIGN_IN_REQUIRED",
-                        message="Sign in before starting credit-backed jobs.",
-                    )
-                estimated_credits = start_params.options.get("estimated_credits")
-                credits_reserved = estimated_credits if isinstance(estimated_credits, int) and estimated_credits > 0 else 0
                 self.job_store.create_pending_job(
                     job_id=start_params.job_id,
                     module=start_params.module,
                     source_file=start_params.excel_path,
-                    credits_reserved=credits_reserved,
-                    credit_status="reserving" if not bool(start_params.options.get("dry_run", False)) else None,
                 )
-                threading.Thread(
-                    target=self._prepare_and_start_job,
-                    name=f"dmc-start-{start_params.job_id}",
-                    args=(start_params,),
-                    daemon=True,
-                ).start()
+                try:
+                    self.job_manager.start_job(
+                        job_id=start_params.job_id,
+                        module_name=start_params.module,
+                        excel_path=Path(start_params.excel_path),
+                        options=start_params.options,
+                    )
+                except Exception:
+                    self.job_store.mark_start_failed(start_params.job_id, finished_at=utc_now())
+                    raise
                 return RpcSuccessResponse(
                     id=request.id,
-                    result={
-                        "accepted": True,
-                        "job_id": start_params.job_id,
-                        "credit_reservation_id": None,
-                        "credits_reserved": credits_reserved,
-                    },
+                    result={"accepted": True, "job_id": start_params.job_id},
                 )
 
             if request.method == "export_student_basic_info_form":
@@ -325,24 +250,6 @@ class RpcServer:
                         else None
                     ),
                 ).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
-
-            if request.method == "get_psar_readiness":
-                psar_params = PsarReadinessRequest.model_validate(request.params)
-                result = self.psar_readiness.get_readiness(psar_params.project_id).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
-
-            if request.method == "add_psar_evidence":
-                evidence_params = AddPsarEvidenceRequest.model_validate(request.params)
-                result = self.psar_readiness.add_evidence(
-                    project_id=evidence_params.project_id,
-                    file_path=evidence_params.file_path,
-                ).model_dump()
-                return RpcSuccessResponse(id=request.id, result=result)
-
-            if request.method == "generate_psar_report":
-                report_params = GeneratePsarReportRequest.model_validate(request.params)
-                result = self.psar_readiness.generate_report(report_params.project_id).model_dump()
                 return RpcSuccessResponse(id=request.id, result=result)
 
             if request.method == "get_job_status":
@@ -388,21 +295,27 @@ class RpcServer:
             return self._error(
                 request.id,
                 code="RPC_METHOD_NOT_FOUND",
-                message=f"Unsupported method: {request.method}",
+                message="Unsupported method.",
+            )
+        except ValidationError as exc:
+            return self._error(
+                request.id,
+                code="RPC_INVALID_REQUEST",
+                message="Request params do not match the method schema.",
+                details={"errors": _safe_validation_errors(exc)},
             )
         except DomainError as exc:
             return self._error(
                 request.id,
                 code=exc.code,
                 message=exc.user_message,
-                details=exc.details,
+                details={} if request.method in _AI_RPC_METHODS else exc.details,
             )
-        except RuntimeError as exc:
-            error_code = self._safe_runtime_error_code(exc)
+        except RuntimeError:
             return self._error(
                 request.id,
-                code=error_code,
-                message=self._runtime_error_message(error_code),
+                code="RUNTIME_ERROR",
+                message="Operation failed.",
             )
         except NotImplementedError:
             return self._error(
@@ -411,7 +324,7 @@ class RpcServer:
                 message="Requested operation is not implemented.",
             )
         except Exception as exc:  # pragma: no cover - defensive boundary
-            print(f"[sidecar] unexpected rpc error: {exc!r}", file=sys.stderr)
+            print(f"[sidecar] unexpected rpc error: {exc.__class__.__name__}", file=sys.stderr)
             return self._error(
                 request.id,
                 code="UNEXPECTED_ERROR",
@@ -437,260 +350,6 @@ class RpcServer:
             self.job_manager.cancel_job(job_id)
 
         return RpcSuccessResponse(id=request_id, result={"job_id": job_id, "status": status})
-
-    def _ocr_dmc_form_with_gemini(self, request: GeminiOcrDmcFormRequest) -> GeminiOcrDmcFormResponse:
-        prepared = prepare_gemini_ocr_request(request)
-        if prepared.cached_response is not None:
-            return prepared.cached_response
-
-        credits_required = prepared.pages_estimated * GEMINI_OCR_CREDITS_PER_PAGE
-        job_id = f"form-ocr-gemini-{prepared.file_sha256[:16]}-{uuid.uuid4().hex[:8]}"
-        try:
-            reservation = reserve_credits(
-                self.account_store,
-                job_id=job_id,
-                module="formConverter",
-                units=credits_required,
-                idempotency_key=f"{job_id}:reserve:{request.model}:{request.processing_mode}",
-            )
-        except DomainError as exc:
-            if exc.code not in GEMINI_OCR_CREDIT_BYPASS_CODES:
-                raise
-            response = ocr_dmc_form_with_gemini(request)
-            return response.model_copy(
-                update={
-                    "pages_estimated": prepared.pages_estimated,
-                    "credits_per_page": GEMINI_OCR_CREDITS_PER_PAGE,
-                    "credits_charged": 0,
-                    "charged": False,
-                    "credit_reservation_id": None,
-                }
-            )
-        captured = False
-        try:
-            response = ocr_dmc_form_with_gemini(request)
-            capture_credits(
-                self.account_store,
-                reservation_id=reservation.reservation_id,
-                units=credits_required,
-                idempotency_key=f"{job_id}:capture:{request.model}:{request.processing_mode}",
-            )
-            captured = True
-            return response.model_copy(
-                update={
-                    "pages_estimated": prepared.pages_estimated,
-                    "credits_per_page": GEMINI_OCR_CREDITS_PER_PAGE,
-                    "credits_charged": credits_required,
-                    "charged": True,
-                    "credit_reservation_id": reservation.reservation_id,
-                }
-            )
-        finally:
-            if not captured:
-                try:
-                    release_credits(
-                        self.account_store,
-                        reservation_id=reservation.reservation_id,
-                        units=credits_required,
-                        idempotency_key=f"{job_id}:release:{request.model}:{request.processing_mode}",
-                    )
-                except DomainError:
-                    pass
-
-    def _estimate_credit_units(self, start_params: StartJobRequest) -> int:
-        raw_units = start_params.options.get("estimated_credits")
-        if isinstance(raw_units, int) and raw_units > 0:
-            return raw_units
-        if start_params.module == "currentStudents":
-            try:
-                records = load_dmc_transfer_in_import_records(Path(start_params.excel_path))
-            except Exception as exc:
-                raise DomainError("CREDIT_PREFLIGHT_FAILED", "Unable to estimate credits for this job.") from exc
-            return max(len(records), 1)
-        module = get_module(start_params.module)
-        try:
-            preview = module.validate_excel(Path(start_params.excel_path))
-        except Exception as exc:
-            raise DomainError("CREDIT_PREFLIGHT_FAILED", "Unable to estimate credits for this job.") from exc
-        return max(int(preview.rows_accepted), 1)
-
-    def _prepare_and_start_job(self, start_params: StartJobRequest) -> None:
-        credit_reservation_id: str | None = None
-        credits_reserved = 0
-        try:
-            if not bool(start_params.options.get("dry_run", False)):
-                credits_reserved = self._estimate_credit_units(start_params)
-                reservation = reserve_credits(
-                    self.account_store,
-                    job_id=start_params.job_id,
-                    module=start_params.module,
-                    units=credits_reserved,
-                    idempotency_key=f"{start_params.job_id}:reserve",
-                )
-                credit_reservation_id = reservation.reservation_id
-                self.job_store.update_credit_status(
-                    start_params.job_id,
-                    credit_reservation_id=credit_reservation_id,
-                    credits_reserved=credits_reserved,
-                    credit_status="reserved",
-                )
-                self._emit_background_notification(
-                    {
-                        "type": "sidecar_stderr",
-                        "message": f"credits reserved for job {start_params.job_id}: {credits_reserved}",
-                    }
-                )
-
-            self.job_manager.start_job(
-                job_id=start_params.job_id,
-                module_name=start_params.module,
-                excel_path=Path(start_params.excel_path),
-                options=start_params.options,
-                credit_reservation_id=credit_reservation_id,
-                credits_reserved=credits_reserved,
-            )
-        except Exception as exc:  # pragma: no cover - defensive background path
-            print(f"[sidecar] start_job background error for {start_params.job_id}: {exc!r}", file=sys.stderr)
-            print(traceback.format_exc(), file=sys.stderr)
-            code = exc.code if isinstance(exc, DomainError) else exc.__class__.__name__.upper()
-            if credit_reservation_id and credits_reserved > 0:
-                self._release_start_failed_reservation(
-                    job_id=start_params.job_id,
-                    reservation_id=credit_reservation_id,
-                    credits_reserved=credits_reserved,
-                )
-            self.job_store.mark_start_failed(start_params.job_id, code=code, finished_at=utc_now())
-            self._emit_background_notification(
-                {
-                    "type": "error",
-                    "job_id": start_params.job_id,
-                    "code": code,
-                    "message": exc.user_message if isinstance(exc, DomainError) else "Job failed before it started.",
-                }
-            )
-
-    def _emit_background_notification(self, payload: dict[str, Any]) -> None:
-        try:
-            self.emit_notification(payload)
-        except Exception as exc:  # pragma: no cover - defensive notification boundary
-            print(f"[sidecar] failed to emit background event: {exc!r}", file=sys.stderr)
-
-    def _release_start_failed_reservation(
-        self,
-        *,
-        job_id: str,
-        reservation_id: str,
-        credits_reserved: int,
-    ) -> None:
-        try:
-            release_credits(
-                self.account_store,
-                reservation_id=reservation_id,
-                units=credits_reserved,
-                idempotency_key=f"{job_id}:start_failed:release",
-            )
-            self.job_store.update_credit_status(job_id, credits_refunded=credits_reserved)
-        except DomainError as release_error:
-            print(
-                f"[sidecar] failed to release start-failed reservation for {job_id}: {release_error.code}",
-                file=sys.stderr,
-            )
-        except Exception as release_error:  # pragma: no cover - defensive release path
-            print(
-                f"[sidecar] unexpected start-failed reservation release error for {job_id}: {release_error!r}",
-                file=sys.stderr,
-            )
-
-    def _reap_interrupted_reservations(self) -> int:
-        reaped = 0
-        for job in self.job_store.list_stale_credit_jobs():
-            job_id = str(job["id"])
-            credit_status = str(job.get("credit_status") or "")
-            if credit_status in {"reserving", "reserved"}:
-                # Crashed between reserve and run start: refund the reservation and fail the job.
-                self._release_interrupted_reservation(job)
-                self.job_store.mark_stale_credit_jobs_failed([job_id], code="RESTART_DURING_RESERVATION")
-                reaped += 1
-            elif credit_status.startswith("start_failed:"):
-                # A previous start failed and its release never completed; retry it.
-                if self._retry_start_failed_release(job):
-                    reaped += 1
-            elif credit_status.startswith("finalize_failed:"):
-                # A previous finalize raised; recompute capture/release against the reservation.
-                if self._retry_finalize_failed(job):
-                    reaped += 1
-        return reaped
-
-    def _release_interrupted_reservation(self, job: dict[str, Any]) -> None:
-        credits_reserved = int(job.get("credits_reserved") or 0)
-        if credits_reserved <= 0 or self.account_store.get_session() is None:
-            return
-
-        job_id = str(job["id"])
-        reservation_id = job.get("credit_reservation_id")
-        try:
-            if not reservation_id:
-                reservation = reserve_credits(
-                    self.account_store,
-                    job_id=job_id,
-                    module=str(job["module"]),
-                    units=credits_reserved,
-                    idempotency_key=f"{job_id}:reserve",
-                )
-                reservation_id = reservation.reservation_id
-            release_credits(
-                self.account_store,
-                reservation_id=str(reservation_id),
-                units=credits_reserved,
-                idempotency_key=f"{job_id}:reaper:release",
-            )
-        except DomainError as exc:
-            print(f"[sidecar] failed to release interrupted reservation for {job_id}: {exc.code}", file=sys.stderr)
-        except Exception as exc:  # pragma: no cover - defensive startup path
-            print(f"[sidecar] unexpected interrupted reservation release error for {job_id}: {exc!r}", file=sys.stderr)
-
-    def _retry_start_failed_release(self, job: dict[str, Any]) -> bool:
-        """Re-attempt the release of a reservation whose start failed and never refunded."""
-        job_id = str(job["id"])
-        reservation_id = job.get("credit_reservation_id")
-        credits_reserved = int(job.get("credits_reserved") or 0)
-        if not reservation_id or credits_reserved <= 0 or self.account_store.get_session() is None:
-            return False
-        try:
-            release_credits(
-                self.account_store,
-                reservation_id=str(reservation_id),
-                units=credits_reserved,
-                idempotency_key=f"{job_id}:start_failed:release",
-            )
-        except DomainError as exc:
-            print(f"[sidecar] failed to release start-failed reservation for {job_id}: {exc.code}", file=sys.stderr)
-            return False
-        except Exception as exc:  # pragma: no cover - defensive startup path
-            print(f"[sidecar] unexpected start-failed reservation release error for {job_id}: {exc!r}", file=sys.stderr)
-            return False
-        self.job_store.update_credit_status(
-            job_id,
-            credits_captured=0,
-            credits_refunded=credits_reserved,
-            credit_status="finalized",
-        )
-        return True
-
-    def _retry_finalize_failed(self, job: dict[str, Any]) -> bool:
-        """Re-run credit finalize for a job whose prior finalize raised."""
-        job_id = str(job["id"])
-        if self.account_store.get_session() is None:
-            return False
-        status = self.job_store.get_status(job_id)
-        if status is None:
-            return False
-        result = finalize_job_credits(
-            account_store=self.account_store,
-            job_store=self.job_store,
-            status=status,
-        )
-        return result == "finalized"
 
     def _resume_existing_job(
         self,
@@ -722,28 +381,6 @@ class RpcServer:
                 code="JOB_NOT_RESUMABLE",
                 message=f"Job status '{record['status']}' cannot be resumed.",
             )
-        credit_reservation_id = record.get("credit_reservation_id")
-        credits_reserved = int(record.get("credits_reserved") or 0)
-        if credit_reservation_id and record.get("credit_status") == "finalized":
-            resume_attempt_id = uuid.uuid4().hex
-            credits_reserved = self._estimate_resume_credit_units(record, checkpoint)
-            reservation = reserve_credits(
-                self.account_store,
-                job_id=f"{job_id}:resume:{resume_attempt_id}",
-                module=record["module"],
-                units=credits_reserved,
-                idempotency_key=f"{job_id}:resume:{resume_attempt_id}:reserve",
-            )
-            credit_reservation_id = reservation.reservation_id
-            self.job_store.update_credit_status(
-                job_id,
-                credit_reservation_id=credit_reservation_id,
-                credits_reserved=credits_reserved,
-                credits_captured=0,
-                credits_refunded=0,
-                credit_status="reserved",
-            )
-
         browser_runtime = get_browser_runtime_status()
         if not browser_runtime.installed:
             return self._error(
@@ -758,23 +395,11 @@ class RpcServer:
             module_name=record["module"],
             excel_path=Path(record["source_file"]),
             options=checkpoint.options,
-            credit_reservation_id=credit_reservation_id,
-            credits_reserved=credits_reserved,
         )
         return RpcSuccessResponse(
             id=request_id,
             result={"accepted": True, "job_id": job_id, "status": "running"},
         )
-
-    def _estimate_resume_credit_units(self, record: dict[str, Any], checkpoint: JobCheckpoint) -> int:
-        total = int(record.get("total_records") or 0)
-        processed = max(int(record.get("processed") or 0), checkpoint.processed)
-        if total > processed:
-            return total - processed
-        previous_reserved = int(record.get("credits_reserved") or 0)
-        previous_captured = int(record.get("credits_captured") or 0)
-        previous_refunded = int(record.get("credits_refunded") or 0)
-        return max(previous_reserved - previous_captured - previous_refunded, 1)
 
     def _error(
         self,
@@ -792,17 +417,6 @@ class RpcServer:
                 details=details or {},
             ),
         )
-
-    def _safe_runtime_error_code(self, exc: RuntimeError) -> str:
-        raw = str(exc).strip()
-        if re.fullmatch(r"[A-Z][A-Z0-9_]*", raw):
-            return raw
-        return "RUNTIME_ERROR"
-
-    def _runtime_error_message(self, code: str) -> str:
-        if code == "RUNTIME_ERROR":
-            return "Operation failed."
-        return code
 
 
 def run_stdio_server() -> int:

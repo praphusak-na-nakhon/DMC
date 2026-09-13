@@ -20,14 +20,13 @@ from .errors import DomainError
 
 
 GEMINI_OCR_FLASH_MODEL: Literal["gemini-3.5-flash"] = "gemini-3.5-flash"
-GEMINI_OCR_PRO_MODEL: Literal["gemini-3-pro-preview"] = "gemini-3-pro-preview"
+GEMINI_OCR_PRO_MODEL: Literal["gemini-3.1-pro-preview"] = "gemini-3.1-pro-preview"
 GEMINI_OCR_MODEL: Literal["gemini-3.5-flash"] = GEMINI_OCR_FLASH_MODEL
 GEMINI_OCR_MODELS = {GEMINI_OCR_FLASH_MODEL, GEMINI_OCR_PRO_MODEL}
 GEMINI_OCR_PROCESSING_MODE: Literal["batch"] = "batch"
 GEMINI_OCR_PROCESSING_MODES = {"standard", "batch"}
 GEMINI_OCR_MAX_SOURCE_BYTES = 200 * 1024 * 1024
 GEMINI_OCR_MAX_PAGES = 1000
-GEMINI_OCR_CREDITS_PER_PAGE = 3
 GEMINI_OCR_FILE_PROCESSING_TIMEOUT_SECONDS = 180
 GEMINI_OCR_BATCH_POLL_INTERVAL_SECONDS = 10
 GEMINI_OCR_BATCH_TIMEOUT_SECONDS = 2 * 60 * 60
@@ -35,24 +34,12 @@ GEMINI_OCR_BATCH_PDF_PAGES_PER_REQUEST = 2
 GEMINI_OCR_THINKING_LEVEL: Literal["low", "medium", "high"] | None = None
 GEMINI_OCR_PROMPT_VERSION = "dmc-structured-fields-2026-06-04"
 SUPPORTED_GEMINI_OCR_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
-_LEGACY_MODEL_ALIASES = {
-    "typhoon-ocr": GEMINI_OCR_FLASH_MODEL,
-    "AksonOCR-preview": GEMINI_OCR_FLASH_MODEL,
-    "AksonOCR-handwriting": GEMINI_OCR_FLASH_MODEL,
-    "AksonOCR-1.0": GEMINI_OCR_FLASH_MODEL,
-    "gemini-3.5": GEMINI_OCR_FLASH_MODEL,
-    "gemini 3.5": GEMINI_OCR_FLASH_MODEL,
-    "gemini-3.1-pro-preview": GEMINI_OCR_PRO_MODEL,
-    "gemini 3.1 pro preview": GEMINI_OCR_PRO_MODEL,
-    "gemini-3-pro": GEMINI_OCR_PRO_MODEL,
-}
 
 
 class GeminiOcrDmcFormRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source_path: str
-    api_key: str | None = None
     model: str = GEMINI_OCR_MODEL
     processing_mode: str = GEMINI_OCR_PROCESSING_MODE
     force_refresh: bool = False
@@ -85,10 +72,6 @@ class GeminiOcrDmcFormResponse(BaseModel):
     cached: bool
     pages_processed: int
     pages_estimated: int
-    credits_per_page: int = GEMINI_OCR_CREDITS_PER_PAGE
-    credits_charged: int = 0
-    charged: bool = False
-    credit_reservation_id: str | None = None
     average_confidence: float | None
     usage_metadata: GeminiOcrUsageMetadata | None = None
     batch_job_name: str | None = None
@@ -154,12 +137,12 @@ def prepare_gemini_ocr_request(request: GeminiOcrDmcFormRequest) -> GeminiOcrPre
     )
 
 
-def ocr_dmc_form_with_gemini(request: GeminiOcrDmcFormRequest) -> GeminiOcrDmcFormResponse:
+def ocr_dmc_form_with_gemini(request: GeminiOcrDmcFormRequest, *, api_key: str) -> GeminiOcrDmcFormResponse:
+    api_key = _validated_api_key(api_key)
     prepared = prepare_gemini_ocr_request(request)
     if prepared.cached_response is not None:
         return prepared.cached_response
 
-    api_key = _resolved_api_key(request.api_key)
     model = _validated_model(request.model)
     processing_mode = _validated_processing_mode(request.processing_mode)
     batch_job_name: str | None = None
@@ -236,7 +219,6 @@ def ocr_dmc_form_with_gemini(request: GeminiOcrDmcFormRequest) -> GeminiOcrDmcFo
 
 def _validated_model(model: str) -> str:
     normalized = (model or "").strip() or GEMINI_OCR_MODEL
-    normalized = _LEGACY_MODEL_ALIASES.get(normalized, normalized)
     if normalized not in GEMINI_OCR_MODELS:
         raise DomainError("GEMINIOCR_MODEL_UNSUPPORTED", f"Unsupported Gemini OCR model: {model}")
     return normalized
@@ -291,12 +273,12 @@ def _regex_pdf_page_count(path: Path) -> int:
     return len(re.findall(rb"/Type\s*/Page\b", path.read_bytes()))
 
 
-def _resolved_api_key(api_key: str | None) -> str:
-    value = (api_key or os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY") or "").strip()
+def _validated_api_key(api_key: str) -> str:
+    value = api_key.strip()
     if not value:
         raise DomainError(
             "GEMINIOCR_API_KEY_REQUIRED",
-            "Gemini API key is required. Enter one in the app or set GOOGLE_API_KEY or GEMINI_API_KEY.",
+            "Gemini API key is required.",
         )
     return value
 

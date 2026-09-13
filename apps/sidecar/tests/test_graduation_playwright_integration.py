@@ -5,7 +5,6 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -14,7 +13,6 @@ import pytest
 from playwright.sync_api import sync_playwright
 
 from dmc_sidecar import config as sidecar_config
-from dmc_sidecar.account_store import AccountSessionStore
 from dmc_sidecar.job_store import JobStore
 from dmc_sidecar.modules import graduation as graduation_module
 from dmc_sidecar.modules import graduation_legacy as legacy
@@ -213,20 +211,14 @@ def test_graduation_job_runs_against_mock_obec_portal(
     monkeypatch.setattr(legacy, "LEVEL_RULES", legacy.LEVEL_RULES.copy())
     monkeypatch.setattr(legacy, "STATUS_CODE_MAP", legacy.STATUS_CODE_MAP.copy())
     monkeypatch.setattr(legacy.pd, "read_excel", lambda *args, **kwargs: source_rows)
+    bundled_payload = graduation_module.load_bundled_module_config("graduation")
+    bundled_payload["login_url"] = f"{base_url}/obec68/auth/login"
+    bundled_payload["target_url_template"] = f"{base_url}/obec68/studentpendingupl/add?levelDtlCode={{level_code}}&action=search"
     monkeypatch.setattr(
         graduation_module,
-        "sync_module_config",
-            lambda module: SimpleNamespace(
-                config={
-                    "login_url": f"{base_url}/obec68/auth/login",
-                    "target_url_template": f"{base_url}/obec68/studentpendingupl/add?levelDtlCode={{level_code}}&action=search",
-                    "level_rules": legacy.LEVEL_RULES,
-                    "status_code_map": legacy.STATUS_CODE_MAP,
-                },
-                signature_verified=True,
-                last_error=None,
-            ),
-        )
+        "load_bundled_module_config",
+        lambda module: bundled_payload,
+    )
 
     job_store = JobStore()
     job_store.create_pending_job(job_id, "graduation", str(tmp_path / "source.xlsx"))
@@ -236,7 +228,6 @@ def test_graduation_job_runs_against_mock_obec_portal(
         emit_event=events.append,
         control=JobControl(),
         job_store=job_store,
-        account_store=AccountSessionStore(),
         snapshot=JobSnapshot(job_id=job_id, module="graduation", status="pending"),
     )
 

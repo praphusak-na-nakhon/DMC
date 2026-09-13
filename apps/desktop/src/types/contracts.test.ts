@@ -1,5 +1,40 @@
 import { describe, expect, it } from "vitest";
-import { parseJobStatusSnapshot, parseGeminiOcrDmcFormResponse } from "./contracts";
+import {
+  parseAiConnectionTest,
+  parseAiSettings,
+  parseDatabaseStatus,
+  parseExportStudentBasicInfoFormResponse,
+  parseJobStatusSnapshot,
+  parseStartJobResponse,
+  parseOcrDocumentResponse,
+} from "./contracts";
+
+describe("retained StudentBasicInfo contract", () => {
+  it("parses nonempty exported class summaries", () => {
+    const result = parseExportStudentBasicInfoFormResponse({
+      module: "studentBasicInfo", source_path: "students.xlsx", output_path: "output.xlsx",
+      school_name: null, school_year: null, term: null, rows_total: 2, students_exported: 2,
+      classes_exported: 1, classes: [{ level: "ม.3", room: "1", sheet_name: "ม.3-1", students: 2 }],
+    });
+    expect(result.classes).toEqual([{ level: "ม.3", room: "1", sheet_name: "ม.3-1", students: 2 }]);
+  });
+});
+
+describe("database status contract", () => {
+  it("parses generation two metadata from the sidecar", () => {
+    expect(parseDatabaseStatus({
+      path: "C:/local/desktop.sqlite3",
+      schema_generation: 2,
+      tables: ["job", "job_record", "schema_metadata"],
+      job_columns: ["id", "status", "checkpoint_json"],
+    })).toEqual({
+      path: "C:/local/desktop.sqlite3",
+      schema_generation: 2,
+      tables: ["job", "job_record", "schema_metadata"],
+      job_columns: ["id", "status", "checkpoint_json"],
+    });
+  });
+});
 
 const baseJob = {
   job_id: "job-empty-summary",
@@ -21,14 +56,12 @@ const baseJob = {
   level_label: null,
   summary_report_path: null,
   completion_summary: null,
-  credit_reservation_id: null,
-  credits_reserved: 0,
-  credits_captured: 0,
-  credits_refunded: 0,
-  credit_status: null,
 };
 
 describe("job status contracts", () => {
+  it("accepts a local job start without a credit reservation", () => {
+    expect(parseStartJobResponse({ accepted: true, job_id: "local" })).toEqual({ accepted: true, job_id: "local" });
+  });
   it("treats an empty legacy run summary as absent", () => {
     const parsed = parseJobStatusSnapshot({
       ...baseJob,
@@ -102,12 +135,76 @@ describe("job status contracts", () => {
   });
 });
 
-describe("Gemini contracts", () => {
-  it("parses the generated structured OCR response with usage metadata", () => {
-    const parsed = parseGeminiOcrDmcFormResponse({
+describe("AI contracts", () => {
+  it("parses AI settings without accepting a secret field", () => {
+    expect(parseAiSettings({ provider: "gemini", configured: true })).toEqual({
+      provider: "gemini",
+      configured: true,
+    });
+
+    let error: unknown;
+    try {
+      parseAiSettings({ provider: "gemini", configured: true, api_key: "secret-value" });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).not.toContain("secret-value");
+  });
+
+  it("parses provider-neutral connection and OCR response metadata", () => {
+    expect(
+      parseAiConnectionTest({
+        provider: "gemini",
+        ok: true,
+        tested_at: "2026-09-04T00:00:00+00:00",
+        message: "Connection succeeded.",
+      }),
+    ).toEqual({
+      provider: "gemini",
+      ok: true,
+      tested_at: "2026-09-04T00:00:00+00:00",
+      message: "Connection succeeded.",
+    });
+
+    expect(
+      parseOcrDocumentResponse({
+        module: "formConverter",
+        provider: "gemini",
+        model: "gemini-3.5-flash",
+        processing_mode: "batch",
+        source_path: "C:\\dmc\\source.pdf",
+        markdown_path: "C:\\dmc\\output.md",
+        structured_json_path: null,
+        output_format: "structured_json",
+        cached: true,
+        pages_processed: 2,
+        pages_estimated: 3,
+        average_confidence: null,
+        usage_metadata: { total_token_count: 2000 },
+        provider_job_id: "batches/test",
+        provider_job_state: "JOB_STATE_SUCCEEDED",
+        file_sha256: "abc123",
+        created_at: "2026-09-04T00:00:00+00:00",
+      }),
+    ).toMatchObject({
+      provider: "gemini",
+      processing_mode: "batch",
+      pages_processed: 2,
+      pages_estimated: 3,
+      usage_metadata: { total_token_count: 2000 },
+      provider_job_id: "batches/test",
+    });
+  });
+});
+
+describe("OCR metadata contracts", () => {
+  it.each(["gemini-3.5-flash", "gemini-3.1-pro-preview"])("parses %s metadata and rejects the retired Pro model", (model) => {
+    const parsed = parseOcrDocumentResponse({
       module: "formConverter",
-      engine: "gemini",
-      model: "gemini-3.5-flash",
+      provider: "gemini",
+      model,
       processing_mode: "batch",
       source_path: "C:\\dmc\\uploadTest\\dmc-form.pdf",
       markdown_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\dmc-form.json",
@@ -116,10 +213,6 @@ describe("Gemini contracts", () => {
       cached: false,
       pages_processed: 2,
       pages_estimated: 2,
-      credits_per_page: 3,
-      credits_charged: 6,
-      charged: true,
-      credit_reservation_id: "reservation-1",
       average_confidence: null,
       usage_metadata: {
         prompt_token_count: 1300,
@@ -129,25 +222,24 @@ describe("Gemini contracts", () => {
         output_tokens_per_page: 350,
         total_tokens_per_page: 1000,
       },
-      batch_job_name: "batches/test",
-      batch_state: "JOB_STATE_SUCCEEDED",
+      provider_job_id: "batches/test",
+      provider_job_state: "JOB_STATE_SUCCEEDED",
       file_sha256: "abc123",
       created_at: "2026-05-11T00:00:00+00:00",
     });
 
     expect(parsed).toMatchObject({
-      engine: "gemini",
-      model: "gemini-3.5-flash",
+      provider: "gemini",
+      model,
       processing_mode: "batch",
       pages_processed: 2,
       structured_json_path: "C:\\dmc\\.dmc-assistant-data\\ocr\\gemini\\dmc-form.json",
-      credits_charged: 6,
-      charged: true,
       average_confidence: null,
-      batch_job_name: "batches/test",
-      batch_state: "JOB_STATE_SUCCEEDED",
+      provider_job_id: "batches/test",
+      provider_job_state: "JOB_STATE_SUCCEEDED",
     });
     expect(parsed.usage_metadata?.total_token_count).toBe(2000);
     expect(parsed.usage_metadata?.total_tokens_per_page).toBe(1000);
+    expect(() => parseOcrDocumentResponse({ ...parsed, model: "gemini-3-pro-preview" })).toThrow(".model is unsupported");
   });
 });

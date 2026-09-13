@@ -1,12 +1,8 @@
 import type { CSSProperties } from "react";
 import type {
-  AccountStatus,
-  AvailableUpdate,
   BrowserRuntimeStatus,
   DatabaseStatus,
   JobStatusSnapshot,
-  ModuleConfigStatus,
-  UpdaterStatus,
 } from "../types/contracts";
 
 export function formatSummary(template: string, accepted: number, total: number): string {
@@ -98,79 +94,6 @@ export function isActiveJobStatus(status: string | null | undefined): boolean {
   return status === "running" || status === "pending" || status === "paused" || status === "stopped_on_review";
 }
 
-export function describeCreditStatus(status: string | null | undefined): {
-  tone: "info" | "warning" | "danger" | "success";
-  title: string;
-  message: string;
-} | null {
-  if (!status) {
-    return null;
-  }
-  if (status === "reserving") {
-    return {
-      tone: "info",
-      title: "กำลังกันเครดิต",
-      message: "ระบบกำลังติดต่อ cloud เพื่อกันเครดิตก่อนเริ่มงานจริง กรุณารอสักครู่",
-    };
-  }
-  if (status === "reserved") {
-    return {
-      tone: "success",
-      title: "กันเครดิตแล้ว",
-      message: "ระบบกันเครดิตสำหรับงานนี้เรียบร้อย และจะคืนเครดิตส่วนที่ไม่ได้ใช้หลังจบงาน",
-    };
-  }
-  if (status === "finalized") {
-    return {
-      tone: "success",
-      title: "สรุปเครดิตแล้ว",
-      message: "ระบบตัดเครดิตที่ใช้จริงและคืนเครดิตที่เหลือเรียบร้อย",
-    };
-  }
-  if (status.startsWith("start_failed:")) {
-    const code = status.slice("start_failed:".length);
-    if (code === "INSUFFICIENT_CREDITS") {
-      return {
-        tone: "danger",
-        title: "เครดิตไม่พอ",
-        message: "ระบบกันเครดิตไม่สำเร็จเพราะเครดิตไม่พอ กรุณาเติมเครดิตแล้วลองเริ่มงานอีกครั้ง",
-      };
-    }
-    if (code === "ACCOUNT_CLOUD_UNAVAILABLE") {
-      return {
-        tone: "danger",
-        title: "เชื่อมต่อ cloud ไม่ได้",
-        message: "ระบบยังกันเครดิตไม่ได้เพราะติดต่อ cloud ไม่สำเร็จ กรุณาตรวจอินเทอร์เน็ตแล้วลองใหม่",
-      };
-    }
-    return {
-      tone: "danger",
-      title: "เริ่มงานไม่สำเร็จ",
-      message: `ระบบกันเครดิตหรือเตรียมงานไม่สำเร็จ (${code}) กรุณาลองใหม่หรือติดต่อผู้ดูแล`,
-    };
-  }
-  if (status.startsWith("finalize_failed:")) {
-    const code = status.slice("finalize_failed:".length);
-    if (code === "ACCOUNT_CLOUD_UNAVAILABLE" || code === "SIGN_IN_REQUIRED") {
-      return {
-        tone: "warning",
-        title: "ยังสรุปเครดิตไม่เสร็จ",
-        message: "งานเสร็จแล้วแต่ติดต่อ cloud ไม่ได้เพื่อตัดเครดิต ระบบจะลองสรุปเครดิตใหม่ในครั้งถัดไปที่เปิดโปรแกรม",
-      };
-    }
-    return {
-      tone: "warning",
-      title: "สรุปเครดิตไม่สำเร็จ",
-      message: `งานเสร็จแล้วแต่ตัดเครดิตค้างอยู่ (${code}) ระบบจะลองใหม่ในครั้งถัดไปที่เปิดโปรแกรม`,
-    };
-  }
-  return {
-    tone: "warning",
-    title: "สถานะเครดิต",
-    message: status,
-  };
-}
-
 export const cardStyle: CSSProperties = {
   border: "1px solid rgb(226, 232, 240)",
   borderRadius: "16px",
@@ -221,11 +144,6 @@ export function buildDraftJob(
     run_summary: null,
     summary_report_path: null,
     completion_summary: null,
-    credit_reservation_id: null,
-    credits_reserved: 0,
-    credits_captured: 0,
-    credits_refunded: 0,
-    credit_status: null,
   };
 }
 
@@ -234,11 +152,7 @@ type DiagnosticsInput = {
   platform: string;
   connectionState: string;
   databaseStatus: DatabaseStatus | null;
-  accountStatus: AccountStatus | null;
-  moduleConfigStatus: ModuleConfigStatus | null;
   browserRuntimeStatus: BrowserRuntimeStatus | null;
-  updaterStatus: UpdaterStatus | null;
-  availableUpdate: AvailableUpdate | null;
   currentJob: JobStatusSnapshot | null;
   existingJobs: JobStatusSnapshot[];
   sidecarMessageCount: number;
@@ -275,34 +189,6 @@ function sanitizeJobForDiagnostics(job: JobStatusSnapshot | null): Record<string
           failed: job.completion_summary.failed,
         }
       : null,
-    credits_reserved: job.credits_reserved,
-    credits_captured: job.credits_captured,
-    credits_refunded: job.credits_refunded,
-    credit_status: job.credit_status,
-  };
-}
-
-function sanitizeAccountForDiagnostics(status: AccountStatus | null): Record<string, unknown> | null {
-  if (!status) {
-    return null;
-  }
-  return {
-    signed_in: status.signed_in,
-    user_id: status.user_id,
-    status: status.status,
-    token_expires_at: status.token_expires_at,
-    last_checked_at: status.last_checked_at,
-    wallet: status.wallet
-      ? {
-          balance: status.wallet.balance,
-          reserved: status.wallet.reserved,
-          available: status.wallet.available,
-        }
-      : null,
-    can_start_credit_jobs: status.can_start_credit_jobs,
-    needs_attention: status.needs_attention,
-    message: status.message,
-    last_error: status.last_error,
   };
 }
 
@@ -313,11 +199,7 @@ export function buildSupportDiagnostics(input: DiagnosticsInput): Record<string,
     platform: input.platform,
     connection_state: input.connectionState,
     database_status: input.databaseStatus,
-    account_status: sanitizeAccountForDiagnostics(input.accountStatus),
-    module_config_status: input.moduleConfigStatus,
     browser_runtime_status: input.browserRuntimeStatus,
-    updater_status: input.updaterStatus,
-    available_update: input.availableUpdate,
     current_job: sanitizeJobForDiagnostics(input.currentJob),
     existing_jobs: input.existingJobs.map(sanitizeJobForDiagnostics),
     sidecar_message_count: input.sidecarMessageCount,

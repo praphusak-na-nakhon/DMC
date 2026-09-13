@@ -17,25 +17,20 @@
     "desktop:web": "corepack pnpm --dir apps/desktop dev",
     "desktop:build": "corepack pnpm --dir apps/desktop build",
     "desktop:test": "corepack pnpm --dir apps/desktop test",
-    "desktop:prepare-release-config": ".\\.venv\\Scripts\\python .\\scripts\\write_release_config.py --environment development",
-    "desktop:package": "corepack pnpm run desktop:prepare-release-config && corepack pnpm run sidecar:bundle && corepack pnpm --dir apps/desktop exec tauri build --config src-tauri/tauri.package.conf.json",
+    "desktop:package": "corepack pnpm run sidecar:bundle && corepack pnpm --dir apps/desktop exec tauri build --config src-tauri/tauri.package.conf.json",
     "desktop:typecheck": "corepack pnpm --dir apps/desktop exec tsc --noEmit -p tsconfig.json",
     "desktop:cargo-check": "cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml",
+    "desktop:cargo-test": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml",
     "sidecar:bundle": "powershell -ExecutionPolicy Bypass -File .\\apps\\sidecar\\scripts\\build_windows_bundle.ps1",
     "sidecar:backup": ".\\.venv\\Scripts\\python .\\apps\\sidecar\\scripts\\backup_state.py",
     "sidecar:restore": ".\\.venv\\Scripts\\python .\\apps\\sidecar\\scripts\\restore_state.py",
     "smoke:local": ".\\.venv\\Scripts\\python .\\scripts\\smoke_local.py",
-    "release:manifest": ".\\.venv\\Scripts\\python .\\scripts\\create_release_manifest.py",
     "release:check": ".\\.venv\\Scripts\\python .\\scripts\\check_release_readiness.py",
     "form-converter:check": ".\\.venv\\Scripts\\python .\\scripts\\check_form_converter_readiness.py",
     "form-converter:field-test": ".\\.venv\\Scripts\\python .\\scripts\\form_converter_field_test.py",
     "release:sign-msi": "powershell -ExecutionPolicy Bypass -File .\\scripts\\sign_windows_artifacts.ps1",
     "sidecar:test": ".\\.venv\\Scripts\\python -m pytest apps/sidecar/tests",
     "sidecar:typecheck": ".\\.venv\\Scripts\\python -m mypy --strict apps/sidecar/dmc_sidecar",
-    "cloud:dev": ".\\.venv\\Scripts\\python -m uvicorn apps.cloud.app.main:app --reload",
-    "cloud:backup": ".\\.venv\\Scripts\\python .\\apps\\cloud\\scripts\\backup_state.py",
-    "cloud:restore": ".\\.venv\\Scripts\\python .\\apps\\cloud\\scripts\\restore_state.py",
-    "cloud:test": ".\\.venv\\Scripts\\python -m pytest apps/cloud/tests",
-    "ci:verify": "corepack pnpm run desktop:typecheck && corepack pnpm run desktop:test && corepack pnpm run desktop:build && corepack pnpm run desktop:cargo-check && corepack pnpm run sidecar:typecheck && corepack pnpm run sidecar:test && corepack pnpm run cloud:test && corepack pnpm run release:check && corepack pnpm run form-converter:check"
+    "ci:verify": "corepack pnpm run desktop:typecheck && corepack pnpm run desktop:test && corepack pnpm run desktop:build && corepack pnpm run desktop:cargo-check && corepack pnpm run desktop:cargo-test && corepack pnpm run sidecar:typecheck && corepack pnpm run sidecar:test && corepack pnpm run release:check && corepack pnpm run form-converter:check"
   }
 }

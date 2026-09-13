@@ -1,8 +1,6 @@
 import { create } from "zustand";
 import type {
-  AccountStatus,
   JobStatusSnapshot,
-  ModuleConfigStatus,
   SidecarEvent,
   ValidateExcelResponse,
 } from "../types/contracts";
@@ -10,8 +8,6 @@ import type {
 type JobStoreState = {
   preview: ValidateExcelResponse | null;
   currentJob: JobStatusSnapshot | null;
-  accountStatus: AccountStatus | null;
-  moduleConfigStatus: ModuleConfigStatus | null;
   existingJobs: JobStatusSnapshot[];
   excelPath: string;
   connectionState: "idle" | "connecting" | "ready" | "error";
@@ -23,8 +19,6 @@ type JobStoreState = {
   setExcelPath: (excelPath: string) => void;
   setPreview: (preview: ValidateExcelResponse | null) => void;
   setCurrentJob: (job: JobStatusSnapshot | null) => void;
-  setAccountStatus: (status: AccountStatus | null) => void;
-  setModuleConfigStatus: (status: ModuleConfigStatus | null) => void;
   setExistingJobs: (jobs: JobStatusSnapshot[]) => void;
   upsertExistingJob: (job: JobStatusSnapshot) => void;
   setConnectionState: (state: JobStoreState["connectionState"]) => void;
@@ -52,7 +46,7 @@ function mergeJob(
     failed: partial.failed ?? base?.failed ?? 0,
     current_page: partial.current_page ?? base?.current_page ?? null,
     needs_auth: partial.needs_auth ?? base?.needs_auth ?? false,
-    auth_reason: partial.auth_reason ?? base?.auth_reason ?? null,
+    auth_reason: partial.auth_reason !== undefined ? partial.auth_reason : base?.auth_reason ?? null,
     report_path: partial.report_path ?? base?.report_path ?? null,
     review_report_path: partial.review_report_path ?? base?.review_report_path ?? null,
     stopped_item: partial.stopped_item ?? base?.stopped_item ?? null,
@@ -62,11 +56,6 @@ function mergeJob(
     run_summary: partial.run_summary ?? base?.run_summary ?? null,
     summary_report_path: partial.summary_report_path ?? base?.summary_report_path ?? null,
     completion_summary: partial.completion_summary ?? base?.completion_summary ?? null,
-    credit_reservation_id: partial.credit_reservation_id ?? base?.credit_reservation_id ?? null,
-    credits_reserved: partial.credits_reserved ?? base?.credits_reserved ?? 0,
-    credits_captured: partial.credits_captured ?? base?.credits_captured ?? 0,
-    credits_refunded: partial.credits_refunded ?? base?.credits_refunded ?? 0,
-    credit_status: partial.credit_status ?? base?.credit_status ?? null,
   };
 }
 
@@ -77,8 +66,6 @@ function upsertJobList(existingJobs: JobStatusSnapshot[], nextJob: JobStatusSnap
 export const useJobStore = create<JobStoreState>((set) => ({
   preview: null,
   currentJob: null,
-  accountStatus: null,
-  moduleConfigStatus: null,
   existingJobs: [],
   excelPath: "",
   connectionState: "idle",
@@ -90,8 +77,6 @@ export const useJobStore = create<JobStoreState>((set) => ({
   setExcelPath: (excelPath) => set({ excelPath }),
   setPreview: (preview) => set({ preview }),
   setCurrentJob: (currentJob) => set({ currentJob }),
-  setAccountStatus: (accountStatus) => set({ accountStatus }),
-  setModuleConfigStatus: (moduleConfigStatus) => set({ moduleConfigStatus }),
   setExistingJobs: (existingJobs) => set({ existingJobs }),
   upsertExistingJob: (job) =>
     set((state) => ({
@@ -200,10 +185,6 @@ export const useJobStore = create<JobStoreState>((set) => ({
             ? mergeJob(state.currentJob, {
                 job_id: event.job_id,
                 status: "failed",
-                credit_status:
-                  state.currentJob.credit_status === "reserving"
-                    ? `start_failed:${event.code}`
-                    : state.currentJob.credit_status,
               })
             : null;
         return {
@@ -258,8 +239,6 @@ export const useJobStore = create<JobStoreState>((set) => ({
     set({
       preview: null,
       currentJob: null,
-      accountStatus: null,
-      moduleConfigStatus: null,
       existingJobs: [],
       excelPath: "",
       connectionState: "idle",

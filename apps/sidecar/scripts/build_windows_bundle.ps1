@@ -20,7 +20,13 @@ if (!(Test-Path $venvPython)) {
 }
 
 if (Test-Path $pyInstallerExe) {
+    # Probe PyInstaller presence. Relax error handling for the probe so a
+    # deprecation warning on stderr (e.g. "running PyInstaller as admin") is
+    # not treated as a terminating error under $ErrorActionPreference=Stop.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     & $pyInstallerExe --version *> $null
+    $ErrorActionPreference = $previousPreference
 } else {
     & $venvPython -m PyInstaller --version *> $null
 }
@@ -52,10 +58,11 @@ if (Test-Path $pyInstallerExe) {
         --specpath $sidecarBuild `
         --hidden-import playwright.sync_api `
         --hidden-import dmc_sidecar.gemini_ocr `
-        --hidden-import dmc_sidecar.akson_ocr `
-        --hidden-import dmc_sidecar.typhoon_ocr `
+        --hidden-import dmc_sidecar.ai.gemini `
+        --hidden-import keyring.backends.Windows `
         --hidden-import google.genai `
         --hidden-import google.genai.types `
+        --collect-all keyring `
         --collect-data playwright `
         --paths $sidecarRoot `
         $sidecarEntry
@@ -70,10 +77,11 @@ if (Test-Path $pyInstallerExe) {
         --specpath $sidecarBuild `
         --hidden-import playwright.sync_api `
         --hidden-import dmc_sidecar.gemini_ocr `
-        --hidden-import dmc_sidecar.akson_ocr `
-        --hidden-import dmc_sidecar.typhoon_ocr `
+        --hidden-import dmc_sidecar.ai.gemini `
+        --hidden-import keyring.backends.Windows `
         --hidden-import google.genai `
         --hidden-import google.genai.types `
+        --collect-all keyring `
         --collect-data playwright `
         --paths $sidecarRoot `
         $sidecarEntry
@@ -90,9 +98,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $resourceRoot "templates") 
 
 Copy-Item -LiteralPath (Join-Path $sidecarDist "dmc-sidecar.exe") -Destination $bundleExe -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "packages\\module-configs") -Destination (Join-Path $resourceRoot "module-configs") -Recurse -Force
-Copy-Item -LiteralPath (Join-Path $repoRoot "packages\\shared-schemas\\config-signing") -Destination (Join-Path $resourceRoot "shared-schemas\\config-signing") -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "student_basic_info_form.xlsx") -Destination (Join-Path $resourceRoot "templates\\student_basic_info_form.xlsx") -Force
-Copy-Item -LiteralPath (Join-Path $repoRoot "P-SAR-form.docx") -Destination (Join-Path $resourceRoot "templates\\P-SAR-form.docx") -Force
 
 $gitSha = ""
 try {

@@ -9,6 +9,9 @@ from typing import Any
 import pytest
 from pypdf import PdfWriter
 
+from ai_fakes import InMemorySecretStore
+from dmc_sidecar.ai.base import OcrDocumentRequest
+from dmc_sidecar.ai.gemini import GeminiProvider
 from dmc_sidecar import config
 from dmc_sidecar.errors import DomainError
 from dmc_sidecar.gemini_ocr import (
@@ -101,9 +104,11 @@ def test_structured_ocr_prompt_requests_all_travel_distance_fields() -> None:
     assert '"distance_paved_road_km"' in prompt
 
 
+@pytest.mark.parametrize("model", ["gemini-3.5-flash", "gemini-3.1-pro-preview"])
 def test_gemini_upload_uses_files_api_and_generate_content(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    model: str,
 ) -> None:
     source_path = tmp_path / "form.pdf"
     source_path.write_bytes(_pdf_with_pages(1))
@@ -155,14 +160,14 @@ def test_gemini_upload_uses_files_api_and_generate_content(
     payload, usage = _generate_structured_json_with_gemini(
         source_path,
         api_key="secret",
-        model=GEMINI_OCR_MODEL,
+        model=model,
         pages_estimated=2,
     )
 
     assert captured["api_key"] == "secret"
     assert captured["upload_file"] == str(source_path)
     assert captured["upload_config"] == {"mime_type": "application/pdf"}
-    assert captured["model"] == "gemini-3.5-flash"
+    assert captured["model"] == model
     assert captured["contents"][0].name == "files/form"
     assert "compact JSON" in captured["contents"][1]
     assert captured["config"].kwargs == {
@@ -177,10 +182,13 @@ def test_gemini_upload_uses_files_api_and_generate_content(
     assert usage.total_tokens_per_page == 800
 
 
-def test_gemini_batch_uses_jsonl_input_file_and_downloads_result(
+@pytest.mark.parametrize("model", ["gemini-3.5-flash", "gemini-3.1-pro-preview"])
+def test_provider_actual_batch_engine_preserves_metadata_and_uses_cache(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    model: str,
 ) -> None:
+    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path / "data")
     source_path = tmp_path / "form.pdf"
     source_path.write_bytes(_pdf_with_pages(1))
     captured: dict[str, Any] = {}
@@ -245,20 +253,44 @@ def test_gemini_batch_uses_jsonl_input_file_and_downloads_result(
     monkeypatch.setattr("dmc_sidecar.gemini_ocr._load_google_genai", lambda: (fake_genai, FakeTypes))
     monkeypatch.setattr("dmc_sidecar.gemini_ocr.time.sleep", lambda _: None)
 
-    payload, usage, batch_job_name, batch_state = _generate_structured_json_with_gemini_batch(
-        source_path,
-        api_key="secret",
-        model="gemini-3.5-flash",
-        pages_estimated=1,
-    )
+    store = InMemorySecretStore()
+    store.set("gemini", "secret")
+    provider = GeminiProvider(store)
+    request = OcrDocumentRequest(provider="gemini", source_path=str(source_path), model=model, processing_mode="batch")
+    response = provider.ocr_document(request)
+    cached = provider.ocr_document(request)
+    payload = json.loads(Path(response.markdown_path).read_text(encoding="utf-8"))
+    usage = response.usage_metadata
+    assert response.cached is False
+    assert response.model == payload["model"] == model
+    assert cached.cached is True
+    assert cached.model_dump(exclude={"cached"}) == response.model_dump(exclude={"cached"})
+    assert response.pages_processed == response.pages_estimated == 1
+    assert response.average_confidence is None
+    assert response.structured_json_path == response.markdown_path
+    assert payload["schema_version"] == "dmc_assistant_structured_ocr.v1"
+    assert response.output_format == "structured_json"
+    assert response.provider_job_id == "batches/ocr-1"
+    assert response.provider_job_state == "JOB_STATE_SUCCEEDED"
+    forbidden = {"api_key", "credits_per_page", "credits_charged", "charged", "credit_reservation_id"}
+    assert not forbidden.intersection(response.model_dump())
+    assert "secret" not in response.model_dump_json()
+    for cache_file in (tmp_path / "data").rglob("*.json"):
+        contents = cache_file.read_text(encoding="utf-8")
+        assert "secret" not in contents
+        assert not forbidden.intersection(json.loads(contents))
+    store.delete("gemini")
+    with pytest.raises(DomainError, match="AI_API_KEY_REQUIRED"):
+        provider.ocr_document(request)
 
     assert captured["api_key"] == "secret"
     uploads = captured["uploads"]
     assert isinstance(uploads, list)
+    assert len(uploads) == 2
     assert uploads[0] == (str(source_path), {"mime_type": "application/pdf"})
     assert isinstance(uploads[1][1], FakeUploadFileConfig)
     assert uploads[1][1].mime_type == "jsonl"
-    assert captured["model"] == "gemini-3.5-flash"
+    assert captured["model"] == model
     assert captured["src"] == "files/batch-input"
     jsonl_request = json.loads(str(captured["jsonl_request"]).strip())
     assert jsonl_request["key"] == "dmc-ocr-pages-0001-0001"
@@ -271,8 +303,6 @@ def test_gemini_batch_uses_jsonl_input_file_and_downloads_result(
     assert captured["download_file"] == "files/batch-result"
     assert captured["deleted_names"] == ["files/form", "files/batch-input", "files/batch-result"]
     assert captured["closed"] is True
-    assert batch_job_name == "batches/ocr-1"
-    assert batch_state == "JOB_STATE_SUCCEEDED"
     assert payload["records"][0]["fields"]["citizen_id"] == "1810800164491"
     assert usage is not None
     assert usage.total_token_count == 1300
@@ -488,13 +518,14 @@ def test_ocr_dmc_form_with_gemini_writes_structured_json_and_uses_cache(
     response = ocr_dmc_form_with_gemini(
         GeminiOcrDmcFormRequest(
             source_path=str(source_path),
-            api_key="secret",
             model="gemini-3.5-flash",
             processing_mode="standard",
-        )
+        ),
+        api_key="secret",
     )
 
     output_path = Path(response.markdown_path)
+    assert not {"api_key", "credits_per_page", "credits_charged", "charged", "credit_reservation_id"}.intersection(response.model_dump())
     assert response.engine == "gemini"
     assert response.processing_mode == "standard"
     assert response.output_format == "structured_json"
@@ -502,9 +533,6 @@ def test_ocr_dmc_form_with_gemini_writes_structured_json_and_uses_cache(
     assert response.cached is False
     assert response.pages_processed == 2
     assert response.pages_estimated == 2
-    assert response.credits_per_page == 3
-    assert response.credits_charged == 0
-    assert response.charged is False
     assert response.average_confidence is None
     assert response.usage_metadata is not None
     assert response.usage_metadata.total_token_count == 1890
@@ -517,12 +545,12 @@ def test_ocr_dmc_form_with_gemini_writes_structured_json_and_uses_cache(
     assert payload["records"][0]["fields"]["student_no"] == "1069"
 
     cached_response = ocr_dmc_form_with_gemini(
-        GeminiOcrDmcFormRequest(source_path=str(source_path), model="gemini-3.5-flash", processing_mode="standard")
+        GeminiOcrDmcFormRequest(source_path=str(source_path), model="gemini-3.5-flash", processing_mode="standard"),
+        api_key="secret",
     )
 
     assert cached_response.cached is True
     assert cached_response.markdown_path == response.markdown_path
-    assert cached_response.credits_charged == 0
     assert cached_response.usage_metadata is not None
     assert cached_response.usage_metadata.total_token_count == 1890
     assert calls == [source_path]
@@ -544,7 +572,7 @@ def test_ocr_dmc_form_with_gemini_adds_metadata_when_model_omits_schema(
     )
 
     response = ocr_dmc_form_with_gemini(
-        GeminiOcrDmcFormRequest(source_path=str(source_path), api_key="secret", processing_mode="standard")
+        GeminiOcrDmcFormRequest(source_path=str(source_path), processing_mode="standard"), api_key="secret"
     )
 
     payload = json.loads(Path(response.markdown_path).read_text(encoding="utf-8"))
@@ -553,18 +581,18 @@ def test_ocr_dmc_form_with_gemini_adds_metadata_when_model_omits_schema(
     assert response.pages_processed == 1
 
 
-def test_ocr_dmc_form_with_gemini_requires_api_key_when_not_cached(
+def test_ocr_dmc_form_with_gemini_rejects_empty_key_without_ambient_fallback(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path / "data")
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "ambient-secret")
+    monkeypatch.setenv("GOOGLE_API_KEY", "ambient-secret")
     source_path = tmp_path / "form.pdf"
     source_path.write_bytes(_pdf_with_pages(1))
 
     with pytest.raises(DomainError) as exc_info:
-        ocr_dmc_form_with_gemini(GeminiOcrDmcFormRequest(source_path=str(source_path)))
+        ocr_dmc_form_with_gemini(GeminiOcrDmcFormRequest(source_path=str(source_path)), api_key="")
     assert exc_info.value.code == "GEMINIOCR_API_KEY_REQUIRED"
 
 
@@ -577,41 +605,45 @@ def test_ocr_dmc_form_with_gemini_rejects_pdf_when_page_count_is_unknown(
     source_path.write_bytes(b"%PDF-1.7\ncompressed or unsupported page tree\n%%EOF")
 
     with pytest.raises(DomainError) as exc_info:
-        ocr_dmc_form_with_gemini(GeminiOcrDmcFormRequest(source_path=str(source_path), api_key="secret"))
+        ocr_dmc_form_with_gemini(GeminiOcrDmcFormRequest(source_path=str(source_path)), api_key="secret")
     assert exc_info.value.code == "GEMINIOCR_PAGE_COUNT_UNKNOWN"
 
 
-def test_ocr_dmc_form_with_gemini_maps_legacy_models_to_gemini(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setattr(config, "default_data_dir", lambda: tmp_path / "data")
+def test_engine_request_rejects_credentials() -> None:
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        GeminiOcrDmcFormRequest(source_path="form.pdf", api_key="secret")
+
+
+def test_ocr_requests_keep_flash_as_the_default_model() -> None:
+    assert GEMINI_OCR_MODEL == "gemini-3.5-flash"
+    assert GeminiOcrDmcFormRequest(source_path="form.pdf").model == GEMINI_OCR_MODEL
+    assert OcrDocumentRequest(provider="gemini", source_path="form.pdf").model == GEMINI_OCR_MODEL
+
+
+@pytest.mark.parametrize("model", ["typhoon-ocr", "AksonOCR-preview", "gemini-3.5", "gemini-3-pro-preview"])
+def test_engine_rejects_legacy_model_aliases(model: str) -> None:
+    from dmc_sidecar.gemini_ocr import _validated_model
+    with pytest.raises(DomainError) as exc_info:
+        _validated_model(model)
+    assert exc_info.value.code == "GEMINIOCR_MODEL_UNSUPPORTED"
+
+
+def test_provider_rejects_retired_pro_model_before_contacting_gemini(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     source_path = tmp_path / "form.pdf"
     source_path.write_bytes(_pdf_with_pages(1))
-    captured: dict[str, str] = {}
+    store = InMemorySecretStore()
+    store.set("gemini", "test-key")
+    client_loads: list[bool] = []
 
-    def fake_generate(
-        source: Path,
-        *,
-        api_key: str,
-        model: str,
-        pages_estimated: int,
-    ) -> tuple[dict[str, object], None]:
-        del source, api_key
-        captured["model"] = model
-        assert pages_estimated == 1
-        return {"records": [{"record_type": "dmc_form", "fields": {"student_no": "1069"}}]}, None
+    def unexpected_client_load() -> None:
+        client_loads.append(True)
+        raise AssertionError("Retired model must fail before loading the client")
 
-    monkeypatch.setattr("dmc_sidecar.gemini_ocr._generate_structured_json_with_gemini", fake_generate)
-
-    response = ocr_dmc_form_with_gemini(
-        GeminiOcrDmcFormRequest(
-            source_path=str(source_path),
-            api_key="secret",
-            model="AksonOCR-preview",
-            processing_mode="standard",
+    monkeypatch.setattr("dmc_sidecar.gemini_ocr._load_google_genai", unexpected_client_load)
+    with pytest.raises(DomainError) as exc_info:
+        GeminiProvider(store).ocr_document(
+            OcrDocumentRequest(provider="gemini", source_path=str(source_path), model="gemini-3-pro-preview")
         )
-    )
-
-    assert captured["model"] == "gemini-3.5-flash"
-    assert response.model == "gemini-3.5-flash"
+    assert exc_info.value.code == "AI_RESPONSE_INVALID"
+    assert client_loads == []

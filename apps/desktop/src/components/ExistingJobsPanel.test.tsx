@@ -26,11 +26,6 @@ function buildJob(index: number): JobStatusSnapshot {
     run_summary: null,
     summary_report_path: null,
     completion_summary: null,
-    credit_reservation_id: null,
-    credits_reserved: 0,
-    credits_captured: 0,
-    credits_refunded: 0,
-    credit_status: null,
   };
 }
 

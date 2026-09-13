@@ -1,11 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
-  AvailableUpdate,
-  AccountStatus,
-  GeminiOcrDmcFormResponse,
-  GeminiOcrModel,
-  GeminiOcrProcessingMode,
+  AiConnectionTest,
+  AiProviderId,
+  AiSettings,
   ArchiveJobsResponse,
   BackupCreateResponse,
   BrowserRuntimeStatus,
@@ -19,25 +17,18 @@ import type {
   DatabaseStatus,
   JobStatusSnapshot,
   ListJobsResponse,
-  ModuleCatalogResponse,
-  ModuleConfigStatus,
+  OcrDocumentInput,
+  OcrDocumentResponse,
   RestoreBackupResponse,
   SidecarEvent,
-  UpdaterEvent,
-  UpdaterStatus,
   StartJobResponse,
   ExportStudentBasicInfoFormResponse,
-  AddPsarEvidenceResponse,
-  GeneratePsarReportResponse,
-  PsarReadinessResponse,
   ValidateCurrentStudentsImportFormResponse,
   ValidateExcelResponse,
 } from "../types/contracts";
 import {
-  parseAddPsarEvidenceResponse,
-  parseGeminiOcrDmcFormResponse,
-  parseAvailableUpdate,
-  parseAccountStatus,
+  parseAiConnectionTest,
+  parseAiSettings,
   parseArchiveJobsResponse,
   parseBackupCreateResponse,
   parseBrowserRuntimeStatus,
@@ -48,19 +39,14 @@ import {
   parseCurrentStudentsReconciliationResponse,
   parseDatabaseStatus,
   parseExportStudentBasicInfoFormResponse,
-  parseGeneratePsarReportResponse,
   parseJobActionResponse,
   parseJobStatusSnapshot,
   parseListJobsResponse,
-  parseModuleCatalogResponse,
-  parseModuleConfigStatus,
-  parsePsarReadinessResponse,
+  parseOcrDocumentResponse,
   parseRestoreBackupResponse,
   parseResumeExistingJobResponse,
   parseSidecarEvent,
   parseStartJobResponse,
-  parseUpdaterEvent,
-  parseUpdaterStatus,
   parseValidateCurrentStudentsImportFormResponse,
   parseValidateExcelResponse,
 } from "../types/contracts";
@@ -163,10 +149,6 @@ export async function openOcrSourceDialog(): Promise<string | null> {
   return desktopInvoke<string | null>("open_ocr_source_dialog");
 }
 
-export async function openEvidenceDialog(): Promise<string | null> {
-  return desktopInvoke<string | null>("open_evidence_dialog");
-}
-
 export async function openBackupArchiveDialog(): Promise<string | null> {
   return desktopInvoke<string | null>("open_backup_archive_dialog");
 }
@@ -201,20 +183,6 @@ export async function writeTextFile(path: string, contents: string): Promise<voi
 
 export async function revealPath(path: string): Promise<void> {
   await desktopInvoke("reveal_path", { path });
-}
-
-export async function getUpdaterStatus(): Promise<UpdaterStatus> {
-  const result = await desktopInvoke<unknown>("get_updater_status");
-  return parseUpdaterStatus(result);
-}
-
-export async function checkForAppUpdate(): Promise<AvailableUpdate | null> {
-  const result = await desktopInvoke<unknown>("check_for_app_update");
-  return parseAvailableUpdate(result);
-}
-
-export async function installAppUpdate(): Promise<void> {
-  await desktopInvoke("install_app_update");
 }
 
 export async function validateExcel(
@@ -328,23 +296,39 @@ export async function exportDmcFormJson(input: {
   return parseExportDmcFormJsonResponse(result);
 }
 
-export async function ocrDmcFormWithGemini(input: {
-  sourcePath: string;
-  apiKey: string | null;
-  model?: GeminiOcrModel;
-  processingMode?: GeminiOcrProcessingMode;
-  forceRefresh?: boolean;
-}): Promise<GeminiOcrDmcFormResponse> {
-  const result = await sidecarRequest<unknown>("ocr_dmc_form_with_gemini", {
-    source_path: input.sourcePath,
-    api_key: input.apiKey,
-    model: input.model ?? "gemini-3.5-flash",
-    processing_mode: input.processingMode ?? "batch",
-    force_refresh: input.forceRefresh ?? false,
-  });
-  return parseGeminiOcrDmcFormResponse(result);
+export async function getAiSettings(provider: AiProviderId): Promise<AiSettings> {
+  const result = await sidecarRequest<unknown>("get_ai_settings", { provider });
+  return parseAiSettings(result);
 }
 
+export async function saveAiApiKey(provider: AiProviderId, apiKey: string): Promise<AiSettings> {
+  const result = await sidecarRequest<unknown>("save_ai_api_key", {
+    provider,
+    api_key: apiKey,
+  });
+  return parseAiSettings(result);
+}
+
+export async function testAiConnection(provider: AiProviderId): Promise<AiConnectionTest> {
+  const result = await sidecarRequest<unknown>("test_ai_connection", { provider });
+  return parseAiConnectionTest(result);
+}
+
+export async function deleteAiApiKey(provider: AiProviderId): Promise<AiSettings> {
+  const result = await sidecarRequest<unknown>("delete_ai_api_key", { provider });
+  return parseAiSettings(result);
+}
+
+export async function ocrDocument(input: OcrDocumentInput): Promise<OcrDocumentResponse> {
+  const result = await sidecarRequest<unknown>("ocr_document", {
+    provider: input.provider,
+    source_path: input.sourcePath,
+    model: input.model,
+    processing_mode: input.processingMode,
+    force_refresh: input.forceRefresh,
+  });
+  return parseOcrDocumentResponse(result);
+}
 
 export async function exportCurrentStudentBlankForm(
   outputPath: string,
@@ -362,80 +346,6 @@ export async function validateCurrentStudentImportForm(
     excel_path: excelPath,
   });
   return parseValidateCurrentStudentsImportFormResponse(result);
-}
-
-export async function getPsarReadiness(projectId = "default"): Promise<PsarReadinessResponse> {
-  const result = await sidecarRequest<unknown>("get_psar_readiness", {
-    project_id: projectId,
-  });
-  return parsePsarReadinessResponse(result);
-}
-
-export async function addPsarEvidence(
-  projectId: string,
-  filePath: string,
-): Promise<AddPsarEvidenceResponse> {
-  const result = await sidecarRequest<unknown>("add_psar_evidence", {
-    project_id: projectId,
-    file_path: filePath,
-  });
-  return parseAddPsarEvidenceResponse(result);
-}
-
-export async function generatePsarReport(projectId: string): Promise<GeneratePsarReportResponse> {
-  const result = await sidecarRequest<unknown>("generate_psar_report", {
-    project_id: projectId,
-  });
-  return parseGeneratePsarReportResponse(result);
-}
-
-export async function getModuleConfigStatus(
-  module: "graduation" = "graduation",
-): Promise<ModuleConfigStatus> {
-  const result = await sidecarRequest<unknown>("get_module_config_status", { module });
-  return parseModuleConfigStatus(result);
-}
-
-export async function syncModuleConfig(
-  module: "graduation" = "graduation",
-): Promise<ModuleConfigStatus> {
-  const result = await sidecarRequest<unknown>("sync_module_config", { module });
-  return parseModuleConfigStatus(result);
-}
-
-export async function signIn(input: {
-  email: string;
-  password: string;
-  deviceName: string;
-  appVersion: string;
-}): Promise<AccountStatus> {
-  const result = await sidecarRequest<unknown>("sign_in", {
-    email: input.email,
-    password: input.password,
-    device_name: input.deviceName,
-    app_version: input.appVersion,
-  });
-  return parseAccountStatus(result);
-}
-
-export async function signOut(): Promise<AccountStatus> {
-  const result = await sidecarRequest<unknown>("sign_out", {});
-  return parseAccountStatus(result);
-}
-
-export async function getAccountStatus(): Promise<AccountStatus> {
-  const result = await sidecarRequest<unknown>("get_account_status", {});
-  return parseAccountStatus(result);
-}
-
-export async function refreshWallet(): Promise<AccountStatus> {
-  const result = await sidecarRequest<unknown>("refresh_wallet", {});
-  return parseAccountStatus(result);
-}
-
-export async function getModuleCatalog(): Promise<ModuleCatalogResponse> {
-  const result = await sidecarRequest<unknown>("get_module_catalog", {});
-  return parseModuleCatalogResponse(result);
 }
 
 export async function getBrowserRuntimeStatus(): Promise<BrowserRuntimeStatus> {
@@ -469,7 +379,6 @@ export async function startGraduationJob(input: {
   dryRun: boolean;
   stopOnReview: boolean;
   minScore: number;
-  estimatedCredits: number;
 }): Promise<StartJobResponse> {
   const result = await sidecarRequest<unknown>("start_job", {
     job_id: input.jobId,
@@ -479,7 +388,6 @@ export async function startGraduationJob(input: {
       dry_run: input.dryRun,
       stop_on_review: input.stopOnReview,
       min_score: input.minScore,
-      estimated_credits: input.estimatedCredits,
     },
   });
   return parseStartJobResponse(result);
@@ -489,7 +397,6 @@ export async function startCurrentStudentsImportJob(input: {
   jobId: string;
   jsonPath: string;
   dryRun: boolean;
-  estimatedCredits: number;
 }): Promise<StartJobResponse> {
   const result = await sidecarRequest<unknown>("start_job", {
     job_id: input.jobId,
@@ -497,7 +404,6 @@ export async function startCurrentStudentsImportJob(input: {
     excel_path: input.jsonPath,
     options: {
       dry_run: input.dryRun,
-      estimated_credits: input.estimatedCredits,
     },
   });
   return parseStartJobResponse(result);
@@ -555,13 +461,5 @@ export async function listenSidecarEvents(
         message: error instanceof Error ? error.message : String(error),
       });
     }
-  });
-}
-
-export async function listenUpdaterEvents(
-  callback: (event: UpdaterEvent) => void,
-): Promise<UnlistenFn> {
-  return listen<unknown>("updater-event", (event) => {
-    callback(parseUpdaterEvent(event.payload));
   });
 }

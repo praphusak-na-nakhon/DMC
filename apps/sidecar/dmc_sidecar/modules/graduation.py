@@ -7,9 +7,9 @@ import pandas as pd
 from playwright.sync_api import BrowserContext, Error as PlaywrightError, Page, sync_playwright
 
 from ..checkpoint import JobCheckpoint
-from ..config import profile_dir_for_account, profiles_dir, reports_dir
+from ..config import automation_profile_dir, profiles_dir, reports_dir
 from ..errors import DomainError
-from ..module_config import ModuleConfigState, load_effective_config, sync_module_config
+from ..module_config import load_bundled_module_config
 from ..runtime import JobContext, utc_now
 from ..schemas import PreviewRow, ValidateExcelResponse, ValidationWarning
 from .base import AutomationModule
@@ -45,7 +45,7 @@ class GraduationModule(AutomationModule):
 
     def validate_excel(self, path: Path) -> ValidateExcelResponse:
         legacy = graduation_legacy
-        self._apply_module_config(legacy, load_effective_config(self.name))
+        self._apply_module_config(legacy, load_bundled_module_config(self.name))
         dataframe = pd.read_excel(path, dtype=str).fillna("")
         students, detected_level = legacy.load_source_data(path)
 
@@ -91,15 +91,7 @@ class GraduationModule(AutomationModule):
         context: JobContext,
     ) -> None:
         legacy = graduation_legacy
-        module_config_state = sync_module_config(self.name)
-        self._apply_module_config(legacy, module_config_state)
-        if module_config_state.last_error:
-            context.emit_event(
-                {
-                    "type": "sidecar_stderr",
-                    "message": f"module config fallback: {module_config_state.last_error}",
-                }
-            )
+        self._apply_module_config(legacy, load_bundled_module_config(self.name))
         students, level_label = legacy.load_source_data(excel_path)
         level_rules = legacy.LEVEL_RULES[level_label]
         base_url = legacy.build_target_url(str(level_rules["level_code"]))
@@ -129,8 +121,7 @@ class GraduationModule(AutomationModule):
             started_at=utc_now(),
         )
 
-        account_session = context.account_store.get_session()
-        profile_dir = profile_dir_for_account(account_session.user_id if account_session is not None else None)
+        profile_dir = automation_profile_dir()
 
         report_dir = reports_dir() / job_id
         report_dir.mkdir(parents=True, exist_ok=True)
@@ -368,11 +359,7 @@ class GraduationModule(AutomationModule):
             )
         )
 
-    def _apply_module_config(self, legacy: GraduationLegacyModule, module_config_state: ModuleConfigState) -> None:
-        if not module_config_state.signature_verified:
-            raise DomainError("CONFIG_SIGNATURE_INVALID")
-
-        config_payload = module_config_state.config
+    def _apply_module_config(self, legacy: GraduationLegacyModule, config_payload: dict[str, object]) -> None:
         login_url = config_payload.get("login_url")
         target_url_template = config_payload.get("target_url_template")
         level_rules = config_payload.get("level_rules")
