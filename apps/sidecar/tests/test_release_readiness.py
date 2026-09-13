@@ -72,16 +72,22 @@ def test_unignored_sidecar_artifacts_are_rejected(readiness):
         readiness.check_gitignore()
 
 
-def test_release_verification_installs_chromium_with_job_scoped_isolation():
+@pytest.mark.parametrize(
+    ("workflow_name", "data_directory"),
+    [("ci.yml", "dmc-ci-data"), ("release.yml", "dmc-release-data")],
+)
+def test_windows_workflow_configures_runner_scoped_isolation_after_job_starts(
+    workflow_name: str, data_directory: str
+):
     root = Path(__file__).resolve().parents[3]
-    workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
-    job_environment = workflow.split("\n    env:\n", 1)[1].split("\n    permissions:", 1)[0]
-    assert "      DMC_DATA_DIR: ${{ runner.temp }}\\dmc-release-data" in job_environment
-    assert "      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}\\dmc-playwright" in job_environment
-    dependencies = workflow.index('python -m pip install -e ".\\apps\\sidecar[dev]"')
+    workflow = (root / ".github/workflows" / workflow_name).read_text(encoding="utf-8")
+    assert "${{ runner.temp }}" not in workflow
+    isolation = workflow.index("- name: Configure isolated test paths")
+    assert f'DMC_DATA_DIR=$env:RUNNER_TEMP\\{data_directory}' in workflow
+    assert "PLAYWRIGHT_BROWSERS_PATH=$env:RUNNER_TEMP\\dmc-playwright" in workflow
     browser = workflow.index(r".\.venv\Scripts\python -m playwright install chromium")
     verification = workflow.index("run: pnpm run ci:verify")
-    assert dependencies < browser < verification
+    assert isolation < browser < verification
 
 
 def test_pyinstaller_version_probe_restores_error_preference():

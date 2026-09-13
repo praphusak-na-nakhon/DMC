@@ -9,13 +9,16 @@ on:
 jobs:
   verify-windows:
     runs-on: windows-latest
-    env:
-      DMC_DATA_DIR: ${{ runner.temp }}\dmc-ci-data
-      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}\dmc-playwright
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Configure isolated test paths
+        shell: pwsh
+        run: |
+          "DMC_DATA_DIR=$env:RUNNER_TEMP\dmc-ci-data" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PLAYWRIGHT_BROWSERS_PATH=$env:RUNNER_TEMP\dmc-playwright" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Setup Python
         uses: actions/setup-python@v5
