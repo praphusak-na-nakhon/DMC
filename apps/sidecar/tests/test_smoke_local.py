@@ -95,6 +95,90 @@ def test_exited_parent_live_descendant_does_not_block_cleanup(tmp_path):
     assert all(stream.closed for stream in (client.process.stdin, client.process.stdout, client.process.stderr))
 
 
+def test_job_cleanup_waits_for_owned_descendant_to_release_exclusive_file(tmp_path):
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    locked = profile / "chrome_debug.log"
+    ready = tmp_path / "ready"
+    image = ctypes.create_unicode_buffer(32768)
+    assert ctypes.windll.kernel32.GetModuleFileNameW(None, image, len(image))
+    child = (
+        "import ctypes,os,time; from ctypes import wintypes; from pathlib import Path; "
+        "api=ctypes.WinDLL('kernel32',use_last_error=True); "
+        "api.CreateFileW.argtypes=[wintypes.LPCWSTR,wintypes.DWORD,wintypes.DWORD,ctypes.c_void_p,"
+        "wintypes.DWORD,wintypes.DWORD,wintypes.HANDLE]; api.CreateFileW.restype=wintypes.HANDLE; "
+        f"handle=api.CreateFileW({str(locked)!r},0x40000000,0,None,2,0x80,None); "
+        f"assert handle not in (None,-1); Path({str(ready)!r}).write_text(str(os.getpid())); time.sleep(30)"
+    )
+    parent = (
+        "import subprocess; "
+        f"subprocess.Popen([{image.value!r},'-u','-c',{child!r}],stdin=subprocess.DEVNULL,"
+        "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)"
+    )
+    client = smoke.SidecarProcess([sys.executable, "-u", "-c", parent], env=os.environ.copy(), cwd=tmp_path)
+    client.process.wait(timeout=5)
+    deadline = time.monotonic() + 5
+    while not ready.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert ready.exists()
+    child_pid = int(ready.read_text())
+    api = client.ownership.api
+    api.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    api.OpenProcess.restype = ctypes.c_void_p
+    api.IsProcessInJob.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
+    api.IsProcessInJob.restype = ctypes.c_int
+    child_handle = api.OpenProcess(0x1000, False, child_pid)
+    assert child_handle
+    in_job = ctypes.c_int()
+    assert api.IsProcessInJob(child_handle, client.ownership.handle, ctypes.byref(in_job))
+    api.CloseHandle(child_handle)
+    assert in_job.value == 1
+    with pytest.raises(PermissionError):
+        locked.unlink()
+
+    client.close()
+    smoke._remove_temporary_root(profile)
+
+    assert not profile.exists()
+    assert all(not reader.is_alive() for reader in client.readers)
+
+
+def test_job_cleanup_waits_for_zero_active_processes_before_closing_handle():
+    events = []
+    counts = [2, 1, 0]
+
+    class FakeApi:
+        def TerminateJobObject(self, handle, exit_code):
+            events.append(("terminate", handle, exit_code))
+            return True
+
+        def QueryInformationJobObject(self, handle, info_class, accounting, size, returned):
+            events.append(("query", handle, info_class))
+            accounting._obj.ActiveProcesses = counts.pop(0)
+            returned._obj.value = size
+            return True
+
+        def CloseHandle(self, handle):
+            events.append(("close", handle))
+            return True
+
+    job = smoke.WindowsProcessJob.__new__(smoke.WindowsProcessJob)
+    job.api = FakeApi()
+    job.handle = 123
+
+    job.close()
+    job.close()
+
+    assert events == [
+        ("terminate", 123, 1),
+        ("query", 123, 1),
+        ("query", 123, 1),
+        ("query", 123, 1),
+        ("close", 123),
+    ]
+    assert job.handle is None
+
+
 def test_store_alias_descendant_fails_boundedly_if_broker_escapes_job(tmp_path):
     # Store aliases may launch via a broker, not as an OS descendant. Never
     # chase/kill these by PID. A finite child allows observing bounded failure.

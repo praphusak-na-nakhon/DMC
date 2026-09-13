@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -38,6 +39,22 @@ def require(condition: bool, message: str) -> None:
         raise SmokeFailure(message)
 
 
+def _remove_temporary_root(root: Path, *, timeout: float = 5) -> None:
+    """Remove owned smoke data after transient Windows handle release."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            shutil.rmtree(root)
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(0.05, remaining))
+
+
 @contextmanager
 def smoke_environment(base_url: str) -> Iterator[tuple[Path, dict[str, str], Path]]:
     parsed = urlparse(base_url)
@@ -48,8 +65,8 @@ def smoke_environment(base_url: str) -> Iterator[tuple[Path, dict[str, str], Pat
     payload = GraduationConfig.model_validate_json(
         (ROOT / "packages/module-configs/graduation/v1.json").read_bytes()
     ).model_dump()
-    with tempfile.TemporaryDirectory(prefix="dmc-local-smoke-") as directory:
-        root = Path(directory).resolve()
+    root = Path(tempfile.mkdtemp(prefix="dmc-local-smoke-")).resolve()
+    try:
         resources = root / "resources"
         config_path = resources / "module-configs/graduation/v1.json"
         config_path.parent.mkdir(parents=True)
@@ -71,6 +88,8 @@ def smoke_environment(base_url: str) -> Iterator[tuple[Path, dict[str, str], Pat
         if env.get("PLAYWRIGHT_BROWSERS_PATH"):
             env["PLAYWRIGHT_BROWSERS_PATH"] = str(Path(env["PLAYWRIGHT_BROWSERS_PATH"]).resolve())
         yield root, env, excel
+    finally:
+        _remove_temporary_root(root)
 
 
 class SidecarProcess:
@@ -109,13 +128,17 @@ class SidecarProcess:
     def close(self) -> None:
         assert self.process.stdin is not None
         self.process.stdin.close()
+        ownership_failure: BaseException | None = None
         try:
             self.process.wait(timeout=3)
         except subprocess.TimeoutExpired:
             pass
         finally:
             # The Job Object still owns descendants if the direct parent exited.
-            self.ownership.close()
+            try:
+                self.ownership.close()
+            except BaseException as exc:
+                ownership_failure = exc
         self.process.wait(timeout=5)
         stuck = False
         deadline = time.monotonic() + 3
@@ -128,6 +151,8 @@ class SidecarProcess:
                 stuck = True
             else:
                 stream.close()
+        if ownership_failure is not None:
+            raise ownership_failure
         require(not stuck, "Owned pipe readers did not stop within the cleanup deadline")
 
     def rpc(self, method: str, params: dict[str, Any] | None = None, *, timeout: float = 45) -> Any:

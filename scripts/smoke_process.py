@@ -10,6 +10,7 @@ import ctypes
 import os
 import subprocess
 import sys
+import time
 from ctypes import wintypes
 from pathlib import Path
 
@@ -28,6 +29,15 @@ class _ExtendedLimits(ctypes.Structure):
         ("BasicLimitInformation", _BasicLimits), ("IoInfo", ctypes.c_uint64 * 6),
         ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
         ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t),
+    ]
+
+
+class _BasicAccounting(ctypes.Structure):
+    _fields_ = [
+        ("TotalUserTime", ctypes.c_int64), ("TotalKernelTime", ctypes.c_int64),
+        ("ThisPeriodTotalUserTime", ctypes.c_int64), ("ThisPeriodTotalKernelTime", ctypes.c_int64),
+        ("TotalPageFaultCount", wintypes.DWORD), ("TotalProcesses", wintypes.DWORD),
+        ("ActiveProcesses", wintypes.DWORD), ("TotalTerminatedProcesses", wintypes.DWORD),
     ]
 
 
@@ -53,6 +63,13 @@ class WindowsProcessJob:
         self.api.SetInformationJobObject.restype = wintypes.BOOL
         self.api.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
         self.api.AssignProcessToJobObject.restype = wintypes.BOOL
+        self.api.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        self.api.TerminateJobObject.restype = wintypes.BOOL
+        self.api.QueryInformationJobObject.argtypes = [
+            wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        self.api.QueryInformationJobObject.restype = wintypes.BOOL
         self.api.CloseHandle.argtypes = [wintypes.HANDLE]
         self.api.CloseHandle.restype = wintypes.BOOL
         self.api.GetModuleFileNameW.argtypes = [wintypes.HMODULE, wintypes.LPWSTR, wintypes.DWORD]
@@ -88,8 +105,11 @@ class WindowsProcessJob:
             process.stdin.write("\0")
             process.stdin.flush()
             self.process = process
-        except BaseException:
-            self.close()
+        except BaseException as error:
+            try:
+                self.close()
+            except BaseException as cleanup_error:
+                error.add_note(f"Job cleanup also failed: {cleanup_error}")
             if process is not None:
                 # Before assignment the wrapper can only wait for its gate.
                 # EOF aborts it without launching the requested command.
@@ -113,6 +133,34 @@ class WindowsProcessJob:
 
     def close(self) -> None:
         if self.handle:
-            if not self.api.CloseHandle(self.handle):
-                raise ctypes.WinError(ctypes.get_last_error())
+            handle = self.handle
             self.handle = None
+            failure: BaseException | None = None
+            try:
+                # KILL_ON_JOB_CLOSE is the fallback, but closing the handle alone
+                # does not let us observe when Chromium descendants have released
+                # temporary profile files. Terminate the owned tree explicitly and
+                # wait for the job's active-process count to reach zero first.
+                if not self.api.TerminateJobObject(handle, 1):
+                    failure = ctypes.WinError(ctypes.get_last_error())
+                else:
+                    deadline = time.monotonic() + 5
+                    while True:
+                        accounting = _BasicAccounting()
+                        returned = wintypes.DWORD()
+                        if not self.api.QueryInformationJobObject(
+                            handle, 1, ctypes.byref(accounting), ctypes.sizeof(accounting), ctypes.byref(returned)
+                        ):
+                            failure = ctypes.WinError(ctypes.get_last_error())
+                            break
+                        if accounting.ActiveProcesses == 0:
+                            break
+                        if time.monotonic() >= deadline:
+                            failure = TimeoutError("Owned smoke process tree did not terminate within 5 seconds")
+                            break
+                        time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+            finally:
+                if not self.api.CloseHandle(handle) and failure is None:
+                    failure = ctypes.WinError(ctypes.get_last_error())
+            if failure is not None:
+                raise failure
